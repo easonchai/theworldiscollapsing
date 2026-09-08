@@ -5,7 +5,7 @@ import { DEMO, REAL, runChannel, type Deps, type Render } from "./machine.js";
 import { makeChain } from "./chain.js";
 import { makePrisma } from "db";
 import { makeAuthor } from "./author.js";
-import { makeMediaStore, startMediaServer } from "./media.js";
+import { makeMediaStore, pruneEventMedia, startMediaServer } from "./media.js";
 import { makeOpenRouter } from "./openrouter.js";
 import { makeRender } from "./render.js";
 import { branchKey, parseRoot, revealBranch, sealingStore } from "./seal.js";
@@ -35,6 +35,10 @@ const log = (msg: string, extra?: Record<string, unknown>) =>
 
 const mediaDir = env("MEDIA_DIR", "./media");
 const mediaStoreKind = env("MEDIA_STORE", "local") === "blob" ? "blob" : "local";
+// Events older than the newest MEDIA_KEEP per channel have their published media deleted; the wall
+// only ever replays the newest DONE event and the channel page lists recent history.
+const mediaKeep = Number(env("MEDIA_KEEP", "20"));
+if (!Number.isInteger(mediaKeep) || mediaKeep < 1) throw new Error("MEDIA_KEEP must be a positive integer");
 const plainMedia = makeMediaStore({
   store: mediaStoreKind,
   dir: mediaDir,
@@ -144,6 +148,12 @@ const deps: Deps = {
   // The CRE workflow releases the winning key when it sees Arena.Resolved; give it a head start,
   // then reveal locally. The engine holds BRANCH_SEAL_ROOT anyway, so this costs no secrecy, and a
   // reveal that plays ciphertext is worse than no sealing at all.
+  // Blob-stored media is not swept: `del` there is a network call per file and nothing runs the
+  // hosted store unattended yet. ponytail: add a blob sweep when MEDIA_STORE=blob runs for days.
+  pruneMedia:
+    mediaStoreKind === "local"
+      ? async (channelId) => pruneEventMedia(mediaDir, await store.oldEventIds(channelId, mediaKeep))
+      : undefined,
   revealWinner: sealRoot
     ? async (ev, outcome) => {
         await sleep(CRE_GRACE_MS);

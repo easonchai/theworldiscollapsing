@@ -17,11 +17,12 @@ You write one event as a single continuous broadcast in two parts.
 
 Hard rules:
 - The first half MUST end level. No outcome may be foreshadowed, hinted at or made more likely by anything in it. A viewer who has seen the whole first half must still believe every outcome is possible.
-- Give ${ctx.channelId === "politics" ? "2 to 3" : "2 to 5"} outcomes. They are mutually exclusive and exhaustive: exactly one happens. Label them plainly, so nobody can misread which one they are betting on.
+- Give 3 to 5 outcomes. They are mutually exclusive and exhaustive: exactly one happens. Label them plainly, so nobody can misread which one they are betting on.
 - One second-half shot list per outcome, in the same order as the outcomes. Each branch continues from the last frame of the first half.
 - Every shot is a video prompt of 5 to 15 seconds. Describe what the camera sees; no dialogue, no on-screen text, no captions or scoreboards (text cannot be rendered).
 - The first-half shot seconds must total ${ctx.firstHalfSec} seconds (within 10%).
 - Each branch's shot seconds must total ${ctx.secondHalfSec} seconds (within 10%).
+- cards: 1 or 2 studio cards, the graphics the broadcast cuts to between first-half clips. Each has afterShot (the 0-based index of the first-half shot it follows, so it must be smaller than the number of first-half shots), a title under 48 characters, and exactly two short stat lines, also under 48 characters. Write them as a studio would: a heading and two numbers or facts about this event.
 - ticker: 3 to 6 short broadcast strap lines, under 60 characters each.
 - canonUpdates: one list per outcome, 1 to 3 flat factual sentences stating what became true in the world if that outcome happens. They are appended to the world log and every later event reads them.
 - reasoning: two or three sentences on how this event follows from the canon and why the first half gives nothing away.

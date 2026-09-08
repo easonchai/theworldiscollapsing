@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { put } from "@vercel/blob";
@@ -52,6 +52,30 @@ export function makeMediaStore(cfg: {
       return `${base}/${eventId}/${name}`;
     },
   };
+}
+
+/**
+ * Delete the published media of events that have fallen out of the retention window, and return how
+ * many directories went. Nothing re-reads a finished event's video, so without this `MEDIA_DIR` grows
+ * for as long as the engine runs (~11 MB per event with stub footage, far more at 480p/768p).
+ * Idempotent: an already-swept event is not an error. Local store only.
+ */
+export async function pruneEventMedia(dir: string, eventIds: string[]): Promise<number> {
+  const root = path.resolve(dir);
+  let removed = 0;
+  for (const id of eventIds) {
+    // Only ever delete a directory named like an event id, never `.work` and never a traversal.
+    if (!/^0x[0-9a-f]{64}$/i.test(id)) continue;
+    const target = path.join(root, id);
+    try {
+      await stat(target);
+    } catch {
+      continue;
+    }
+    await rm(target, { recursive: true, force: true });
+    removed++;
+  }
+  return removed;
 }
 
 /** Body of `POST /internal/reveal-key`, sent by the Chainlink CRE confidential workflow. */

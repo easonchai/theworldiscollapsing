@@ -1,4 +1,6 @@
-# Local graph-node for the subgraph agent. Indexes anvil on 8546 (see docs/CONTRACTS.md).
+# Local graph-node. Indexes the anvil the root README starts (8545); `ANVIL_PORT=8546 docker compose
+# ... up -d` points it at another one (see docs/CONTRACTS.md). graph-node blocks on provider
+# validation forever when nothing answers that port, so the default has to be the documented one.
 # Its own postgres on 5434 so it never touches the shared twic database on 5433.
 services:
   graph-node:
@@ -20,7 +22,7 @@ services:
       postgres_pass: let-me-in
       postgres_db: graph-node
       ipfs: "ipfs:5001"
-      ethereum: "localhost:http://host.docker.internal:8546"
+      ethereum: "localhost:http://host.docker.internal:${ANVIL_PORT:-8545}"
       GRAPH_LOG: info
   ipfs:
     image: ipfs/kubo:v0.17.0

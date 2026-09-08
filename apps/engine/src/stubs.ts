@@ -10,6 +10,7 @@ import { branchFileName, type MediaStore } from "./media.js";
 
 const shot = (prompt: string) => ({ prompt, seconds: 6 });
 
+// Outcome lists are 3 to 5 long, the shape Authored enforces (PRD: three to five markets).
 const CANNED: Record<string, (seq: number) => Authored> = {
   sports: (seq) => ({
     title: `Matchday ${seq}: Manchester United vs Chelsea`,
@@ -17,6 +18,7 @@ const CANNED: Record<string, (seq: number) => Authored> = {
     outcomes: ["Manchester United win", "Chelsea win", "Draw"],
     firstHalf: [shot("kickoff"), shot("midfield battle"), shot("half-time whistle, 0-0")],
     branches: [[shot("United score late")], [shot("Chelsea score late")], [shot("full time, still level")]],
+    cards: [{ afterShot: 1, title: "Half time", stats: ["Possession 51-49", "Shots on target 2-2"] }],
     ticker: ["Old Trafford sold out", "Both managers under pressure"],
     canonUpdates: [
       [`Matchday ${seq}: United beat Chelsea.`],
@@ -27,12 +29,17 @@ const CANNED: Record<string, (seq: number) => Authored> = {
   }),
   politics: (seq) => ({
     title: `Election night ${seq}`,
-    premise: "Two candidates, results too close to call at the half.",
-    outcomes: ["Incumbent holds", "Challenger wins"],
+    premise: "Three candidates, results too close to call at the half.",
+    outcomes: ["Incumbent holds", "Challenger wins", "Recount ordered"],
     firstHalf: [shot("polls close"), shot("early count neck and neck")],
-    branches: [[shot("incumbent declared")], [shot("challenger declared")]],
+    branches: [[shot("incumbent declared")], [shot("challenger declared")], [shot("recount ordered")]],
+    cards: [{ afterShot: 0, title: "The count so far", stats: ["Turnout 71%", "12 of 40 boxes counted"] }],
     ticker: ["Turnout at record high"],
-    canonUpdates: [[`Election ${seq}: the incumbent held office.`], [`Election ${seq}: the challenger took office.`]],
+    canonUpdates: [
+      [`Election ${seq}: the incumbent held office.`],
+      [`Election ${seq}: the challenger took office.`],
+      [`Election ${seq}: the result went to a recount.`],
+    ],
     reasoning: "stub",
   }),
   culture: (seq) => ({
@@ -41,6 +48,7 @@ const CANNED: Record<string, (seq: number) => Authored> = {
     outcomes: ["Nominee A", "Nominee B", "Nominee C"],
     firstHalf: [shot("red carpet"), shot("nominees announced")],
     branches: [[shot("A wins")], [shot("B wins")], [shot("C wins")]],
+    cards: [{ afterShot: 0, title: "Best Picture", stats: ["3 nominees", "Last year: an upset"] }],
     ticker: ["Upset expected"],
     canonUpdates: [[`Awards ${seq}: A won.`], [`Awards ${seq}: B won.`], [`Awards ${seq}: C won.`]],
     reasoning: "stub",
@@ -48,11 +56,16 @@ const CANNED: Record<string, (seq: number) => Authored> = {
   region: (seq) => ({
     title: `Council vote ${seq}: the harbour bill`,
     premise: "A contested vote on the waterfront redevelopment.",
-    outcomes: ["Bill passes", "Bill fails"],
+    outcomes: ["Bill passes", "Bill fails", "Vote deferred"],
     firstHalf: [shot("council convenes"), shot("debate")],
-    branches: [[shot("bill passes")], [shot("bill fails")]],
+    branches: [[shot("bill passes")], [shot("bill fails")], [shot("vote deferred")]],
+    cards: [{ afterShot: 0, title: "The harbour bill", stats: ["18 councillors seated", "Third reading"] }],
     ticker: ["Protesters outside city hall"],
-    canonUpdates: [[`Vote ${seq}: the harbour bill passed.`], [`Vote ${seq}: the harbour bill failed.`]],
+    canonUpdates: [
+      [`Vote ${seq}: the harbour bill passed.`],
+      [`Vote ${seq}: the harbour bill failed.`],
+      [`Vote ${seq}: the harbour bill vote was deferred.`],
+    ],
     reasoning: "stub",
   }),
 };

@@ -24,12 +24,12 @@ pnpm --filter db run deploy                # applies packages/db/prisma/migratio
 anvil                                      # terminal 1 — 127.0.0.1:8545
 ```
 
-then deploy (anvil account 0 is the deployer, resolver and gate owner; account 1 is the treasury):
+then deploy (anvil account 0 is the deployer, resolver and gate owner; account 9 is the treasury — nobody bets from it, so the 2 % fee is a balance you can watch grow):
 
 ```bash
 cd packages/contracts
 RESOLVER=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
-TREASURY=0x70997970C51812dc3A010C7d01b50e0d17dc79C8 \
+TREASURY=0xa0Ee7A142d267C1f36714E4a8F75612F20a79720 \
 forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 \
   --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --broadcast
 ```
@@ -87,6 +87,14 @@ USDC_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 \
 GATE_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3 \
 DATABASE_URL=postgresql://twic:twic@localhost:5433/twic \
 pnpm --filter engine exec tsx scripts/bettor.ts --events 2
+```
+
+The house take is that treasury's balance, so you can watch it accrue while they play:
+
+```bash
+cast call 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 \
+  "balanceOf(address)(uint256)" 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720 \
+  --rpc-url http://127.0.0.1:8545
 ```
 
 The markets list and positions pages read from the subgraph and stay in a "not configured" state until you point `NEXT_PUBLIC_SUBGRAPH_URL` at one — that is a separate graph-node stack, see [`packages/subgraph/README.md`](packages/subgraph/README.md). Everything else works without it.

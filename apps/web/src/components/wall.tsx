@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { identOf } from "@/lib/channels";
 import type { ChannelPublic } from "@/lib/data";
 import { Countdown, StateBadge } from "./bits";
 import { Player } from "./player";
@@ -10,6 +11,7 @@ function Tile({ channel, featured }: { channel: ChannelPublic; featured: boolean
   const ref = useRef<HTMLAnchorElement>(null);
   const [visible, setVisible] = useState(false);
   const event = channel.current;
+  const ident = identOf(channel.id);
 
   // Only tiles on screen carry a <video src>, so four decoders never run for a wall of forty.
   useEffect(() => {
@@ -25,6 +27,7 @@ function Tile({ channel, featured }: { channel: ChannelPublic; featured: boolean
       ref={ref}
       href={`/c/${channel.id}`}
       aria-label={`${channel.name} — ${event?.title ?? "off air"}`}
+      style={{ "--ch": ident.accent } as CSSProperties}
       className={`group relative block overflow-hidden bg-black outline-offset-[-2px] aspect-video lg:aspect-auto ${
         featured ? "lg:col-span-7 lg:row-span-3" : "lg:col-span-5"
       }`}
@@ -46,7 +49,13 @@ function Tile({ channel, featured }: { channel: ChannelPublic; featured: boolean
         <div className="flex items-end justify-between gap-2">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <span className="border-l-2 border-amber pl-2 font-display text-[clamp(20px,2.6vw,34px)] leading-none tracking-wide text-bone uppercase">
+              <span
+                aria-hidden
+                className="font-mono text-[clamp(13px,1.5vw,18px)] leading-none text-[color:var(--ch)]"
+              >
+                {ident.glyph}
+              </span>
+              <span className="border-l-2 border-[color:var(--ch)] pl-2 font-display text-[clamp(20px,2.6vw,34px)] leading-none tracking-wide text-bone uppercase">
                 {channel.name}
               </span>
               {event ? <StateBadge state={event.state} /> : null}
@@ -64,7 +73,10 @@ function Tile({ channel, featured }: { channel: ChannelPublic; featured: boolean
         </div>
       </div>
 
-      <span className="absolute inset-0 border border-transparent transition group-hover:border-amber/70" aria-hidden />
+      <span
+        className="absolute inset-0 border border-transparent transition group-hover:border-[color:var(--ch)]"
+        aria-hidden
+      />
     </Link>
   );
 }

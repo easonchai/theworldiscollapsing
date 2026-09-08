@@ -1,7 +1,22 @@
 import Link from "next/link";
 import { VerifyFlow } from "@/components/verify-flow";
+import { ARENA, arenaAbi, publicClient } from "@/lib/chain";
+import { trustCopy } from "@/lib/trust";
 
-export default function VerifyPage() {
+export const dynamic = "force-dynamic";
+
+/** What resolution actually enforces, read from the deployment rather than assumed. */
+async function readVerifier(): Promise<string | null> {
+  try {
+    return await publicClient.readContract({ address: ARENA, abi: arenaAbi, functionName: "verifier" });
+  } catch {
+    return null;
+  }
+}
+
+export default async function VerifyPage() {
+  const trust = trustCopy(await readVerifier());
+
   return (
     <div>
       <header className="border-b border-line px-3 py-3">
@@ -21,13 +36,14 @@ export default function VerifyPage() {
             <li>Betting closes on chain before the deciding drand round exists.</li>
             <li>The outcome is a public function of that round&rsquo;s signature and the event id.</li>
             <li>Every event page checks the stored signature against drand itself.</li>
+            {trust.proves ? <li>{trust.proves}</li> : null}
           </ul>
         </div>
         <div className="bg-vac p-3">
           <p className="tag">what it does not</p>
           <ul className="mt-2 max-w-[60ch] space-y-2 font-body text-[17px] text-dim">
             <li>Verification is liveness, not age. 18+ is your own word.</li>
-            <li>Until the signature is checked on chain, resolution trusts a submitter whose work anyone can audit.</li>
+            <li>{trust.doesNot}</li>
             <li>
               This is testnet play money.{" "}
               <Link href="/" className="text-amber underline underline-offset-2">

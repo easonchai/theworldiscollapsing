@@ -121,6 +121,12 @@ export type Deps = {
    * (null = leave `branchUrls` as they are). Without it a sealed reveal serves ciphertext.
    */
   revealWinner?: (ev: EventRow, outcome: number) => Promise<string | null>;
+  /**
+   * Drop the published media of this channel's events outside the retention window, returning how
+   * many events were swept. Called once an event is off the wall; without it `MEDIA_DIR` grows for
+   * as long as the engine runs. Local media store only.
+   */
+  pruneMedia?: (channelId: string) => Promise<number>;
 };
 
 export const eventIdFor = (channelId: string, seq: number): Hex => keccak256(toHex(`${channelId}:${seq}`));
@@ -342,6 +348,15 @@ async function step(ev: EventRow, d: Deps, onBetting: () => Promise<void>): Prom
     }
     case "PAUSE": {
       await d.sleep(d.timing.pauseMs);
+      if (d.pruneMedia) {
+        // Disk is not worth a stalled channel: a failed sweep is logged and the event still finishes.
+        try {
+          const swept = await d.pruneMedia(ev.channelId);
+          if (swept) d.log("pruned media", { channelId: ev.channelId, events: swept });
+        } catch (e) {
+          d.log("media prune failed", { channelId: ev.channelId, error: String(e).slice(0, 300) });
+        }
+      }
       return d.store.update(ev.id, { state: "DONE" });
     }
     default:

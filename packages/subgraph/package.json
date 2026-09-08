@@ -7,6 +7,7 @@
     "codegen": "graph codegen",
     "build": "graph build",
     "test": "graph test",
+    "check": "node scripts/ports.check.mjs",
     "create-local": "graph create --node http://localhost:8020/ twic/arena",
     "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 --version-label v0.0.1 twic/arena",
     "deploy:studio": "graph deploy twic-arena"

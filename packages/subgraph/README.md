@@ -18,28 +18,42 @@ Toolchain (pinned): `@graphprotocol/graph-cli` 0.98.1, `@graphprotocol/graph-ts`
 | `tests/arena.test.ts` | matchstick unit tests |
 | `matchstick.yaml` | points matchstick's `libsFolder` at pnpm's hoisted store (it needs `assemblyscript/bin/asc` and `@graphprotocol/graph-ts` under one folder, which pnpm's isolated `node_modules` does not give it) |
 | `docker-compose.yml` | local graph-node + ipfs + its own postgres on 5434 |
+| `scripts/ports.check.mjs` | asserts the compose default RPC port is the anvil port the root README starts |
 
 `subgraph.yaml` and `abis/Arena.json` are generated and gitignored — run a `prepare:*` script first.
 
-## Local run (graph-node in docker, anvil on 8546)
+## Local run (graph-node in docker)
+
+graph-node indexes **the anvil the root README starts, on 8545**. Start that first: graph-node blocks
+on provider validation until the RPC answers, so bringing it up against a dead port leaves even the
+admin port 8020 closed and `create-local` fails with `ECONNRESET`.
 
 ```bash
+anvil                                                             # 127.0.0.1:8545
+# deploy Gate/MockUSDC/Arena per the root README, then:
 docker compose -f packages/subgraph/docker-compose.yml up -d      # graph-node 8000/8020/8030, ipfs 5001, pg 5434
-anvil --port 8546
-# deploy Gate/MockUSDC/Arena per docs/CONTRACTS.md, then:
 cd packages/subgraph
 ARENA_ADDRESS=0x… pnpm run prepare:local
 pnpm run codegen && pnpm run build
 pnpm run create-local && pnpm run deploy-local
 ```
 
+Indexing anvil on another port (agents run their own — 8546, 8547, see `docs/CONTRACTS.md`) is one env
+var, and it has to be set on the `up` because it is baked into the container:
+
+```bash
+ANVIL_PORT=8546 docker compose -f packages/subgraph/docker-compose.yml up -d
+```
+
 Queries: `http://localhost:8000/subgraphs/name/twic/arena`. Indexing status / errors:
 `http://localhost:8030/graphql` (`{ indexingStatuses { health synced fatalError { message } } }`).
+`synced: false` with a null `latestBlock` means graph-node is not talking to any chain — check the port.
 
 Unit tests need no chain and no node:
 
 ```bash
 pnpm --filter subgraph test        # graph test → matchstick
+pnpm --filter subgraph run check   # compose RPC port still matches the root README's anvil
 ```
 
 Teardown: `docker compose -f packages/subgraph/docker-compose.yml down -v`.

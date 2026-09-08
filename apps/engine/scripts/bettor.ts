@@ -1,6 +1,6 @@
 // Drives real bets against a running engine so the subgraph has something to index.
 //
-//   RPC_URL=http://127.0.0.1:8546 ARENA_ADDRESS=0x.. USDC_ADDRESS=0x.. GATE_ADDRESS=0x.. \
+//   RPC_URL=http://127.0.0.1:8545 ARENA_ADDRESS=0x.. USDC_ADDRESS=0x.. GATE_ADDRESS=0x.. \
 //   DATABASE_URL=postgresql://... pnpm --filter engine exec tsx scripts/bettor.ts --events 2
 //
 // Anvil account 0 owns the Gate, so it can verify accounts 2–5; those four faucet, approve,

@@ -25,34 +25,52 @@ export function planShots(total: number): number[] {
   return Array.from({ length: n }, (_, i) => Math.max(5, Math.min(15, base + (i < rem ? 1 : 0))));
 }
 
+// Outcome sets are 3 to 5 long, the shape Authored enforces (PRD: three to five markets).
 const CHANNELS: Record<string, { title: (n: number) => string; premise: string; outcomes: string[][]; beat: string }> = {
   sports: {
     title: (n) => `Matchday ${n}: Harbour City vs Northgate`,
     premise: "Top of the table clash at the Basin. Level at the interval.",
-    outcomes: [["Harbour City win", "Northgate win", "Draw"], ["Harbour City win", "Northgate win"]],
+    outcomes: [
+      ["Harbour City win", "Northgate win", "Draw"],
+      ["Harbour City win by two or more", "Harbour City win by one", "Draw", "Northgate win"],
+    ],
     beat: "wide stadium shot, crowd surging, floodlights",
   },
   politics: {
     title: (n) => `Election night ${n}: the Basin seat`,
-    premise: "Two candidates, the count is too close to call.",
-    outcomes: [["Incumbent holds", "Challenger wins"], ["Incumbent holds", "Challenger wins", "Recount ordered"]],
+    premise: "Three candidates, the count is too close to call.",
+    outcomes: [
+      ["Incumbent holds", "Challenger wins", "Recount ordered"],
+      ["Incumbent holds", "Challenger wins", "Independent takes the seat", "Recount ordered"],
+    ],
     beat: "count hall, tellers stacking ballots, camera push in",
   },
   culture: {
     title: (n) => `Awards night ${n}: Best Picture`,
     premise: "Three nominees, the envelope is still sealed.",
-    outcomes: [["Nominee A", "Nominee B", "Nominee C"], ["Nominee A", "Nominee B"]],
+    outcomes: [
+      ["Nominee A", "Nominee B", "Nominee C"],
+      ["Nominee A", "Nominee B", "Nominee C", "Nominee D", "No award given"],
+    ],
     beat: "auditorium, presenters at the podium, slow dolly",
   },
   region: {
     title: (n) => `Council vote ${n}: the harbour bill`,
     premise: "A contested vote on the waterfront redevelopment.",
-    outcomes: [["Bill passes", "Bill fails"], ["Bill passes", "Bill fails", "Vote deferred"]],
+    outcomes: [
+      ["Bill passes", "Bill fails", "Vote deferred"],
+      ["Bill passes unamended", "Bill passes amended", "Bill fails", "Vote deferred"],
+    ],
     beat: "council chamber, hands raised, rain on the windows",
   },
 };
 
-const FALLBACK = { title: (n: number) => `Event ${n}`, premise: "Something is about to happen.", outcomes: [["Yes", "No"]], beat: "wide establishing shot" };
+const FALLBACK = {
+  title: (n: number) => `Event ${n}`,
+  premise: "Something is about to happen.",
+  outcomes: [["Yes", "No", "Neither"]],
+  beat: "wide establishing shot",
+};
 
 let counter = 0;
 
@@ -70,6 +88,7 @@ export function authored(channelId: string, firstHalfSec: number, secondHalfSec:
     branches: outcomes.map((o) =>
       second.map((seconds, i) => ({ prompt: `${ch.beat}, resolution: ${o}, part ${i + 1}`, seconds })),
     ),
+    cards: [{ afterShot: 0, title: `${channelId} desk`, stats: [`${outcomes.length} markets open`, "Level at the break"] }],
     ticker: [`${channelId} desk live`, "Pools open until lock", "Level at the break"],
     canonUpdates: outcomes.map((o) => [`${ch.title(seq)}: ${o}.`]),
     reasoning: `Fake showrunner: picked ${outcomes.length} outcomes for ${channelId} #${seq}; the first half runs ${firstHalfSec}s and stays level so no branch is foreshadowed.`,

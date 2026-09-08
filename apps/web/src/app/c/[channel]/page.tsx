@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { identOf } from "@/lib/channels";
 import { getChannels, getEvents } from "@/lib/data";
 import { EventStage } from "@/components/event-stage";
 import { StateBadge } from "@/components/bits";
@@ -13,13 +14,19 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
   if (!info) notFound();
   const current = info.current;
   const history = recent.filter((e) => e.id !== current?.id);
+  const ident = identOf(info.id);
 
   return (
     <div>
       <header className="flex flex-wrap items-end justify-between gap-2 border-b border-line px-3 py-3">
-        <div>
+        <div className="border-l-4 pl-2" style={{ borderColor: ident.accent }}>
           <p className="tag">channel</p>
-          <h1 className="mt-1 text-[clamp(34px,5vw,66px)] leading-none text-bone">{info.name}</h1>
+          <h1 className="mt-1 flex items-center gap-2 text-[clamp(34px,5vw,66px)] leading-none text-bone">
+            <span aria-hidden className="font-mono text-[0.45em]" style={{ color: ident.accent }}>
+              {ident.glyph}
+            </span>
+            {info.name}
+          </h1>
         </div>
         {current ? (
           <div className="text-right">

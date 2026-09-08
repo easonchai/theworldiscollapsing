@@ -43,4 +43,24 @@ for (const [, v] of body.matchAll(/^\s*([A-Z][A-Z0-9_]*)=/gm)) {
   assert.ok(known.has(v), `README sets ${v}, which no .env example documents`);
 }
 
+// 4. the treasury is not an account the README also hands out a key for. If it were, the 2 % fee
+// would return to the wallet that paid it and the house take would look like it was never charged.
+const accounts = new Map(
+  [...read("docs/CONTRACTS.md").matchAll(/`(0x[0-9a-fA-F]{40})` \/ `(0x[0-9a-fA-F]{64})`/g)].map(([, addr, key]) => [
+    key.toLowerCase(),
+    addr,
+  ]),
+);
+const treasury = body.match(/^\s*TREASURY=(0x[0-9a-fA-F]{40})/m)?.[1];
+assert.ok(treasury, "README no longer sets TREASURY for the deploy");
+const playable = [...body.matchAll(/=(0x[0-9a-fA-F]{64})\b/g)].map(([, key]) => accounts.get(key.toLowerCase())).filter(Boolean);
+assert.ok(playable.length, "no key the README sets maps to an anvil account in docs/CONTRACTS.md");
+for (const addr of playable) {
+  assert.notEqual(
+    addr.toLowerCase(),
+    treasury.toLowerCase(),
+    `README makes ${addr} the treasury and also publishes its private key, so the 2 % fee round-trips`,
+  );
+}
+
 console.log("README ok");

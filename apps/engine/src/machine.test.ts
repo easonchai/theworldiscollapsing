@@ -260,6 +260,17 @@ describe("channel lifecycle", () => {
     expect(rows(h.store).map((r) => r.state)).toEqual(["DONE"]);
   });
 
+  it("sweeps old published media once an event is off the wall, and finishes even if the sweep fails", async () => {
+    const swept: string[] = [];
+    const h = harness({ pruneMedia: async (channelId) => (swept.push(channelId), 1) });
+    await h.run((s) => doneCount(s) >= 2);
+    expect(swept).toEqual(["sports", "sports"]); // one sweep per event reaching DONE
+
+    const broken = harness({ pruneMedia: async () => { throw new Error("EACCES"); } });
+    const store = await broken.run((s) => doneCount(s) >= 1);
+    expect(rows(store)[0].state).toBe("DONE");
+  });
+
   it("publishes the plaintext of the winning branch at reveal when sealing is on", async () => {
     const seen: Array<[number, string]> = [];
     const h = harness({

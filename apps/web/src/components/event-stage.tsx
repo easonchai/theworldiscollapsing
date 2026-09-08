@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
+import { identOf } from "@/lib/channels";
 import { roundTime } from "@/lib/chain";
 import type { EventPublic } from "@/lib/public";
 import { Countdown, StateBadge, clock, useNow, usdc } from "./bits";
@@ -105,7 +106,12 @@ export function EventStage({
         {showHeader ? (
           <header className="border-b border-line px-3 py-3">
             <div className="flex flex-wrap items-center gap-2">
-              <Link href={`/c/${event.channelId}`} className="chip border-amber/50 text-amber hover:bg-amber hover:text-black">
+              <Link
+                href={`/c/${event.channelId}`}
+                style={{ "--ch": identOf(event.channelId).accent } as CSSProperties}
+                className="chip border-[color:var(--ch)] text-[color:var(--ch)] hover:bg-[color:var(--ch)] hover:text-black"
+              >
+                <span aria-hidden>{identOf(event.channelId).glyph}</span>
                 {event.channelId}
               </Link>
               <span className="tag">event {String(event.seq).padStart(3, "0")}</span>

@@ -10,15 +10,18 @@ const shot = (seconds: number) => ({ prompt: "wide stadium shot", seconds });
 const good = {
   title: "Matchday 3",
   premise: "Level at the break.",
-  outcomes: ["Home win", "Away win"],
+  outcomes: ["Home win", "Away win", "Draw"],
   firstHalf: [shot(15), shot(15), shot(15), shot(15)],
-  branches: [[shot(15)], [shot(15)]],
+  branches: [[shot(15)], [shot(15)], [shot(15)]],
+  cards: [{ afterShot: 1, title: "Half time", stats: ["Possession 51-49", "Shots 4-4"] }],
   ticker: ["Sold out"],
-  canonUpdates: [["Home won."], ["Away won."]],
+  canonUpdates: [["Home won."], ["Away won."], ["Level."]],
   reasoning: "inline",
 };
-// one branch for two outcomes: fails Authored's refine
+// one branch for three outcomes: fails Authored's refine
 const bad = { ...good, branches: [[shot(15)]] };
+// two markets is below the PRD's three-to-five floor
+const twoOutcomes = { ...good, outcomes: ["Home win", "Away win"], branches: [[shot(15)], [shot(15)]], canonUpdates: [["Home won."], ["Away won."]] };
 
 function chatFetch(objects: unknown[], reasoning: (string | null)[] = []) {
   const calls: any[] = [];
@@ -63,13 +66,27 @@ describe("author", () => {
     expect(prompt).toContain("Channel: sports");
     expect(prompt).toContain("Week 2: Northgate won.");
     expect(prompt).toContain("first half 60s, each branch 60s");
+    expect(prompt).toContain("Give 3 to 5 outcomes");
+    expect(prompt).toContain("cards: 1 or 2 studio cards");
     expect(f.calls[0]!.model).toBe("openai/gpt-6-astra");
+  });
+
+  it("rejects an event with only two markets, on every channel", async () => {
+    for (const channelId of ["sports", "politics", "culture", "region"]) {
+      const f = chatFetch([twoOutcomes, twoOutcomes]);
+      await expect(author(f).author({ ...CTX, channelId })).rejects.toBeInstanceOf(SchemaError);
+    }
+  });
+
+  it("rejects a studio card that points past the first half", async () => {
+    const f = chatFetch([{ ...good, cards: [{ afterShot: 9, title: "Half time", stats: ["a", "b"] }] }]);
+    await expect(author(f).author(CTX)).rejects.toThrow(/afterShot/);
   });
 
   it("retries once with the validation error appended, then succeeds", async () => {
     const f = chatFetch([bad, good]);
     const a = await author(f).author(CTX);
-    expect(a.outcomes).toEqual(["Home win", "Away win"]);
+    expect(a.outcomes).toEqual(["Home win", "Away win", "Draw"]);
     expect(f.calls).toHaveLength(2);
     const retry = f.calls[1]!.messages.at(-1);
     expect(retry.role).toBe("user");

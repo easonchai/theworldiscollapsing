@@ -26,8 +26,25 @@ const toRow = (e: EventModel): EventRow => ({
 const data = (r: Partial<EventRow>) =>
   ({ ...r, branchUrls: r.branchUrls === null ? Prisma.DbNull : r.branchUrls }) as never;
 
-export function makeStore(prisma: PrismaClient): Store & { ensureChannels(): Promise<void> } {
+export function makeStore(
+  prisma: PrismaClient,
+): Store & { ensureChannels(): Promise<void>; oldEventIds(channelId: string, keep: number): Promise<string[]> } {
   return {
+    /**
+     * Ids of this channel's events outside the newest `keep`, for the media retention sweep.
+     * Bounded so a long-running engine never walks its whole history: each sweep takes the next
+     * 50 below the window, which is more than one event's worth of new files.
+     */
+    async oldEventIds(channelId, keep) {
+      const rows = await prisma.event.findMany({
+        where: { channelId },
+        orderBy: { seq: "desc" },
+        skip: keep,
+        take: 50,
+        select: { id: true },
+      });
+      return rows.map((r) => r.id);
+    },
     async ensureChannels() {
       for (const [id, name] of Object.entries(CHANNELS)) {
         await prisma.channel.upsert({ where: { id }, create: { id, name }, update: {} });
