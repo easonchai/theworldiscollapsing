@@ -64,7 +64,7 @@ export function VerifyBadge({ event }: { event: EventPublic }) {
                 : "checking drand…"}
         </span>
       </div>
-      <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-2 num text-[11px] text-dim">
+      <dl className="num data mt-2 grid grid-cols-[auto_1fr] gap-x-2 text-dim">
         <dt>round</dt>
         <dd className="text-bone">{drandRound}</dd>
         <dt>stored sig</dt>

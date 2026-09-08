@@ -61,16 +61,19 @@ export function useMarkets(event: EventPublic) {
 
 const ONE = 10n ** BigInt(USDC_DECIMALS);
 
-/** What one USDC on this side would come back as, if that side wins at today's pools. */
-function multiple(pool: readonly [bigint, bigint], yes: boolean): number | null {
-  if (pool[0] + pool[1] === 0n) return null;
-  return Number(previewPayout(ONE, yes, pool)) / Number(ONE);
-}
+/**
+ * What one USDC on this side would come back as, if that side wins at today's pools. An empty book
+ * still has an answer — you would be the only staker, so you get your own stake back less the fee —
+ * and printing that 0.98 is the difference between a market with no money in it and a dead button.
+ */
+const multiple = (pool: readonly [bigint, bigint], yes: boolean): number =>
+  Number(previewPayout(ONE, yes, pool)) / Number(ONE);
 
 /**
- * One side of one market: an outlined tile you pick, not a data cell. It shows the price if the
- * market has one and OPEN if it does not — never an em-dash, which reads as missing data. Picking
- * fills it amber; the ticket at the foot of the rail is where the money is committed.
+ * One side of one market: an outlined tile you pick, and the number a bettor is actually buying —
+ * the multiple this side pays — is the thing inside it. Whether the market has a book is a border
+ * and one small line, never the whole cell: a grid of six cells reading OPEN prices nothing.
+ * Picking fills it amber; the ticket under the board is where the money is committed.
  */
 function PriceCell({
   yes,
@@ -81,6 +84,7 @@ function PriceCell({
   disabled,
   busy,
   blocked,
+  settled,
   onPick,
 }: {
   yes: boolean;
@@ -91,6 +95,8 @@ function PriceCell({
   disabled?: boolean;
   busy: boolean;
   blocked: string | null;
+  /** Once the round has landed this side either won or lost; a live price would be a lie. */
+  settled: null | boolean;
   onPick?: (yes: boolean) => void;
 }) {
   const p = impliedYes(pool);
@@ -98,26 +104,34 @@ function PriceCell({
   const mult = multiple(pool, yes);
   const inner = busy ? (
     <span className="num text-[13px]">…</span>
-  ) : share === null ? (
-    <span className="num text-[12px] tracking-[0.14em]">open</span>
+  ) : settled !== null ? (
+    <span className={`money text-[17px] leading-none ${settled === yes ? "text-bone" : "text-dim"}`}>
+      {settled === yes ? "won" : "lost"}
+    </span>
   ) : (
     <>
-      <span className="money text-[17px] leading-none">{Math.round(share * 100)}%</span>
-      <span className="num mt-1 text-[10px] leading-none opacity-70">
-        {mult === null ? "—" : `×${mult.toFixed(2)}`}
+      {/* The price, always: what one dollar on this side comes back as if it wins. */}
+      <span className="money text-[20px] leading-none">×{mult.toFixed(2)}</span>
+      {/* Where the book stands, or that there isn't one yet. Never the whole cell. */}
+      <span className="num mt-1 text-[10px] leading-none tracking-[0.12em] opacity-70">
+        {share === null ? "no book" : `${Math.round(share * 100)}%`}
       </span>
     </>
   );
   // Whole class strings, never assembled from pieces: Tailwind reads this file, not the DOM.
-  const shell = `flex h-full min-h-[52px] flex-col items-center justify-center border uppercase ${
+  // A market with money in it wears a brighter rule than one still waiting for its first stake —
+  // that hairline is the whole of the OPEN / priced distinction.
+  const shell = `flex h-full min-h-[56px] flex-col items-center justify-center border uppercase ${
     selected
       ? "border-amber bg-amber text-black"
       : staked
         ? "border-amber/60 text-bone"
-        : "border-line text-bone"
+        : share === null
+          ? "border-line text-dim"
+          : "border-dim text-bone"
   }`;
 
-  if (!onPick) return <div className={`${shell} ${share === null ? "text-dim" : ""}`}>{inner}</div>;
+  if (!onPick) return <div className={shell}>{inner}</div>;
   return (
     <button
       type="button"
@@ -238,7 +252,9 @@ export function Markets({
             : `Place ${usdc(parsed)} on ${picked.yes ? "yes" : "no"}`;
 
   return (
-    <section aria-label="Markets" className="flex flex-1 flex-col">
+    // Not flex-1: the rail is a ledger read top to bottom, so nothing in it is allowed to grow and
+    // push what follows — a claim panel or a verify badge — to the foot of the viewport.
+    <section aria-label="Markets" className="flex flex-col">
       {/* 46px so this header sits on the same baseline as the station bar and the channel bug. */}
       <div className="flex h-[46px] items-center justify-between border-b border-line px-2">
         {/* Every panel title in the station is the same tracked mono cap. */}
@@ -267,20 +283,22 @@ export function Markets({
               }`}
             >
               <div className="min-w-0 self-center py-1 pr-2">
-                <p className="text-[13px] leading-[1.35] text-bone">{label}</p>
+                {/* The question is the subject of its row, so it carries the mid step of the scale
+                    and is the only thing in the rail set above data size. */}
+                <p className="mid text-bone">{label}</p>
                 {resolved ? (
-                  <p className="num mt-0.5 text-[11px] text-dim">
+                  <p className="tag mt-1">
                     {won ? "resolved yes" : "resolved no"}
                     {m.stake[0] > 0n || m.stake[1] > 0n ? (
                       <> · payout {usdc(marketPayout(m.stake, m.pool, won))}</>
                     ) : null}
                   </p>
                 ) : m.stake[0] > 0n || m.stake[1] > 0n ? (
-                  <p className="num mt-0.5 text-[11px] text-amber">
+                  <p className="tag mt-1 text-amber">
                     you {usdc(m.stake[1])} yes · {usdc(m.stake[0])} no
                   </p>
                 ) : (
-                  <p className="num mt-0.5 text-[11px] text-dim">pool {usdc(total)}</p>
+                  <p className="tag mt-1">pool {usdc(total)} usdc</p>
                 )}
               </div>
 
@@ -295,6 +313,7 @@ export function Markets({
                   disabled={busy !== null}
                   blocked={blocked}
                   busy={busy === `${i}-${yes}`}
+                  settled={resolved ? won : null}
                   onPick={resolved ? undefined : (side) => setPick({ i, yes: side })}
                 />
               ))}
@@ -310,12 +329,12 @@ export function Markets({
         </p>
       ) : null}
 
-      {children}
-
       {/* The ticket: the one place a bet is committed — pick a side above, set the stake, hit it.
-          It sits at the foot of the rail, on the chyron's line, and exists only while the book is
-          open: a dead ticket is worse than no ticket. */}
-      <div aria-live="polite" hidden={!open} className="mt-auto border-t border-line bg-panel px-2 py-2">
+          It is pinned directly under the last market row, not pushed to the foot of the rail: the
+          only control on the page must never be separated from the board by a field of nothing,
+          and must never be the part that falls off the bottom of a short viewport. It exists only
+          while the book is open — a dead ticket is worse than no ticket. */}
+      <div aria-live="polite" hidden={!open} className="border-t border-line bg-panel px-2 py-2">
         <div className="flex items-center gap-2">
           <label htmlFor="stake" className="tag">
             stake
@@ -328,14 +347,14 @@ export function Markets({
             onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
             aria-describedby="stake-hint"
           />
-          <span id="stake-hint" className="num shrink-0 text-[11px] whitespace-nowrap text-dim">
-            USDC · bal {gate ? gate.balanceText : "—"}
+          <span id="stake-hint" className="tag shrink-0 whitespace-nowrap">
+            usdc · bal {gate ? gate.balanceText : "—"}
           </span>
         </div>
 
-        <p className="num mt-2 truncate text-[11px] tracking-[0.14em] text-dim uppercase">
+        <p className="data mt-2 truncate text-dim">
           {picked && parsed
-            ? `${picked.label} · ${picked.yes ? "yes" : "no"} · returns ${usdc(previewPayout(parsed, picked.yes, picked.pool))}`
+            ? `${picked.label} · ${picked.yes ? "YES" : "NO"} · returns ${usdc(previewPayout(parsed, picked.yes, picked.pool))}`
             : "— no side picked —"}
         </p>
 
@@ -354,9 +373,13 @@ export function Markets({
           </button>
         )}
 
-        {status ? <p className="num mt-1 text-[11px] text-bone">{status}</p> : null}
-        {error ? <p className="num mt-1 text-[11px] text-flare">{error}</p> : null}
+        {status ? <p className="data mt-1 text-bone">{status}</p> : null}
+        {error ? <p className="data mt-1 text-flare">{error}</p> : null}
       </div>
+
+      {/* What this address already holds, under the ticket that made it: markets, stake, position,
+          one flush ledger with no gap in it. */}
+      {children}
     </section>
   );
 }

@@ -4,6 +4,24 @@ import { useEffect, useRef, type CSSProperties } from "react";
 import type { EventPublic } from "@/lib/public";
 import { sourceFor } from "@/lib/playback";
 
+/**
+ * The station's no-signal card. A monitor with nothing on it is not a dimmed picture and not an
+ * empty box: it is bars with no vertical lock and a plate that says so. Hard-edged, in the
+ * station's own tones, so it reads as this station's failure state rather than as stock furniture.
+ */
+export function Standby({ label, className = "" }: { label: string; className?: string }) {
+  return (
+    <div className={`relative overflow-hidden bg-black ${className}`}>
+      <span className="standby" aria-hidden />
+      <span className="roll" aria-hidden />
+      <span className="scan" aria-hidden />
+      <div className="absolute inset-0 z-10 grid place-items-center">
+        <span className="slate tag px-2 py-1 text-bone">{label}</span>
+      </div>
+    </div>
+  );
+}
+
 export function Player({
   event,
   className = "",
@@ -46,18 +64,9 @@ export function Player({
     };
   }, [src, t0]);
 
-  // A source that has not been cut to air yet is a standby slate, the way a station holds a dead
-  // input: black, one mono line, a caret waiting for it.
-  if (!src) {
-    return (
-      <div className={`grid place-items-center bg-black ${className}`}>
-        <p className="tag">
-          standby · rendering
-          <span className="caret" aria-hidden />
-        </p>
-      </div>
-    );
-  }
+  // A source that has not been cut to air yet gets the station's designed no-signal card, not a
+  // decorated void.
+  if (!src) return <Standby label="please stand by · rendering" className={className} />;
 
   return (
     <video
@@ -66,7 +75,7 @@ export function Player({
       src={src}
       poster={poster}
       style={style}
-      className={`bg-black object-cover ${className}`}
+      className={`picture bg-black object-cover ${className}`}
       muted
       playsInline
       autoPlay

@@ -7,7 +7,7 @@ import { identOf } from "@/lib/channels";
 import { roundTime } from "@/lib/chain";
 import type { EventPublic } from "@/lib/public";
 import { tickerLines } from "@/lib/ticker";
-import { Chyron, Countdown, Digits, Umd, clock, useNow, usdc } from "./bits";
+import { Chyron, Countdown, Digits, URGENT_MS, Umd, clock, useNow, usdc } from "./bits";
 import { ClaimButton, Markets, claimableOf, useMarkets, type MarketState } from "./markets";
 import { Player } from "./player";
 import { VerifyBadge } from "./verify-badge";
@@ -65,10 +65,13 @@ function Screen({ event, now, mounted }: { event: EventPublic; now: number; moun
 
   return (
     <div className="relative overflow-hidden border-b border-line bg-black">
-      {/* 38dvh, so the strip and the rules under it clear the chyron on a laptop. */}
-      <div className="feed">
+      {/* 38dvh, so the strip and the rules under it clear the chyron on a laptop. A source that is
+          not taking bets is off air and drops to 40% luminance; a live one goes to air at 75%. */}
+      <div className={locked ? "feed-dim" : "feed"}>
         <Player event={event} className="aspect-video max-h-[38dvh] w-full" />
       </div>
+      {/* The picture is a raster: a full-field scanline under one rolling hum band. */}
+      <span className="scan" aria-hidden />
       <span className="hum" aria-hidden />
 
       {/* The station's one statement of which channel this is, and the way back to it. */}
@@ -109,15 +112,15 @@ function YourPosition({ event, markets }: { event: EventPublic; markets: MarketS
         <ul className="mt-2">
           {rows.map((r) => (
             <li key={r.key} className="flex items-baseline justify-between gap-2 border-b border-line py-1">
-              <span className="min-w-0 truncate font-mono text-[12px] tracking-[0.06em] text-bone uppercase">
-                {r.label} · {r.side}
+              <span className="data min-w-0 truncate text-bone">
+                {r.label} · {r.side.toUpperCase()}
               </span>
-              <span className="num shrink-0 text-[12px] text-bone">{usdc(r.amount)}</span>
+              <span className="data shrink-0 text-bone">{usdc(r.amount)}</span>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="num mt-1 text-[12px] tracking-[0.14em] text-dim uppercase">— no positions —</p>
+        <p className="data mt-1 text-dim">— no positions —</p>
       )}
     </section>
   );
@@ -160,7 +163,7 @@ export function EventStage({
 
   return (
     <>
-      <div className="grid bg-vac lg:grid-cols-[1fr_420px]">
+      <div className="grid bg-vac lg:grid-cols-[1fr_460px]">
         <div className="min-w-0 bg-vac">
           {showHeader ? (
             <header className="border-b border-line px-2 py-2">
@@ -174,68 +177,81 @@ export function EventStage({
             </header>
           ) : null}
 
+          {/* The clock, and the round it is counting toward, are one fact — so they are one block,
+              and it sits above the monitor rather than under it. What the event IS is the thing a
+              viewer has to see first; the picture is what it looks like. */}
+          <div className="grid gap-x-2 border-b border-line px-2 py-2 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div className="min-w-0">
+              {event.state === "BETTING" ? (
+                <>
+                  <p className="tag">betting closes in</p>
+                  <Countdown
+                    to={event.lockTime}
+                    className="money mt-1 block text-[clamp(64px,9vw,120px)] leading-[0.82] text-amber"
+                    // Inside ten seconds the clock stops being a readout and becomes a deadline.
+                    urgentClassName="money mt-1 block text-[clamp(64px,9vw,120px)] leading-[0.82] text-flare"
+                  />
+                </>
+              ) : event.state === "LOCKED" || event.state === "RESOLVE" ? (
+                <>
+                  <p className="tag">round lands in</p>
+                  <p
+                    suppressHydrationWarning
+                    className={`money mt-1 text-[clamp(64px,9vw,120px)] leading-[0.82] ${
+                      landsIn !== null && landsIn <= URGENT_MS ? "text-flare" : "text-amber"
+                    }`}
+                  >
+                    {landsIn === null || !mounted ? "--:--" : <Digits text={clock(landsIn)} />}
+                  </p>
+                </>
+              ) : resolved ? (
+                <>
+                  <p className="tag">result</p>
+                  <p className="display mt-1 text-[clamp(22px,2.4vw,34px)] leading-[0.95] text-bone">
+                    {event.outcomes[event.outcome!]}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="tag">status</p>
+                  <p className="money mt-1 text-[34px] leading-none text-dim">{event.state.toLowerCase()}</p>
+                </>
+              )}
+            </div>
+
+            {/* The round decides this event, so it is a fact at the mid step, not a footnote. */}
+            <dl className="mt-2 flex gap-x-4 sm:mt-0 sm:justify-end">
+              <div>
+                <dt className="tag">drand round</dt>
+                <dd className="mid mt-1 text-bone">{event.drandRound ?? "—"}</dd>
+              </div>
+              <div>
+                <dt className="tag">publishes</dt>
+                <dd className="mid mt-1 text-bone" suppressHydrationWarning>
+                  {event.drandRound ? new Date(roundAtMs(event.drandRound)).toLocaleTimeString() : "—"}
+                </dd>
+              </div>
+            </dl>
+          </div>
+
           <Screen event={event} now={now} mounted={mounted} />
 
-          {/* One clock, full width, on the page's one margin: whatever this event is running
-              against, at the only display size on the page. */}
-          <div className="border-b border-line px-2 py-2">
-            {event.state === "BETTING" ? (
-              <>
-                <p className="tag">betting closes in</p>
-                <Countdown
-                  to={event.lockTime}
-                  className="money mt-1 block text-[clamp(64px,9vw,120px)] leading-[0.82] text-amber"
-                />
-              </>
-            ) : event.state === "LOCKED" || event.state === "RESOLVE" ? (
-              <>
-                <p className="tag">round lands in</p>
-                <p className="money mt-1 text-[clamp(64px,9vw,120px)] leading-[0.82] text-amber" suppressHydrationWarning>
-                  {landsIn === null || !mounted ? "--:--" : <Digits text={clock(landsIn)} />}
-                </p>
-              </>
-            ) : resolved ? (
-              <>
-                <p className="tag">result</p>
-                <p className="display mt-1 text-[clamp(22px,2.4vw,34px)] leading-[0.95] text-bone">
-                  {event.outcomes[event.outcome!]}
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="tag">status</p>
-                <p className="money mt-1 text-[34px] leading-none text-dim">{event.state.toLowerCase()}</p>
-              </>
-            )}
-          </div>
-
-          {/* Both facts about the randomness on one line under the clock they belong to. */}
-          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-line px-2 py-2">
-            <span className="tag">drand round</span>
-            <span className="num text-[13px] text-bone">{event.drandRound ?? "—"}</span>
-            <span className="mx-1 h-3 w-px self-center bg-line" aria-hidden />
-            <span className="tag">publishes</span>
-            <span className="num text-[13px] text-bone" suppressHydrationWarning>
-              {event.drandRound ? new Date(roundAtMs(event.drandRound)).toLocaleTimeString() : "—"}
-            </span>
-          </div>
-
-          {/* The house, as three lines of a terminal, not as three paragraphs. */}
-          <dl className="grid grid-cols-[74px_1fr] gap-x-2 gap-y-1 border-b border-line px-2 py-2">
-            <dt className="tag">payout</dt>
-            <dd className="num text-[12px] leading-[1.5] break-words text-dim">
+          {/* The house rule is the product's argument, so it is read at reading size on a measure
+              that can be read, and the derivation is set as the feature it is rather than as the
+              smallest type on the page. */}
+          <dl className="grid max-w-[64ch] grid-cols-[78px_1fr] gap-x-2 gap-y-2 border-b border-line px-2 py-2">
+            <dt className="tag pt-1">payout</dt>
+            <dd className="copy text-dim">
               Winners split their market&rsquo;s pool, less a <span className="text-bone">2%</span> fee. No house
               position.
             </dd>
-            <dt className="tag">result</dt>
-            <dd className="num text-[12px] leading-[1.5] break-words text-dim">
-              <span className="text-bone">keccak256(signature ‖ eventId) mod n</span>, over the round above — fixed
-              before betting opens, non-existent until it publishes.
+            <dt className="tag pt-1">result</dt>
+            <dd className="copy text-dim">
+              <span className="mid block break-words text-bone">keccak256(signature ‖ eventId) mod n</span>
+              over the round above — fixed before betting opens, non-existent until it publishes.
             </dd>
-            <dt className="tag">refund</dt>
-            <dd className="num text-[12px] leading-[1.5] break-words text-dim">
-              A market nobody won returns every stake in full.
-            </dd>
+            <dt className="tag pt-1">refund</dt>
+            <dd className="copy text-dim">A market nobody won returns every stake in full.</dd>
           </dl>
         </div>
 

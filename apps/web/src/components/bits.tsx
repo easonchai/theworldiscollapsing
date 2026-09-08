@@ -53,12 +53,12 @@ export function Umd({
   return (
     <div className="z-10 flex items-center gap-1 border-r border-b border-line bg-black px-2 py-1 whitespace-nowrap">
       <span
-        className="num text-[11px] leading-none text-[color:var(--ch)]"
+        className="num text-[10px] leading-none text-[color:var(--ch)]"
         style={{ "--ch": accent ? ident.accent : "var(--color-bone)" } as CSSProperties}
       >
         CH {ident.num}
       </span>
-      <span className="font-mono text-[11px] leading-none font-medium tracking-[0.18em] text-bone uppercase">{name}</span>
+      <span className="font-mono text-[10px] leading-none font-medium tracking-[0.18em] text-bone uppercase">{name}</span>
       {state ? <StateBadge state={state} /> : null}
     </div>
   );
@@ -85,14 +85,32 @@ export function Digits({ text }: { text: string }) {
   );
 }
 
-export function Countdown({ to, className = "" }: { to: string | null; className?: string }) {
+/**
+ * Under ten seconds a clock stops being information and becomes an instruction. Amber says money or
+ * time is live; the last ten seconds of a betting window are the one moment the station spends its
+ * red on something other than the tally, because after them the book is shut.
+ */
+export const URGENT_MS = 10_000;
+
+export function Countdown({
+  to,
+  className = "",
+  urgentClassName,
+}: {
+  to: string | null;
+  className?: string;
+  /** Worn instead of `className` inside the last ten seconds. */
+  urgentClassName?: string;
+}) {
   const now = useNow();
   // No face of its own: the caller sets it, and every caller sets the headline grotesk with tnum.
   if (!to) return <span className={`tabular-nums ${className}`}>--:--</span>;
+  const left = Date.parse(to) - now;
+  const dress = urgentClassName && left <= URGENT_MS ? urgentClassName : className;
   return (
     // Server and client render this a tick apart; the interval corrects it on mount.
-    <time dateTime={to} suppressHydrationWarning className={`tabular-nums ${className}`}>
-      <Digits text={clock(Date.parse(to) - now)} />
+    <time dateTime={to} suppressHydrationWarning className={`tabular-nums ${dress}`}>
+      <Digits text={clock(left)} />
     </time>
   );
 }
@@ -118,18 +136,21 @@ export function Chyron({
     <div className="chyron">
       {/* A fixed, opaque cell: the label can never clip, and the crawl fades in behind it. */}
       <span className="chyron-label">{label}</span>
-      <div className="relative flex min-w-0 flex-1 items-center overflow-hidden pl-2">
+      {/* Flush against the label cell's rule: the crawl starts where the label ends. */}
+      <div className="relative flex min-w-0 flex-1 items-center overflow-hidden">
         {feed.length ? (
-          <div className="marquee text-[12px] tracking-[0.08em] text-dim uppercase">
+          // The crawl is data, not furniture: step two of the mono scale, so a headline in the
+          // ticker carries more weight than the LOCK / ODDS label that files it.
+          <div className="marquee data pl-2 text-bone">
             {[...feed, ...feed].map((line, i) => (
               <span key={i}>
-                <span className="mr-2 font-bold text-bone">{line.cat}</span>
+                <span className="tag mr-2 font-bold text-dim">{line.cat}</span>
                 {line.text}
               </span>
             ))}
           </div>
         ) : (
-          <span className="text-[12px] tracking-[0.08em] text-dim uppercase">{empty}</span>
+          <span className="data pl-2 text-dim">{empty}</span>
         )}
         <span className="chyron-mask" aria-hidden />
       </div>

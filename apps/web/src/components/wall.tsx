@@ -9,7 +9,7 @@ import type { EventPublic } from "@/lib/public";
 import { Chyron, Countdown, Umd, usdc } from "./bits";
 import { usePoll } from "./chain-hooks";
 import { readMarket } from "./markets";
-import { Player } from "./player";
+import { Player, Standby } from "./player";
 
 /** hero = the switched feed, second = the wide preview, strip = a row in the switcher list. */
 type Size = "hero" | "second" | "strip";
@@ -44,41 +44,42 @@ function useWallPools(channels: ChannelPublic[]): Pools | null {
 }
 
 /**
- * Four channels carrying the same generated footage must not frame it identically: each one is
- * pushed into its own corner of the picture, and every tile punches in far enough that the corner
- * artefacts of the source are cropped off rather than repeated across the wall.
+ * Four channels carrying the same generated footage must not frame it identically — but the answer
+ * is where the frame is anchored, never how far it is blown up. Each channel keeps its own corner
+ * of the source and the picture is never scaled past what `object-cover` already needs, so nothing
+ * on the wall is an upscale of an upscale.
  */
-function crop(num: string, size: Size): CSSProperties {
+function anchor(num: string): CSSProperties {
   const n = Number(num);
-  const scale = size === "strip" ? 1.4 : size === "second" ? 1.2 : 1.08;
-  return { transform: `scale(${scale}) translate(${n % 2 ? -5 : 5}%, ${n < 3 ? -5 : 5}%)` };
+  // Off-centre, never into a corner: the corners of a generated frame are where its own furniture
+  // (a burnt-in counter, a vendor artefact) lives, and four tiles all showing a corner is four
+  // tiles all showing the same artefact.
+  return { objectPosition: `${n % 2 ? 30 : 70}% ${n < 3 ? 30 : 70}%` };
 }
 
+/** A source only counts as on air while it is taking bets; everything else is off air. */
+const onAir = (state: string) => state === "BETTING";
+
 /**
- * The picture at broadcast amplitude. The source is a 100% signal; bars go to air at 75%, and a
- * feed that is not the switched one drops to 40% luminance — so the only full-strength colour on
- * the wall is the tally block and the clock of the tile that is about to lock.
+ * The picture at broadcast amplitude. The source is a 100% signal and bars go to air at 75%, so
+ * that is what a live feed transmits. Amplitude is keyed to the source's state, not to the size of
+ * its monitor: a locked or settled feed drops to 40% luminance, a live one never does — otherwise
+ * the wall dims a picture while the tally above it is still lit red.
  */
-function Feed({ channel, size }: { channel: ChannelPublic; size: Size }) {
+function Feed({ channel }: { channel: ChannelPublic }) {
   const ident = identOf(channel.id);
   const event = channel.current;
-  if (!event) {
-    // A channel with nothing on it is not a dimmed picture: it is a dead input, and it says so.
-    return (
-      <div className="absolute inset-0 grid place-items-center bg-black">
-        <span className="tag">
-          no signal
-          <span className="caret" aria-hidden />
-        </span>
-      </div>
-    );
-  }
+  // A channel with nothing on it is not a dimmed picture: it is a dead input, and it says so.
+  if (!event) return <Standby label="please stand by" className="absolute inset-0" />;
   return (
-    <div className={`absolute inset-0 overflow-hidden ${size === "hero" ? "feed" : "feed-dim"}`}>
-      <Player event={event} className="size-full" style={crop(ident.num, size)} />
+    <div className={`absolute inset-0 overflow-hidden ${onAir(event.state) ? "feed" : "feed-dim"}`}>
+      <Player event={event} className="size-full" style={anchor(ident.num)} />
     </div>
   );
 }
+
+/** The board's one column set — header and rows share it so every rule lines up down the tile. */
+const BOARD_COLS = "grid grid-cols-[minmax(0,1.6fr)_86px_minmax(0,1fr)] items-center gap-2";
 
 /** One market of an event: the question, its pool, and where the money sits. */
 function MarketRow({ label, pool, prior }: { label: string; pool: [bigint, bigint] | undefined; prior: number }) {
@@ -89,16 +90,16 @@ function MarketRow({ label, pool, prior }: { label: string; pool: [bigint, bigin
   const share = yes ?? prior;
   const live = yes !== null;
   return (
-    <li className="grid grid-cols-[1fr_84px_132px] items-center gap-2 border-t border-line py-1">
-      <span className="truncate font-mono text-[12px] tracking-[0.06em] text-bone uppercase">{label}</span>
-      <span className={`num text-right text-[12px] ${live ? "text-bone" : "text-dim"}`}>{usdc(sum)}</span>
-      <span className="grid grid-cols-[1fr_36px] items-center gap-2">
+    <li className={`${BOARD_COLS} border-t border-line py-0.5`}>
+      {/* Data, not a label: step two of the mono scale, so the question outweighs the SEQ line. */}
+      <span className="data truncate text-bone">{label}</span>
+      <span className={`data text-right ${live ? "text-bone" : "text-dim"}`}>{usdc(sum)}</span>
+      {/* The bar takes the whole implied column; the percentage rides at its right end. */}
+      <span className="grid grid-cols-[minmax(0,1fr)_38px] items-center gap-1">
         <span className="odds-bar" aria-hidden>
           <span className={live ? "bg-bone" : "bg-dim/50"} style={{ width: `${Math.round(share * 100)}%` }} />
         </span>
-        <span className={`num text-right text-[12px] ${live ? "text-bone" : "text-dim"}`}>
-          {Math.round(share * 100)}%
-        </span>
+        <span className={`data text-right ${live ? "text-bone" : "text-dim"}`}>{Math.round(share * 100)}%</span>
       </span>
     </li>
   );
@@ -109,8 +110,10 @@ function MarketBoard({ event, pools }: { event: EventPublic; pools: [bigint, big
   const staked = (pools ?? []).some((p) => p[0] + p[1] > 0n);
   const prior = 1 / Math.max(1, event.outcomes.length);
   return (
-    <div className="mt-2">
-      <div className="grid grid-cols-[1fr_84px_132px] items-center gap-2">
+    // One rule and a 14px step off the SEQ line: the board is a different kind of thing from the
+    // caption above it, and the gap between them has to be wider than the gap between its own rows.
+    <div className="mt-1 border-t border-line pt-1">
+      <div className={BOARD_COLS}>
         <span className="tag">market</span>
         <span className="tag text-right">pool</span>
         <span className="tag text-right">implied yes</span>
@@ -135,7 +138,12 @@ function TileClock({ event, hero }: { event: EventPublic; hero: boolean }) {
     return (
       <>
         <span className="tag block">locks in</span>
-        <Countdown to={event.lockTime} className={`money block leading-[0.82] text-amber ${big}`} />
+        <Countdown
+          to={event.lockTime}
+          className={`money block leading-[0.82] text-amber ${big}`}
+          // The last ten seconds are the one thing on the wall allowed to wear the red.
+          urgentClassName={`money block leading-[0.82] text-flare ${big}`}
+        />
       </>
     );
   }
@@ -209,7 +217,7 @@ function Tile({ channel, size, pools }: { channel: ChannelPublic; size: Size; po
       aria-label={`${channel.name} — ${event?.title ?? "off air"}`}
       className={shell}
     >
-      {visible ? <Feed channel={channel} size={size} /> : <div className="absolute inset-0 bg-black" />}
+      {visible ? <Feed channel={channel} /> : <div className="absolute inset-0 bg-black" />}
 
       {/* Flush into the corner, so the tile has exactly one left edge and the tally reads from
           across the room against black rather than against the picture. */}
@@ -217,12 +225,14 @@ function Tile({ channel, size, pools }: { channel: ChannelPublic; size: Size; po
         <Umd channelId={channel.id} name={channel.name} state={event?.state} accent />
       </div>
 
-      {/* The lower third: a solid black plate punched through the picture, carrying the casino. */}
-      <div className="slate absolute inset-x-0 bottom-0 z-10 px-2 py-2">
+      {/* The lower third: a plate punched through the picture, carrying the casino. On the switched
+          feed it is exactly one row of the wall grid tall, so the strongest horizontal on the page —
+          the hero's picture/board split — lands on the same line as the tile boundaries beside it. */}
+      <div className={`slate absolute inset-x-0 bottom-0 z-10 px-2 py-2 ${hero ? "lg:min-h-[var(--row)]" : ""}`}>
         <div className="flex items-end justify-between gap-2">
           <div className="min-w-0">
             <h2
-              className={`line-clamp-2 text-bone ${hero ? "text-[clamp(22px,2.2vw,34px)]" : "text-[clamp(15px,1.4vw,20px)]"}`}
+              className={`line-clamp-2 text-bone ${hero ? "text-[clamp(20px,1.9vw,28px)]" : "text-[clamp(15px,1.4vw,20px)]"}`}
             >
               {event?.title ?? "no transmission"}
             </h2>
@@ -272,6 +282,10 @@ export function Wall({ initial }: { initial: ChannelPublic[] }) {
     return <p className="copy p-2 text-dim">No channels yet. Start the engine and the wall fills itself.</p>;
   }
 
+  // One row of the wall grid: the viewport less the station bar (46) and the chyron (32), less the
+  // three 1px gaps, over four rows. Every horizontal on the wall is a multiple of it.
+  const row = { "--row": "calc((100dvh - 78px - 3px) / 4)" } as CSSProperties;
+
   // A switcher, not a dashboard: one screen on air, one wide preview beside it, the rest as rows in
   // the rundown. 46px bar + 32px chyron, so the wall meets the crawl on one hairline.
   const [lead, second, ...rest] = channels;
@@ -281,7 +295,7 @@ export function Wall({ initial }: { initial: ChannelPublic[] }) {
 
   return (
     <div className="relative">
-      <div className="grid gap-px bg-line lg:h-[calc(100dvh-78px)] lg:grid-cols-8 lg:grid-rows-4">
+      <div style={row} className="grid gap-px bg-line lg:h-[calc(100dvh-78px)] lg:grid-cols-8 lg:grid-rows-4">
         <Tile channel={lead} size="hero" pools={pools} />
         {second ? <Tile key={second.id} channel={second} size="second" pools={pools} /> : null}
         {rest.map((c) => (

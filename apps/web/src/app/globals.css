@@ -5,6 +5,10 @@
      already carries every hue there is, so the station around it spends none: bone, dim, one amber,
      one red. */
   --color-vac: #070a08;
+  /* The plate the station punches through a picture — the chyron, a lower third, an input field.
+     It used to be pure #000, which left a hairline nowhere to live: a 1px rule and a filled cell
+     both vanished into it. One step off the vacuum is enough to read as a plate and still punch. */
+  --color-plate: #0d100e;
   --color-panel: #0d110e;
   --color-panel2: #131916;
   --color-line: #232c25;
@@ -80,19 +84,56 @@
 
 @layer components {
   /* Amplitude, not decoration. The source is a 100% test signal; broadcast bars are specified at
-     75%, so that is what the station transmits — and a feed that is not the switched one drops to
-     40% luminance. Full saturation is left to the two things that must win: the tally and the clock. */
+     75%, so that is what the station transmits. Amplitude is keyed to what the source is DOING, not
+     to how big its monitor is: a live feed goes to air at full level whatever tile it is in. */
   .feed {
     filter: saturate(0.68) brightness(0.72);
   }
 
+  /* Off air — locked, settled or archive. The only thing the station dims is a source that is not
+     taking bets, so a dimmed picture never sits under a lit tally. */
   .feed-dim {
     filter: saturate(0.4) brightness(0.4);
   }
 
+  /* Every picture in the station is scaled nearest-neighbour. A generated frame is smaller than the
+     monitor it lands on; bilinear makes that softness look like the design, pixelated makes it look
+     like a signal at its native resolution, which is what it is. */
+  .picture {
+    image-rendering: pixelated;
+  }
+
+  /* No signal is a designed state, not a decorated void: eight hard-edged bars in the station's own
+     tones, ordered by descending luminance the way real bars are, under a roll bar that says the
+     monitor has no vertical lock. No blur, no gradient — every edge lands on a whole pixel. */
+  .standby {
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(
+      to right,
+      var(--color-bone) 0 12.5%,
+      var(--color-amber) 12.5% 25%,
+      var(--color-dim) 25% 37.5%,
+      var(--color-flare) 37.5% 50%,
+      var(--color-line) 50% 62.5%,
+      var(--color-panel2) 62.5% 75%,
+      var(--color-panel) 75% 87.5%,
+      #000 87.5% 100%
+    );
+    filter: brightness(0.5) saturate(0.7);
+  }
+
+  .roll {
+    position: absolute;
+    inset-inline: 0;
+    height: 22%;
+    pointer-events: none;
+    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.92) 0 60%, rgba(0, 0, 0, 0) 100%);
+    animation: roll 7s linear infinite;
+  }
+
   /* One treatment on the picture, and only on the switched monitor: a single band of scanlines
-     rolling down the frame the way mains hum rolls through an unterminated feed. No full-field
-     interlace — over saturated fills it only makes moire. */
+     rolling down the frame the way mains hum rolls through an unterminated feed. */
   .hum {
     position: absolute;
     inset-inline: 0;
@@ -104,21 +145,57 @@
     animation: hum 9s linear infinite;
   }
 
+  /* The full-field scanline, on the switched monitor only: 1px in 4 so a pixelated picture beats
+     against it as little as possible, at an alpha that reads as a phosphor raster and never as a
+     texture laid over the video. */
+  .scan {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.34) 0 1px, transparent 1px 4px);
+  }
+
   .panel {
     border: 1px solid var(--color-line);
     background: var(--color-panel);
   }
 
-  /* The one label style in the station: every LOCKS IN / SEQ / MARKETS / panel title is this size
-     and this tracking, in the mono, so labels never compete with each other. */
+  /* ── Three steps of mono, and only three ──────────────────────────────────────
+     A label and the thing it labels must not have the same texture. Step 1 is furniture: tracked
+     caps at 10px, always dim, never a fact. Step 2 is data: 13px, un-tracked, mixed case allowed —
+     every market name, readout and crawl item. Step 3 is a fact big enough to be the subject of its
+     block: 18px, un-tracked. Everything above that is the display face, not the mono. */
+
+  /* Step 1 — every LOCKS IN / SEQ / MARKETS / panel title in the station. */
   .tag {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 400;
     letter-spacing: 0.18em;
     line-height: 1.2;
     text-transform: uppercase;
     color: var(--color-dim);
+  }
+
+  /* Step 2 — a row of the board, a line of the crawl, a number in a cell. */
+  .data {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    line-height: 1.3;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Step 3 — the one fact a block is about: a market's question, a drand round number. */
+  .mid {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 400;
+    letter-spacing: 0;
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
   }
 
   /* Station furniture that is not a heading — the wordmark, a slate's one word — set in the same
@@ -132,11 +209,12 @@
     text-transform: uppercase;
   }
 
-  /* Copy is the mono at 13/1.6 — there is no third family in the station, so a premise and a rule
-     are set in the same face as the readouts they sit beside. */
+  /* Copy is the mono at 14/1.6 on a 64ch measure — there is no third family in the station, so a
+     premise and the payout rule are set in the same face as the readouts they sit beside. The rule
+     is the product's argument, so it is read at reading size, not filed as fine print. */
   .copy {
     font-family: var(--font-mono);
-    font-size: 13px;
+    font-size: 14px;
     line-height: 1.6;
     letter-spacing: 0.01em;
     text-transform: none;
@@ -149,7 +227,7 @@
     border: 1px solid var(--color-line);
     padding: calc(var(--spacing) * 0.5) var(--spacing);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 10px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
     color: var(--color-bone);
@@ -164,7 +242,7 @@
     color: #000;
     padding: 2px calc(var(--spacing) * 0.75);
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.14em;
     line-height: 1.2;
@@ -193,10 +271,10 @@
     opacity: 0.3;
   }
 
-  /* The lower-third plate: solid black, punched through the picture under one hairline. */
+  /* The lower-third plate: punched through the picture under one hairline. */
   .slate {
     border-top: 1px solid var(--color-line);
-    background: #000;
+    background: var(--color-plate);
   }
 
   /* One chyron for the whole station: fixed to the foot of the viewport, full bleed, so it reads
@@ -210,7 +288,7 @@
     height: 32px;
     align-items: stretch;
     border-top: 1px solid var(--color-line);
-    background: #000;
+    background: var(--color-plate);
   }
 
   /* Fixed cell, left-aligned on the station's 14px edge, so the label never clips and the crawl is
@@ -224,25 +302,27 @@
     align-items: center;
     padding-inline: calc(var(--spacing) * 2);
     border-right: 1px solid var(--color-line);
-    background: #000;
+    background: var(--color-plate);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 10px;
     font-weight: 700;
     letter-spacing: 0.2em;
     text-transform: uppercase;
     color: var(--color-bone);
   }
 
-  /* A hard 24px of black off the label cell, then a fade: the crawl is cut off at an edge, never
-     sliced mid-word half-legible. */
+  /* The crawl runs up to the label cell's rule and fades out over 36px. The old mask held 78px of
+     solid plate off that rule, which read as a masking bug — a dead gap between the label and the
+     first item — rather than as copy scrolling out of view. Long enough to be a fade, short enough
+     that nothing is hard-sliced mid-word against the rule. */
   .chyron-mask {
     position: absolute;
     inset-block: 0;
     left: 0;
     z-index: 1;
-    width: 110px;
+    width: 36px;
     pointer-events: none;
-    background: linear-gradient(to right, #000 0 78px, rgba(0, 0, 0, 0) 100%);
+    background: linear-gradient(to right, var(--color-plate) 0 4px, rgba(13, 16, 14, 0) 100%);
   }
 
   .btn {
@@ -291,14 +371,23 @@
     color: var(--color-dim);
   }
 
+  /* The stake field is the one thing on the page a viewer types into, so it is the one control that
+     is a filled cell rather than an outline: a lit fill, a brighter rule than the station's own
+     hairline, and an amber caret, because the caret is the accent doing its one job — money is live. */
   .field {
     width: 100%;
-    border: 1px solid var(--color-line);
-    background: #000;
+    border: 1px solid var(--color-dim);
+    background: var(--color-panel2);
     color: var(--color-bone);
+    caret-color: var(--color-amber);
     font-family: var(--font-mono);
+    font-size: 13px;
     font-variant-numeric: tabular-nums;
     padding: var(--spacing);
+  }
+
+  .field:focus-visible {
+    border-color: var(--color-amber);
   }
 
   /* Broadcast ticker: the content is rendered twice so the loop has no seam. */
@@ -310,12 +399,12 @@
     animation: marquee 34s linear infinite;
   }
 
-  /* The implied-odds bar on a wall market row: a filled track, not an empty one. Before the first
-     stake the fill is the flat prior over the event's outcomes, and it is dim so it never passes
-     for a price somebody paid. */
+  /* The implied-odds bar on a wall market row: a filled track running the full width of its column,
+     not a stub floating in one. Before the first stake the fill is the flat prior over the event's
+     outcomes, and it is dim so it never passes for a price somebody paid. */
   .odds-bar {
     position: relative;
-    height: 5px;
+    height: 8px;
     background: var(--color-line);
   }
 
@@ -356,6 +445,15 @@
   }
 }
 
+@keyframes roll {
+  from {
+    top: -25%;
+  }
+  to {
+    top: 100%;
+  }
+}
+
 @keyframes caret {
   50% {
     opacity: 0;
@@ -365,11 +463,16 @@
 @media (prefers-reduced-motion: reduce) {
   .marquee,
   .hum,
+  .roll,
   .caret {
     animation: none;
   }
 
   .hum {
     transform: translateY(420%);
+  }
+
+  .roll {
+    top: 62%;
   }
 }
