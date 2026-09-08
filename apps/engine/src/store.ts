@@ -1,7 +1,5 @@
-import { PrismaPg } from "@prisma/adapter-pg";
 import type { Hex } from "viem";
-import { Prisma, PrismaClient } from "./generated/prisma/client.js";
-import type { Event as EventModel } from "./generated/prisma/client.js";
+import { Prisma, type Event as EventModel, type PrismaClient } from "db";
 import type { Authored } from "./authored.js";
 import type { EventRow, State, Store } from "./machine.js";
 
@@ -11,10 +9,6 @@ export const CHANNELS: Record<string, string> = {
   culture: "Culture",
   region: "Region",
 };
-
-export function makePrisma(url: string) {
-  return new PrismaClient({ adapter: new PrismaPg({ connectionString: url }) });
-}
 
 const toRow = (e: EventModel): EventRow => ({
   ...e,

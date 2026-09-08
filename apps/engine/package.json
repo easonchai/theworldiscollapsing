@@ -9,17 +9,14 @@
   },
   "devDependencies": {
     "@types/node": "^24",
-    "@types/pg": "^8.23.1",
-    "prisma": "7.10.0",
     "tsx": "^4",
     "typescript": "^5",
     "vitest": "5.0.0"
   },
   "dependencies": {
-    "@prisma/adapter-pg": "7.10.0",
-    "@prisma/client": "7.10.0",
+    "@vercel/blob": "2.8.0",
     "contracts": "workspace:^",
-    "pg": "^8.23.0",
+    "db": "workspace:*",
     "viem": "2.56.3",
     "zod": "^4.5.4"
   }

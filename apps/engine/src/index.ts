@@ -2,7 +2,8 @@ import type { Address, Hex } from "viem";
 import { fetchRound } from "./drand.js";
 import { DEMO, REAL, runChannel, type Deps } from "./machine.js";
 import { makeChain } from "./chain.js";
-import { makePrisma, makeStore } from "./store.js";
+import { makePrisma } from "db";
+import { makeStore } from "./store.js";
 import { stubAuthor, stubRender } from "./stubs.js";
 
 try {
