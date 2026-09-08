@@ -1,0 +1,12 @@
+{
+  "name": "contracts",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./abi/*": "./abi/*.ts"
+  },
+  "scripts": {
+    "abi": "for c in Arena MockUSDC Gate; do n=$(echo $c | tr A-Z a-z); echo \"export const ${n}Abi = $(forge inspect $c abi --json) as const;\" > abi/$c.ts; done",
+    "test": "forge test"
+  }
+}
