@@ -358,3 +358,17 @@ versa) — so the round binding is real, not just a length check.
 ⚠ Not verified: nothing has been deployed to Base Sepolia, so the verifier has only ever run on
 anvil (foundry 1.7.1) and in `forge test`. The bn254 precompiles 0x05/0x06/0x08 are pre-Byzantium/
 Byzantium-era and present on every EVM chain, but that is reasoning, not a measurement on 84532.
+
+
+## viem write confirmation — verified 2026-09-09 (validation round 3)
+
+| Fact | Value | Source |
+|---|---|---|
+| A reverted transaction still resolves | `waitForTransactionReceipt` rejects only on its own timeout (`WaitForTransactionReceiptTimeoutError`) and on a replaced transaction — never because the transaction reverted | installed source `viem@2.56.3/_esm/actions/public/waitForTransactionReceipt.js` (the only `reject(` in the file) |
+| Receipt status encoding | `receiptStatuses = { '0x0': 'reverted', '0x1': 'success' }`, so `receipt.status` is the only signal a mined write failed | installed source `viem@2.56.3/_esm/utils/formatters/transactionReceipt.js` |
+| Observed on anvil | `Arena.bet` sent at `lockTime`: mined in block 18, `status = 0 (failed)`, no logs, staker's MockUSDC balance unchanged, while `waitForTransactionReceipt` resolved normally | `cast receipt 0x2fdafe20…7510a --rpc-url http://127.0.0.1:8545` (anvil 8545, this repo's Deploy.s.sol) |
+| ⚠ Not in the docs | viem.sh's `waitForTransactionReceipt` page documents neither behaviour; the facts above come from the installed source and a live run | viem.sh/docs/actions/public/waitForTransactionReceipt |
+
+Consequence: every client write goes through `confirmed()` (`apps/web/src/lib/tx.ts`), which throws on
+a non-`success` receipt. `apps/web/src/lib/tx.test.ts` also fails if any component ever calls
+`waitForTransactionReceipt` directly again.

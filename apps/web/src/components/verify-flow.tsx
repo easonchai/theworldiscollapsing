@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useState } from "react";
 import { GATE_MODE, USDC, WORLD_APP_ID, chain, mockusdcAbi, publicClient } from "@/lib/chain";
 import { buildVerifyMessage } from "@/lib/verify-message";
+import { confirmed } from "@/lib/tx";
 import { useGate, usePoll } from "./chain-hooks";
 import { shortError } from "./markets";
 import { clock, useNow } from "./bits";
@@ -82,7 +83,7 @@ export function VerifyFlow() {
         account: address,
         chain,
       });
-      await publicClient.waitForTransactionReceipt({ hash: tx });
+      await confirmed(tx, () => "The faucet reverted on chain — no USDC was sent.");
       setStatus("1,000 play USDC delivered.");
       refresh();
       refreshFaucet();

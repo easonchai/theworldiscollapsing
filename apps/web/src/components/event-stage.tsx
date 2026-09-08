@@ -1,13 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { useRouter } from "next/navigation";
 import { identOf } from "@/lib/channels";
 import { roundTime } from "@/lib/chain";
 import type { EventPublic } from "@/lib/public";
+import { tickerLines } from "@/lib/ticker";
 import { Countdown, StateBadge, clock, useNow, usdc } from "./bits";
-import { ClaimButton, Markets, claimableOf, useMarkets } from "./markets";
+import { ClaimButton, Markets, claimableOf, useMarkets, type MarketState } from "./markets";
 import { Player } from "./player";
 import { VerifyBadge } from "./verify-badge";
 
@@ -30,42 +31,88 @@ function Ticker({ lines }: { lines: string[] }) {
   );
 }
 
-/** The screen itself: synced video, the phase overlay, and the ticker. */
-function Screen({ event }: { event: EventPublic }) {
+/** How long a studio card stays on screen once its cue passes. */
+const CARD_MS = 3500;
+
+/**
+ * The graphic the broadcast cuts to between first-half clips (PRD story 11): it paces the broadcast
+ * and masks the join between two independently generated clips. Cues are seconds into the first
+ * half, so it only runs while the first half is playing to the on-chain clock.
+ */
+function StudioCard({ event, now }: { event: EventPublic; now: number | null }) {
+  if (now === null || event.state !== "BETTING" || !event.startTime) return null;
+  const elapsed = now - Date.parse(event.startTime);
+  const card = event.cards.find((c) => elapsed >= c.at * 1000 && elapsed < c.at * 1000 + CARD_MS);
+  if (!card) return null;
+  return (
+    <div className="absolute inset-0 grid place-items-center bg-vac/90 text-center">
+      <div className="px-3">
+        <p className="tag text-amber">studio</p>
+        <p className="mt-1 font-display text-[clamp(26px,5vw,58px)] leading-none text-bone uppercase">{card.title}</p>
+        <ul className="mt-3 flex flex-wrap justify-center gap-2">
+          {card.stats.map((stat, i) => (
+            <li key={i} className="chip border-line text-dim">
+              {stat}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/** True once hydrated: time-dependent markup must match the server render until then. */
+const neverChanges = () => () => {};
+const useMounted = () =>
+  useSyncExternalStore(
+    neverChanges,
+    () => true,
+    () => false,
+  );
+
+/** The screen itself: synced video, the phase overlay, the studio card and the ticker. */
+function Screen({ event, markets }: { event: EventPublic; markets: MarketState[] | null }) {
   const now = useNow();
+  const mounted = useMounted();
   const locked = event.state === "LOCKED" || event.state === "RESOLVE";
   const landsIn = event.drandRound ? roundAtMs(event.drandRound) - now : null;
+  const toLock =
+    mounted && event.state === "BETTING" && event.lockTime ? clock(Date.parse(event.lockTime) - now) : null;
 
   return (
-    <div className="relative">
-      <Player event={event} className="aspect-video max-h-[52dvh] w-full" />
+    <div>
+      <div className="relative">
+        <Player event={event} className="aspect-video max-h-[52dvh] w-full" />
 
-      {locked ? (
-        <div className="absolute inset-0 grid place-items-center bg-vac/72 text-center">
-          <div>
-            <p className="font-display text-[clamp(38px,7vw,84px)] leading-none text-flare">Locked</p>
-            <p className="mt-2 num text-[13px] text-bone">
-              round <span className="text-amber">{event.drandRound}</span> lands in{" "}
-              <span className="text-amber" suppressHydrationWarning>
-                {landsIn === null ? "—" : clock(landsIn)}
-              </span>
-            </p>
-            <p className="mt-1 num text-[11px] text-dim">the ending does not exist yet</p>
+        {locked ? (
+          <div className="absolute inset-0 grid place-items-center bg-vac/72 text-center">
+            <div>
+              <p className="font-display text-[clamp(38px,7vw,84px)] leading-none text-flare">Locked</p>
+              <p className="mt-2 num text-[13px] text-bone">
+                round <span className="text-amber">{event.drandRound}</span> lands in{" "}
+                <span className="text-amber" suppressHydrationWarning>
+                  {landsIn === null ? "—" : clock(landsIn)}
+                </span>
+              </p>
+              <p className="mt-1 num text-[11px] text-dim">the ending does not exist yet</p>
+            </div>
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {event.state === "BETTING" ? (
-        <div className="absolute top-2 right-2 flex items-center gap-2">
-          <StateBadge state={event.state} className="bg-black/70" />
-        </div>
-      ) : null}
+        <StudioCard event={event} now={mounted ? now : null} />
 
-      {event.state === "REVEAL" || event.state === "CANON" ? (
-        <span className="chip absolute top-2 right-2 border-amber/70 bg-black/70 text-amber">Reveal</span>
-      ) : null}
+        {event.state === "BETTING" ? (
+          <div className="absolute top-2 right-2 flex items-center gap-2">
+            <StateBadge state={event.state} className="bg-black/70" />
+          </div>
+        ) : null}
 
-      <Ticker lines={event.ticker} />
+        {event.state === "REVEAL" || event.state === "CANON" ? (
+          <span className="chip absolute top-2 right-2 border-amber/70 bg-black/70 text-amber">Reveal</span>
+        ) : null}
+      </div>
+
+      <Ticker lines={tickerLines(event, markets?.map((m) => m.pool) ?? null, toLock)} />
     </div>
   );
 }
@@ -122,7 +169,7 @@ export function EventStage({
           </header>
         ) : null}
 
-        <Screen event={event} />
+        <Screen event={event} markets={markets} />
 
         <dl className="grid grid-cols-2 gap-px border-t border-line bg-line sm:grid-cols-4">
           <Cell label="betting closes">

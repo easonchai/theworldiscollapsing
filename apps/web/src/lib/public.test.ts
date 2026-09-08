@@ -11,7 +11,14 @@ const row = (over: Partial<Event> = {}): Event =>
     title: "Matchday 3",
     premise: "Level at half time.",
     outcomes: ["United win", "Chelsea win", "Draw"],
-    script: { ticker: ["Old Trafford sold out"], firstHalf: [{ prompt: "kickoff", seconds: 6 }] },
+    script: {
+      ticker: ["Old Trafford sold out"],
+      firstHalf: [
+        { prompt: "kickoff", seconds: 6 },
+        { prompt: "midfield battle", seconds: 7 },
+      ],
+      cards: [{ afterShot: 1, title: "Half time", stats: ["Possession 51-49", "Shots 2-2"] }],
+    },
     reasoning: "thinking",
     firstHalfUrl: "http://media/first.mp4",
     branchUrls: ["http://media/branch-0.mp4", "http://media/branch-1.mp4", "http://media/branch-2.mp4"],
@@ -52,6 +59,19 @@ describe("toPublic", () => {
 
   it("withholds the branch when the outcome is not known yet", () => {
     expect(toPublic(row({ state: "REVEAL", outcome: null })).winningBranchUrl).toBeNull();
+  });
+
+  it("cues studio cards in seconds of first-half playback", () => {
+    // afterShot 1 = after the 6 s and 7 s shots, so 13 s in. The shot list itself stays server-side.
+    expect(toPublic(row()).cards).toEqual([
+      { at: 13, title: "Half time", stats: ["Possession 51-49", "Shots 2-2"] },
+    ]);
+  });
+
+  it("drops cards that do not carry a cue and a title", () => {
+    const script = { firstHalf: [{ seconds: 6 }], cards: [{ title: "No cue" }, { afterShot: 9 }, "nonsense"] };
+    expect(toPublic(row({ script })).cards).toEqual([]);
+    expect(toPublic(row({ script: {} })).cards).toEqual([]);
   });
 
   it("exposes ticker from the script and serialises chain-shaped fields as strings", () => {

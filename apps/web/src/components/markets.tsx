@@ -16,6 +16,7 @@ import {
   publicClient,
 } from "@/lib/chain";
 import type { EventPublic } from "@/lib/public";
+import { betRevertMessage, confirmed } from "@/lib/tx";
 import { useGate, usePoll } from "./chain-hooks";
 import { useWallet } from "./wallet";
 import { usdc } from "./bits";
@@ -137,7 +138,7 @@ export function Markets({
           account: address,
           chain,
         });
-        await publicClient.waitForTransactionReceipt({ hash: approveTx });
+        await confirmed(approveTx, () => "The USDC approval reverted — nothing was staked.");
       }
       setStatus("Confirming bet…");
       const tx = await walletClient.writeContract({
@@ -148,7 +149,7 @@ export function Markets({
         account: address,
         chain,
       });
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
+      const receipt = await confirmed(tx, () => betRevertMessage(event.lockTime, Date.now()));
       setStatus(`Bet confirmed in block ${receipt.blockNumber}`);
       refresh();
       refreshGate();
@@ -301,7 +302,7 @@ export function ClaimButton({
         account: address,
         chain,
       });
-      await publicClient.waitForTransactionReceipt({ hash: tx });
+      await confirmed(tx, () => "The claim reverted on chain — nothing was paid out.");
       setPaid(claimable);
       refreshGate();
       onClaimed?.();
