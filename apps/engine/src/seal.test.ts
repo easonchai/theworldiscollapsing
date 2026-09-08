@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { makeMediaStore, startMediaServer } from "./media.js";
+import { branchFileName, makeMediaStore, startMediaServer } from "./media.js";
 import { branchKey, parseRoot, revealBranch, seal, sealingStore, unseal } from "./seal.js";
 
 const ROOT = parseRoot(`0x${"07".repeat(32)}`);
@@ -59,18 +59,19 @@ describe("sealing store + reveal endpoint", () => {
     const root = path.join(dir, "media");
     const store = sealingStore(makeMediaStore({ store: "local", dir: root, baseUrl: "http://x" }), ROOT);
 
-    const src = path.join(dir, "branch-1.mp4");
+    const name = branchFileName(1); // branch-1-<32 hex>.mp4, as the renderer publishes it
+    const src = path.join(dir, name);
     await writeFile(src, PLAIN);
     const first = path.join(dir, "first.mp4");
     await writeFile(first, PLAIN);
 
-    expect(await store.storeFile(EVENT, "branch-1.mp4", src)).toBe(`http://x/${EVENT}/branch-1.mp4.enc`);
+    expect(await store.storeFile(EVENT, name, src)).toBe(`http://x/${EVENT}/${name}.enc`);
     expect(await store.storeFile(EVENT, "first.mp4", first)).toBe(`http://x/${EVENT}/first.mp4`);
 
     // the served branch file is ciphertext; the plaintext beside it is gone
-    const served = await readFile(path.join(root, EVENT, "branch-1.mp4.enc"));
+    const served = await readFile(path.join(root, EVENT, `${name}.enc`));
     expect(served).not.toEqual(PLAIN);
-    await expect(readFile(path.join(root, EVENT, "branch-1.mp4"))).rejects.toThrow();
+    await expect(readFile(path.join(root, EVENT, name))).rejects.toThrow();
 
     // reveal over the internal endpoint, exactly as the CRE workflow calls it
     const server = startMediaServer({
@@ -78,8 +79,9 @@ describe("sealing store + reveal endpoint", () => {
       port: 0,
       reveal: {
         secret: "s3cret",
-        async handle({ eventId, outcome, key }) {
-          return { url: await revealBranch(root, eventId, outcome, key) };
+        // The engine looks the file name up in Event.branchUrls; the test knows it directly.
+        async handle({ eventId, key }) {
+          return { url: await revealBranch(root, eventId, name, key) };
         },
       },
     });
@@ -96,7 +98,10 @@ describe("sealing store + reveal endpoint", () => {
     expect((await post(right, "wrong")).status).toBe(401);
     expect((await post(branchKey(ROOT, EVENT, 0), "s3cret")).status).toBe(400);
     expect((await post(right, "s3cret")).status).toBe(200);
-    expect(await readFile(path.join(root, EVENT, "branch-1.mp4"))).toEqual(PLAIN);
+    expect(await readFile(path.join(root, EVENT, name))).toEqual(PLAIN);
+
+    // the file name becomes a path too
+    await expect(revealBranch(root, EVENT, "../../../etc/passwd", right)).rejects.toThrow(/not a branch file/);
 
     // eventId and outcome become a path, so they are validated before the join
     const traversal = await fetch(base, {

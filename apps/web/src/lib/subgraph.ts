@@ -20,8 +20,10 @@ export type SubgraphMarket = {
   outcomeIdx: number;
   yesPool: string;
   noPool: string;
-  event: SubgraphEvent;
 };
+
+/** An indexed event with the markets derived from it — one per outcome index, pools included. */
+export type SubgraphEventMarkets = SubgraphEvent & { markets: SubgraphMarket[] };
 
 export type SubgraphPosition = {
   id: string;

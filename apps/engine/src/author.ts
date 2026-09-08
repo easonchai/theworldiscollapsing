@@ -39,31 +39,44 @@ const user = (ctx: AuthorCtx, pools: string | null) =>
     .filter(Boolean)
     .join("\n\n");
 
-/** Previous event's pool state from the subgraph. Best effort: authoring never fails because the index is down. */
+/**
+ * Pool state of the last *settled* event on this channel. Best effort: authoring never fails
+ * because the index is down.
+ *
+ * seq − 2, not seq − 1: this event is authored during seq − 1's betting window (the machine primes
+ * the next production the moment betting opens), so seq − 1 has no bets yet and the subgraph has
+ * not even indexed its creation. seq − 2 locked and resolved before seq − 1 went on air.
+ */
 async function previousPools(
   subgraphUrl: string,
   ctx: AuthorCtx,
   fetchImpl: typeof fetch,
+  log: (msg: string, extra?: Record<string, unknown>) => void,
 ): Promise<string | null> {
-  if (ctx.seq <= 1) return null;
+  if (ctx.seq <= 2) return null;
+  const id = eventIdFor(ctx.channelId, ctx.seq - 2);
+  const quiet = (why: string) => {
+    log("no previous pool state for authoring", { channelId: ctx.channelId, seq: ctx.seq, prev: ctx.seq - 2, id, why });
+    return null;
+  };
   try {
     const res = await fetchImpl(subgraphUrl, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         query: "query Prev($id: Bytes!) { event(id: $id) { totalPool betCount markets { outcomeIdx yesPool noPool } } }",
-        variables: { id: eventIdFor(ctx.channelId, ctx.seq - 1) },
+        variables: { id },
       }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) return quiet(`subgraph HTTP ${res.status}`);
     const ev = ((await res.json()) as any)?.data?.event;
-    if (!ev?.markets?.length) return null;
+    if (!ev?.markets?.length) return quiet("subgraph has no markets for that event");
     const lines = ev.markets
       .map((m: any) => `- outcome ${m.outcomeIdx}: YES ${m.yesPool} / NO ${m.noPool}`)
       .join("\n");
     return `total pool ${ev.totalPool} across ${ev.betCount} bets\n${lines}`;
-  } catch {
-    return null;
+  } catch (e) {
+    return quiet(String(e).slice(0, 200));
   }
 }
 
@@ -73,10 +86,12 @@ export function makeAuthor(cfg: {
   reasoning?: Reasoning;
   subgraphUrl?: string;
   fetchImpl?: typeof fetch;
+  log?: (msg: string, extra?: Record<string, unknown>) => void;
 }): Author {
+  const log = cfg.log ?? (() => {});
   return {
     async author(ctx) {
-      const pools = cfg.subgraphUrl ? await previousPools(cfg.subgraphUrl, ctx, cfg.fetchImpl ?? fetch) : null;
+      const pools = cfg.subgraphUrl ? await previousPools(cfg.subgraphUrl, ctx, cfg.fetchImpl ?? fetch, log) : null;
       const messages = [
         { role: "system" as const, content: system(ctx) },
         { role: "user" as const, content: user(ctx, pools) },

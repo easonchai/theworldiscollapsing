@@ -116,6 +116,11 @@ export type Deps = {
   sleep: (ms: number) => Promise<void>;
   log: (msg: string, extra?: Record<string, unknown>) => void;
   alwaysOn: boolean;
+  /**
+   * BRANCH_SEAL=1 only: publish the plaintext of the winning branch at RESOLVE and return its URL
+   * (null = leave `branchUrls` as they are). Without it a sealed reveal serves ciphertext.
+   */
+  revealWinner?: (ev: EventRow, outcome: number) => Promise<string | null>;
 };
 
 export const eventIdFor = (channelId: string, seq: number): Hex => keccak256(toHex(`${channelId}:${seq}`));
@@ -153,10 +158,11 @@ export async function runChannel(channelId: string, d: Deps, signal: AbortSignal
       failures = 0;
     }
     try {
-      live = await step(live, d, () => {
-        // ponytail: next event is produced during BETTING regardless of presence, so at most
-        // one event is generated after the last viewer leaves.
-        next ??= produce(channelId, d);
+      live = await step(live, d, async () => {
+        // Presence is checked here, while the current event is on air, because by the time it ends
+        // `next` is already primed and the gate below would never be reached. ponytail: at most one
+        // event is still produced after the last viewer leaves — the one primed before they left.
+        if (await present(d)) next ??= produce(channelId, d);
       });
     } catch (e) {
       // Steps are idempotent against chain state, so a transient RPC/DB error just retries the step.
@@ -253,7 +259,7 @@ function ensureBranches(ev: EventRow, d: Deps): Promise<EventRow> {
   return p;
 }
 
-async function step(ev: EventRow, d: Deps, onBetting: () => void): Promise<EventRow> {
+async function step(ev: EventRow, d: Deps, onBetting: () => Promise<void>): Promise<EventRow> {
   const sleepUntil = (msEpoch: number) => d.sleep(Math.max(0, msEpoch - d.now()));
   switch (ev.state) {
     case "READY": {
@@ -278,7 +284,7 @@ async function step(ev: EventRow, d: Deps, onBetting: () => void): Promise<Event
       });
     }
     case "BETTING": {
-      onBetting();
+      await onBetting();
       await sleepUntil(ev.lockTime!.getTime());
       return d.store.update(ev.id, { state: "LOCKED" });
     }
@@ -305,6 +311,16 @@ async function step(ev: EventRow, d: Deps, onBetting: () => void): Promise<Event
           branchUrls = (await ensureBranches(ev, d)).branchUrls;
         } catch (e) {
           d.log("branches unavailable at reveal", { seq: ev.seq, error: String(e) });
+        }
+      }
+      // Sealed branches are ciphertext until a key is released; publish the winner's plaintext now
+      // or the reveal plays a dead file.
+      if (branchUrls && d.revealWinner) {
+        try {
+          const url = await d.revealWinner(ev, outcome);
+          if (url) branchUrls = branchUrls.map((u, i) => (i === outcome ? url : u));
+        } catch (e) {
+          d.log("winning branch stayed sealed", { seq: ev.seq, outcome, error: String(e) });
         }
       }
       return d.store.update(ev.id, {

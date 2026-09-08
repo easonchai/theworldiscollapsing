@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { Authored } from "./authored.js";
 import type { Author, EventRow, Render } from "./machine.js";
-import type { MediaStore } from "./media.js";
+import { branchFileName, type MediaStore } from "./media.js";
 
 // Day-2 stand-ins. Real authoring (GPT-6 Astra) and rendering (MiniMax via OpenRouter) replace these on day 3.
 
@@ -93,7 +93,9 @@ export function stubRender(cfg: {
     },
     async branches(ev) {
       const urls = [];
-      for (const [i] of ev.outcomes.entries()) urls.push(await file(ev, `branch-${i}.mp4`, cfg.secondHalfSec, 60 + i * 90));
+      for (const [i] of ev.outcomes.entries()) urls.push(await file(ev, branchFileName(i), cfg.secondHalfSec, 60 + i * 90));
+      // Same sweep as the real renderer: the work directory is dead weight once the files are stored.
+      await rm(path.join(cfg.workDir, ev.id), { recursive: true, force: true });
       return { urls, costUsd: 0 };
     },
   };

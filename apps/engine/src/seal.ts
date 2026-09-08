@@ -53,7 +53,8 @@ export function unseal(sealed: Buffer, key: Hex): Buffer {
   return Buffer.concat([d.update(sealed.subarray(IV_BYTES, sealed.length - TAG_BYTES)), d.final()]);
 }
 
-const BRANCH = /^branch-(\d+)\.mp4$/;
+/** `branch-<i>-<32 hex>.mp4` as published by `branchFileName`; the plain form is still accepted. */
+const BRANCH = /^branch-(\d+)(?:-[0-9a-f]{32})?\.mp4$/;
 
 /**
  * Wraps a media store so `branch-<i>.mp4` is sealed on the way out and published as
@@ -79,12 +80,12 @@ export function sealingStore(inner: MediaStore, root: Hex): MediaStore {
  * the plaintext path. Called by the engine's `/internal/reveal-key` endpoint once the CRE workflow
  * has released the winning key.
  */
-export async function revealBranch(dir: string, eventId: string, index: number, key: string): Promise<string> {
-  // eventId and index come off the wire and become a path, so validate before joining.
+export async function revealBranch(dir: string, eventId: string, name: string, key: string): Promise<string> {
+  // eventId and name come off the wire and become a path, so validate before joining.
   if (!BYTES32.test(eventId)) throw new Error("eventId must be 32 bytes as 0x-prefixed hex");
-  if (!Number.isInteger(index) || index < 0) throw new Error("outcome must be a non-negative integer");
+  if (!BRANCH.test(name)) throw new Error(`not a branch file: ${name}`);
   if (!BYTES32.test(key)) throw new Error("branch key must be 32 bytes as 0x-prefixed hex");
-  const base = path.join(path.resolve(dir), eventId, `branch-${index}.mp4`);
+  const base = path.join(path.resolve(dir), eventId, name);
   const plain = unseal(await readFile(`${base}.enc`), key as Hex); // throws if the key is wrong (GCM tag)
   await writeFile(base, plain);
   return base;

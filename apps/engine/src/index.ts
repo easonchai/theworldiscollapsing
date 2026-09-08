@@ -8,7 +8,7 @@ import { makeAuthor } from "./author.js";
 import { makeMediaStore, startMediaServer } from "./media.js";
 import { makeOpenRouter } from "./openrouter.js";
 import { makeRender } from "./render.js";
-import { parseRoot, revealBranch, sealingStore } from "./seal.js";
+import { branchKey, parseRoot, revealBranch, sealingStore } from "./seal.js";
 import { makeStore } from "./store.js";
 import { stubAuthor, stubRender } from "./stubs.js";
 
@@ -23,6 +23,9 @@ const env = (k: string, fallback?: string): string => {
 };
 
 const timing = process.env.DEMO_MODE === "1" ? DEMO : REAL;
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/** How long a sealed reveal waits for the CRE key before the engine decrypts the winner itself. */
+const CRE_GRACE_MS = 3_000;
 const prisma = makePrisma(env("DATABASE_URL"));
 const store = makeStore(prisma);
 await store.ensureChannels();
@@ -46,6 +49,23 @@ const sealRoot = process.env.BRANCH_SEAL === "1" ? parseRoot(env("BRANCH_SEAL_RO
 if (sealRoot && mediaStoreKind !== "local") throw new Error("BRANCH_SEAL=1 needs MEDIA_STORE=local");
 const media = sealRoot ? sealingStore(plainMedia, sealRoot) : plainMedia;
 
+/**
+ * Decrypt branch `outcome` of a sealed event with `key`, publish the plaintext and point
+ * `Event.branchUrls[outcome]` at it. The file name is read back from the row: branch files carry a
+ * random suffix, so it cannot be derived from the outcome index.
+ */
+async function publishWinningBranch(eventId: string, outcome: number, key: string): Promise<string> {
+  const row = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
+  const urls = [...((row.branchUrls as string[] | null) ?? [])];
+  const sealed = urls[outcome];
+  if (!sealed?.endsWith(".enc")) throw new Error(`event ${eventId} has no sealed branch ${outcome}`);
+  const name = path.basename(new URL(sealed).pathname).replace(/\.enc$/, "");
+  const local = await revealBranch(mediaDir, eventId, name, key);
+  urls[outcome] = await plainMedia.storeFile(eventId, name, local);
+  await prisma.event.update({ where: { id: eventId }, data: { branchUrls: urls } });
+  return urls[outcome]!;
+}
+
 const mediaServer =
   mediaStoreKind === "local"
     ? startMediaServer({
@@ -55,12 +75,7 @@ const mediaServer =
           ? {
               secret: env("REVEAL_SECRET"),
               async handle({ eventId, outcome, key }) {
-                const local = await revealBranch(mediaDir, eventId, outcome, key);
-                const url = await plainMedia.storeFile(eventId, `branch-${outcome}.mp4`, local);
-                const row = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
-                const urls = [...((row.branchUrls as string[] | null) ?? [])];
-                urls[outcome] = url;
-                await prisma.event.update({ where: { id: eventId }, data: { branchUrls: urls } });
+                const url = await publishWinningBranch(eventId, outcome, key);
                 log("branch key released", { eventId, outcome, url });
                 return { url };
               },
@@ -97,6 +112,7 @@ if (!stubMode) {
     model: env("AUTHOR_MODEL", "openai/gpt-6-astra"),
     reasoning: { effort: "medium" }, // gpt-6-astra: reasoning is mandatory, "none" is rejected
     subgraphUrl: process.env.SUBGRAPH_URL,
+    log,
   });
   render = makeRender({
     or,
@@ -122,9 +138,23 @@ const deps: Deps = {
   render,
   timing,
   now: Date.now,
-  sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+  sleep,
   log,
   alwaysOn: process.env.ALWAYS_ON === "1",
+  // The CRE workflow releases the winning key when it sees Arena.Resolved; give it a head start,
+  // then reveal locally. The engine holds BRANCH_SEAL_ROOT anyway, so this costs no secrecy, and a
+  // reveal that plays ciphertext is worse than no sealing at all.
+  revealWinner: sealRoot
+    ? async (ev, outcome) => {
+        await sleep(CRE_GRACE_MS);
+        const row = await prisma.event.findUniqueOrThrow({ where: { id: ev.id } });
+        const url = ((row.branchUrls as string[] | null) ?? [])[outcome] ?? null;
+        if (!url?.endsWith(".enc")) return url; // the CRE key got there first
+        const plain = await publishWinningBranch(ev.id, outcome, branchKey(sealRoot, ev.id, outcome));
+        log("no CRE key in time, revealed the winning branch locally", { eventId: ev.id, outcome, url: plain });
+        return plain;
+      }
+    : undefined,
 };
 
 const ac = new AbortController();

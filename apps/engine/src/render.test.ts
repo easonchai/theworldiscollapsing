@@ -24,6 +24,7 @@ let dir: string;
 let fake: ReturnType<typeof startFake>;
 let mediaServer: ReturnType<typeof startMediaServer>;
 let render: ReturnType<typeof makeRender>;
+let mediaPort: number;
 let script: Authored;
 let ev: EventRow;
 
@@ -33,7 +34,7 @@ beforeAll(async () => {
   await once(fake, "listening");
   mediaServer = startMediaServer({ dir, port: 0 });
   await once(mediaServer, "listening");
-  const mediaPort = (mediaServer.address() as AddressInfo).port;
+  mediaPort = (mediaServer.address() as AddressInfo).port;
 
   const or = makeOpenRouter({
     baseUrl: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`,
@@ -104,10 +105,17 @@ describe("render pipeline against the fake OpenRouter", () => {
     expect(r.urls).toHaveLength(script.outcomes.length);
     const want = script.branches[0]!.reduce((n, s) => n + s.seconds, 0);
     for (let i = 0; i < script.outcomes.length; i++) {
-      expect(r.urls[i]).toMatch(new RegExp(`/0xrendertest/branch-${i}\\.mp4$`));
-      expect(Math.abs((await seconds(path.join(dir, "0xrendertest", `branch-${i}.mp4`))) - want)).toBeLessThan(1);
+      // Random suffix: the only copy of this URL is Event.branchUrls, which is gated on state.
+      expect(r.urls[i]).toMatch(new RegExp(`/0xrendertest/branch-${i}-[0-9a-f]{32}\\.mp4$`));
+      const name = path.basename(new URL(r.urls[i]!).pathname);
+      expect(Math.abs((await seconds(path.join(dir, "0xrendertest", name))) - want)).toBeLessThan(1);
+      // the guessable path an unrevealed branch used to sit at
+      const guess = await fetch(`http://127.0.0.1:${mediaPort}/0xrendertest/branch-${i}.mp4`);
+      expect(guess.status).toBe(404);
     }
     const total = script.branches.flat().reduce((n, s) => n + s.seconds, 0);
     expect(r.costUsd).toBeCloseTo(total * 0.08, 6);
+    // the per-event work directory is swept once the branches are stored
+    await expect(stat(path.join(dir, ".work", "0xrendertest"))).rejects.toThrow();
   }, 180_000);
 });

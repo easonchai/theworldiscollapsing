@@ -247,4 +247,35 @@ describe("channel lifecycle", () => {
     await p;
     expect(h.store.rows.size).toBe(0);
   });
+
+  it("stops after the current event when the last viewer leaves mid-cycle", async () => {
+    const h = harness({ alwaysOn: false });
+    // Present at cold start, gone by the time the first event is on air.
+    h.store.lastSeenAt = async () => (h.fc.calls.length ? new Date(0) : new Date(h.clock.now()));
+    const p = h.run(() => false);
+    await new Promise((r) => setTimeout(r, 50));
+    h.ac.abort();
+    await p;
+    expect(h.fc.calls.filter((c) => c.startsWith("create:"))).toHaveLength(1);
+    expect(rows(h.store).map((r) => r.state)).toEqual(["DONE"]);
+  });
+
+  it("publishes the plaintext of the winning branch at reveal when sealing is on", async () => {
+    const seen: Array<[number, string]> = [];
+    const h = harness({
+      render: {
+        firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
+        branches: async (ev) => ({ urls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}.enc`), costUsd: 2 }),
+      },
+      revealWinner: async (ev, outcome) => {
+        seen.push([outcome, ev.id]);
+        return `branch:${ev.seq}:${outcome}`;
+      },
+    });
+    const store = await h.run((s) => doneCount(s) >= 1);
+    const ev = rows(store)[0];
+    expect(seen).toEqual([[ev.outcome!, ev.id]]);
+    expect(ev.branchUrls![ev.outcome!]).toBe(`branch:1:${ev.outcome}`);
+    expect(ev.branchUrls!.filter((u) => u.endsWith(".enc"))).toHaveLength(ev.outcomes.length - 1);
+  });
 });

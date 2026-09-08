@@ -3,65 +3,53 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { EventPublic } from "@/lib/public";
-import { gql, subgraphConfigured, type SubgraphMarket } from "@/lib/subgraph";
+import { gql, subgraphConfigured, type SubgraphEventMarkets } from "@/lib/subgraph";
+import { EVENT_WINDOW, MARKETS_QUERY, TITLE_WINDOW, marketRows } from "@/lib/market-rows";
 import { impliedYes } from "@/lib/chain";
 import { StateBadge, usdc } from "./bits";
 import { SubgraphNotConfigured } from "./not-configured";
 
-const QUERY = `{
-  markets(first: 200) {
-    id
-    outcomeIdx
-    yesPool
-    noPool
-    event { id nOutcomes lockTime drandRound resolved outcome createdAt totalPool betCount }
-  }
-}`;
-
 export function MarketsList() {
-  const [markets, setMarkets] = useState<SubgraphMarket[] | null>(null);
-  const [events, setEvents] = useState<Record<string, EventPublic>>({});
+  const [indexed, setIndexed] = useState<SubgraphEventMarkets[] | null>(null);
+  const [titles, setTitles] = useState<Record<string, EventPublic>>({});
+  const [eventCount, setEventCount] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [channel, setChannel] = useState("all");
   const [state, setState] = useState("all");
 
+  // Pools and volume live in the index, titles and channels in Postgres. Both are re-read on the
+  // same tick, so an event that appears in the index is titled on the very next render.
   useEffect(() => {
     if (!subgraphConfigured) return;
-    const tick = () =>
-      gql<{ markets: SubgraphMarket[] }>(QUERY)
-        .then((d) => {
-          setMarkets(d.markets);
-          setError(null);
-        })
-        .catch((e: Error) => setError(e.message));
-    tick();
+    let live = true;
+    const tick = async () => {
+      try {
+        const [data, list] = await Promise.all([
+          gql<{ events: SubgraphEventMarkets[]; protocol: { eventCount: number } | null }>(MARKETS_QUERY),
+          fetch(`/api/events?limit=${TITLE_WINDOW}`).then((r) => r.json() as Promise<EventPublic[]>),
+        ]);
+        if (!live) return;
+        setIndexed(data.events);
+        setEventCount(data.protocol?.eventCount ?? null);
+        setTitles(Object.fromEntries(list.map((e) => [e.id.toLowerCase(), e])));
+        setError(null);
+      } catch (e) {
+        if (live) setError((e as Error).message);
+      }
+    };
+    void tick();
     const id = setInterval(tick, 5000);
-    return () => clearInterval(id);
+    return () => {
+      live = false;
+      clearInterval(id);
+    };
   }, []);
 
-  // Titles and channels live in Postgres; pools and volume live in the index. Join them by event id.
-  useEffect(() => {
-    fetch("/api/events?limit=100")
-      .then((r) => r.json() as Promise<EventPublic[]>)
-      .then((list) => setEvents(Object.fromEntries(list.map((e) => [e.id.toLowerCase(), e]))))
-      .catch(() => {});
-  }, []);
-
-  const rows = useMemo(() => {
-    if (!markets) return [];
-    return markets
-      .map((m) => ({ m, e: events[m.event.id.toLowerCase()] ?? null, volume: BigInt(m.yesPool) + BigInt(m.noPool) }))
-      .filter((r) => (channel === "all" ? true : r.e?.channelId === channel))
-      .filter((r) => (state === "all" ? true : state === "resolved" ? r.m.event.resolved : !r.m.event.resolved))
-      .sort((a, b) => {
-        if (a.volume !== b.volume) return a.volume > b.volume ? -1 : 1;
-        return Number(b.m.event.createdAt) - Number(a.m.event.createdAt);
-      });
-  }, [markets, events, channel, state]);
+  const rows = useMemo(() => marketRows(indexed ?? [], titles, { channel, state }), [indexed, titles, channel, state]);
 
   if (!subgraphConfigured) return <SubgraphNotConfigured what="The markets list" />;
 
-  const channels = Array.from(new Set(Object.values(events).map((e) => e.channelId))).sort();
+  const channels = Array.from(new Set(Object.values(titles).map((e) => e.channelId))).sort();
 
   return (
     <div>
@@ -80,28 +68,31 @@ export function MarketsList() {
           <option value="open">open</option>
           <option value="resolved">resolved</option>
         </select>
-        <span className="num ml-auto text-[11px] text-dim">{rows.length} markets</span>
+        <span className="num ml-auto text-[11px] text-dim">
+          {rows.length} markets
+          {eventCount !== null && eventCount > EVENT_WINDOW ? ` · newest ${EVENT_WINDOW} of ${eventCount} events` : ""}
+        </span>
       </div>
 
       {error ? <p className="px-3 py-2 num text-[12px] text-flare">subgraph: {error}</p> : null}
 
       <ul className="divide-y divide-line">
-        {rows.map(({ m, e, volume }) => {
-          const pool: [bigint, bigint] = [BigInt(m.noPool), BigInt(m.yesPool)];
+        {rows.map(({ market, indexed: ie, event, volume }) => {
+          const pool: [bigint, bigint] = [BigInt(market.noPool), BigInt(market.yesPool)];
           const p = impliedYes(pool);
-          const won = m.event.resolved && m.event.outcome === m.outcomeIdx;
+          const won = ie.resolved && ie.outcome === market.outcomeIdx;
           return (
-            <li key={m.id}>
+            <li key={market.id}>
               <Link
-                href={e ? `/e/${e.id}` : "#"}
+                href={`/e/${event.id}`}
                 className="grid grid-cols-[1fr_auto] items-center gap-3 px-3 py-2 hover:bg-panel2 sm:grid-cols-[1fr_120px_120px_120px]"
               >
                 <span className="min-w-0">
                   <span className="block truncate font-body text-[17px] text-bone">
-                    {e ? e.outcomes[m.outcomeIdx] : `outcome ${m.outcomeIdx}`}
+                    {event.outcomes[market.outcomeIdx] ?? `outcome ${market.outcomeIdx}`}
                   </span>
                   <span className="num text-[11px] text-dim">
-                    {e ? `${e.channelId} · ${e.title}` : m.event.id.slice(0, 12)}
+                    {event.channelId} · {event.title}
                   </span>
                 </span>
                 <span className="hidden sm:block">
@@ -117,12 +108,12 @@ export function MarketsList() {
                   <span className="num text-[13px] text-bone">{usdc(volume)}</span>
                 </span>
                 <span className="text-right">
-                  {m.event.resolved ? (
+                  {ie.resolved ? (
                     <span className={`chip ${won ? "border-phos/60 text-phos" : "border-line text-dim"}`}>
                       {won ? "Yes" : "No"}
                     </span>
                   ) : (
-                    <StateBadge state={e?.state ?? "BETTING"} />
+                    <StateBadge state={event.state} />
                   )}
                 </span>
               </Link>
@@ -131,7 +122,7 @@ export function MarketsList() {
         })}
       </ul>
 
-      {markets && !rows.length ? (
+      {indexed && !rows.length ? (
         <p className="px-3 py-6 font-mono text-[12px] text-dim">The index has no markets matching this filter.</p>
       ) : null}
     </div>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { makeAuthor } from "./author.js";
 import { makeOpenRouter, SchemaError } from "./openrouter.js";
-import type { AuthorCtx } from "./machine.js";
+import { eventIdFor, type AuthorCtx } from "./machine.js";
 
 const CTX: AuthorCtx = { channelId: "sports", seq: 3, canon: ["Week 2: Northgate won."], firstHalfSec: 60, secondHalfSec: 60 };
 
@@ -83,7 +83,7 @@ describe("author", () => {
     expect(f.calls).toHaveLength(2);
   });
 
-  it("queries the subgraph for the previous event's pools and puts them in the prompt", async () => {
+  it("queries the last settled event (seq-2) for pools and puts them in the prompt", async () => {
     const calls: any[] = [];
     const impl = (async (url: string | URL, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body));
@@ -104,10 +104,18 @@ describe("author", () => {
 
     await author({ impl }, "http://subgraph").author(CTX);
     expect(calls[0]!.url).toBe("http://subgraph");
-    expect(calls[0]!.body.variables.id).toMatch(/^0x[0-9a-f]{64}$/);
+    // seq-1 is still open for betting when this event is authored, so its pools are always empty:
+    // the pool state that exists is the event before it.
+    expect(calls[0]!.body.variables.id).toBe(eventIdFor(CTX.channelId, CTX.seq - 2));
     const prompt = calls[1]!.body.messages.map((m: { content: string }) => m.content).join("\n");
     expect(prompt).toContain("total pool 5000000 across 4 bets");
     expect(prompt).toContain("outcome 0: YES 3000000 / NO 2000000");
+  });
+
+  it("skips the subgraph for the first two events of a channel", async () => {
+    const f = chatFetch([good]);
+    await author(f, "http://subgraph").author({ ...CTX, seq: 2 });
+    expect(f.calls).toHaveLength(1); // the model call only
   });
 
   it("authors anyway when the subgraph is down", async () => {

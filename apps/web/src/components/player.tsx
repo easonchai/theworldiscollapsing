@@ -2,14 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import type { EventPublic } from "@/lib/public";
-import { REVEALED } from "@/lib/public";
-
-/** Everyone is watching the same moment: playback position is derived from the on-chain clock. */
-export function sourceFor(event: EventPublic): { src: string | null; t0: number | null; revealed: boolean } {
-  const revealed = REVEALED.has(event.state) && !!event.winningBranchUrl;
-  if (revealed) return { src: event.winningBranchUrl, t0: Date.parse(event.revealTime ?? ""), revealed: true };
-  return { src: event.firstHalfUrl, t0: event.startTime ? Date.parse(event.startTime) : null, revealed: false };
-}
+import { sourceFor } from "@/lib/playback";
 
 export function Player({
   event,
@@ -21,10 +14,11 @@ export function Player({
   poster?: string;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
-  const { src, t0 } = sourceFor(event);
+  const { src, t0, archive } = sourceFor(event);
 
   useEffect(() => {
     const video = ref.current;
+    // Archive has no chain clock to follow: it just plays (and loops) from the top.
     if (!video || !src || !t0) return;
 
     // Seek to where the broadcast is now. Past the end, hold the last frame: never loop, never restart.
@@ -68,6 +62,7 @@ export function Player({
       muted
       playsInline
       autoPlay
+      loop={archive}
       preload="auto"
       disablePictureInPicture
     />

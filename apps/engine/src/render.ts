@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { Shot } from "./authored.js";
 import type { EventRow, Render } from "./machine.js";
-import type { MediaStore } from "./media.js";
+import { branchFileName, type MediaStore } from "./media.js";
 import type { OpenRouter } from "./openrouter.js";
 
 const run = promisify(execFile);
@@ -160,7 +160,7 @@ export function makeRender(cfg: {
       for (let b = 0; b < lists.length; b++) {
         const out = work(ev, `branch-${b}.mp4`);
         await concat(flat.map((f, k) => (f.b === b ? paths[k]! : null)).filter((p): p is string => !!p), out);
-        urls.push(await cfg.store.storeFile(ev.id, `branch-${b}.mp4`, out));
+        urls.push(await cfg.store.storeFile(ev.id, branchFileName(b), out));
       }
 
       const seconds = flat.reduce((n, f) => n + f.s.seconds, 0);
@@ -172,6 +172,9 @@ export function makeRender(cfg: {
         seconds: ev.script.firstHalf.reduce((n, s) => n + s.seconds, 0) + seconds,
         usd: round((ev.costUsd ?? 0) + costUsd),
       });
+      // Every finished file is in the media store now; nothing reads this directory again. Without
+      // the sweep it keeps ~18 MB of clips per event forever.
+      await rm(dir, { recursive: true, force: true });
       return { urls, costUsd };
     },
   };

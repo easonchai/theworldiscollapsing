@@ -173,6 +173,16 @@ Cost accounting in the engine therefore counts video seconds only: `sum(firstHal
 | matchstick lib resolution | `Compiler::new(lib)` sets `exec = <libsFolder>/assemblyscript/bin/asc` and `global = <libsFolder>/@graphprotocol/graph-ts/global/global.ts` — both must sit under one folder | github.com/LimeChain/matchstick `src/compiler/mod.rs` |
 | Local graph-node stack | `graphprotocol/graph-node` + `ipfs/kubo:v0.17.0` + postgres; `ethereum: '<network-name>:<rpc>'`, `extra_hosts: host.docker.internal:host-gateway` | github.com/graphprotocol/graph-node `docker/docker-compose.yml` |
 
+### GraphQL query semantics (graph-node) — verified 2026-09-09 (day 8 fixes)
+
+| Fact | Value | Source |
+|---|---|---|
+| Default order of a collection query | "The default sort order is by ID in ascending alphanumeric order, **not** by creation time." So `markets(first: 200)` returns the 200 lexicographically smallest ids, which for `Market.id = eventId ++ outcomeIdx` is random with respect to recency. | thegraph.com/docs/en/subgraphs/querying/graphql-api/ |
+| Sorting | `orderBy: <attribute>`, `orderDirection: asc \| desc`; nested one level with `orderBy: owner__name` | same |
+| Pagination | `first` pages from the start of the collection, `skip` skips; `first: 100, skip: 100` is the second page | same |
+| Single entity | "Single entity queries require the id parameter as a string" — e.g. `token(id: "1")`, so `protocol(id: "1")` is the shape for our `Protocol` singleton | same |
+| ⚠ Derived children inside a collection query | `events(...) { markets { ... } }` (a `@derivedFrom` list selected inside a parent collection) is not spelled out on that page. The markets list depends on it; it was exercised only against a stubbed endpoint, never against a real graph-node. | — |
+
 ### Subgraph MCP
 
 | Fact | Value | Source |

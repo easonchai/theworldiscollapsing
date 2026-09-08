@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import http from "node:http";
@@ -9,6 +9,14 @@ export interface MediaStore {
   /** Copy/upload a finished file and return the URL a browser can play it from. */
   storeFile(eventId: string, name: string, localPath: string): Promise<string>;
 }
+
+/**
+ * Published file name of branch `index`. The random suffix is what keeps an unrevealed ending
+ * private: the URL exists nowhere but `Event.branchUrls`, which the web API discloses only from
+ * REVEAL on. With the bare `branch-<i>.mp4` name anyone holding the (public) event id could
+ * download every ending while betting was still open.
+ */
+export const branchFileName = (index: number) => `branch-${index}-${randomBytes(16).toString("hex")}.mp4`;
 
 const contentType = (name: string) =>
   name.endsWith(".png") ? "image/png" : name.endsWith(".enc") ? "application/octet-stream" : "video/mp4";
