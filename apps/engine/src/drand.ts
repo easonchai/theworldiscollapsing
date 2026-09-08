@@ -1,0 +1,33 @@
+import { concatHex, keccak256, type Hex } from "viem";
+
+// drand quicknet: round r is published at GENESIS + (r - 1) * PERIOD. Mirrors Arena.sol.
+export const GENESIS = 1692803367n;
+export const PERIOD = 3n;
+export const SUSPENSE_GAP = 10n;
+export const DRAND_URL = "https://api.drand.sh/v2/beacons/quicknet/rounds";
+
+export const roundTime = (round: bigint): bigint => GENESIS + (round - 1n) * PERIOD;
+
+/** Smallest round published at or after unix time `t`. */
+export const roundAt = (t: bigint): bigint =>
+  t <= GENESIS ? 1n : (t - GENESIS + PERIOD - 1n) / PERIOD + 1n;
+
+/** Round the contract will accept for a given lock time. */
+export const roundForLock = (lockTime: bigint): bigint => roundAt(lockTime + SUSPENSE_GAP);
+
+/** outcome = keccak256(sig ‖ eventId) mod n — must match Arena.deriveOutcome. */
+export const outcomeFor = (signature: Hex, eventId: Hex, nOutcomes: number): number =>
+  Number(BigInt(keccak256(concatHex([signature, eventId]))) % BigInt(nOutcomes));
+
+export type Beacon = { round: bigint; signature: Hex };
+
+export async function fetchRound(round: bigint, fetchImpl: typeof fetch = fetch): Promise<Beacon> {
+  const res = await fetchImpl(`${DRAND_URL}/${round}`);
+  if (!res.ok) throw new Error(`drand round ${round}: HTTP ${res.status}`);
+  const body = (await res.json()) as { round?: unknown; signature?: unknown };
+  if (body.round !== Number(round)) throw new Error(`drand: expected round ${round}, got ${body.round}`);
+  if (typeof body.signature !== "string" || !/^[0-9a-f]{96}$/.test(body.signature)) {
+    throw new Error("drand: malformed signature");
+  }
+  return { round, signature: `0x${body.signature}` };
+}
