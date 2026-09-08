@@ -92,13 +92,15 @@ function PriceCell({
   const p = impliedYes(pool);
   const share = p === null ? null : yes ? p : 1 - p;
   const mult = multiple(pool, yes);
+  // An unpriced market shows one dim dash, never a dash stacked on a dash: there is no second
+  // number until there is a first stake, and the row's hint says so in words.
   const inner = busy ? (
     <span className="num text-[13px] text-bone">…</span>
+  ) : share === null ? (
+    <span className="money text-[16px] leading-none text-dim">—</span>
   ) : (
     <>
-      <span className="money text-[16px] leading-none text-bone">
-        {share === null ? "—" : `${Math.round(share * 100)}%`}
-      </span>
+      <span className="money text-[16px] leading-none text-bone">{Math.round(share * 100)}%</span>
       <span className="num mt-1 text-[10px] leading-none text-dim">{mult === null ? "—" : `×${mult.toFixed(2)}`}</span>
     </>
   );
@@ -209,7 +211,8 @@ export function Markets({
     <section aria-label="Markets" className="flex flex-col">
       {/* 46px so this header sits on the same baseline as the station bar and the channel bug. */}
       <div className="flex h-[46px] items-center justify-between border-b border-line px-2">
-        <h2 className="text-[22px] text-bone">Markets</h2>
+        {/* Every panel title in the station is the same tracked mono cap. */}
+        <h2 className="tag text-bone">markets</h2>
         <span className="tag">parimutuel · 2% fee</span>
       </div>
 
@@ -232,7 +235,7 @@ export function Markets({
 
       {/* A price table, not a stack of cards: one row per market, fixed columns, so every market of
           an event is on screen at once and the board reads down the YES and NO columns. */}
-      <div className="grid grid-cols-[1fr_62px_62px_72px] border-b border-line">
+      <div className="grid grid-cols-[1fr_56px_56px_68px] border-b border-line">
         <span className="tag px-2 py-1">market</span>
         <span className="tag border-l border-line px-1 py-1 text-center">yes</span>
         <span className="tag border-l border-line px-1 py-1 text-center">no</span>
@@ -248,7 +251,7 @@ export function Markets({
           return (
             <li
               key={i}
-              className={`grid grid-cols-[1fr_62px_62px_72px] border-b border-line ${
+              className={`grid grid-cols-[1fr_56px_56px_68px] border-b border-line ${
                 resolved && won ? "bg-bone/5" : ""
               }`}
             >
@@ -270,6 +273,8 @@ export function Markets({
                     {usdc(parsed)} returns {usdc(previewPayout(parsed, true, m.pool))} / {" "}
                     {usdc(previewPayout(parsed, false, m.pool))}
                   </p>
+                ) : total === 0n ? (
+                  <p className="num mt-0.5 text-[11px] text-dim">first stake sets price</p>
                 ) : null}
               </div>
 
@@ -296,7 +301,7 @@ export function Markets({
 
       <div aria-live="polite" className="border-t border-line px-2 py-2">
         {open ? (
-          <p className="text-[13px] leading-[1.5] text-dim">
+          <p className="prose text-dim">
             The price is the pool: the first stake on a side sets it, every later stake moves it.
           </p>
         ) : null}

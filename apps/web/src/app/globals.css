@@ -2,22 +2,23 @@
 
 @theme {
   /* Late-night transmission: green-black vacuum, sodium amber, one accent. The picture is the only
-     place hue is allowed to be loud, and even there it is held at phosphor-off luminance. */
+     place hue is allowed to be loud, and there it runs at full brightness — the signal is the star. */
   --color-vac: #070a08;
   --color-panel: #0d110e;
   --color-panel2: #131916;
   --color-line: #232c25;
   --color-bone: #ece7da;
   --color-dim: #8b9489;
-  --color-amber: #f2a93b; /* live, urgent, and the brightest thing on any screen */
-  --color-flare: #ff4d33; /* fault, and nothing else */
+  --color-amber: #f2a93b; /* time or money is live: the countdown and the one CTA. Nothing else. */
+  --color-flare: #e0261a; /* one red: the UMD tally block (on air) and a fault message. Nothing else. */
 
-  /* Two faces, no third voice. Archivo (grotesk, tabular figures) carries headlines, money and the
-     clock; Roboto Mono carries every label, every readout, every line of prose. */
+  /* Two faces, no third voice. Archivo (grotesk, tabular figures) carries headlines, prose, money
+     and the clock; Roboto Mono carries every label and every readout. */
   --font-display: var(--font-archivo), "Helvetica Neue", Arial, sans-serif;
   --font-mono: var(--font-roboto-mono), ui-monospace, monospace;
 
-  /* Everything sits on a 7px rhythm: p-1 = 7px, p-2 = 14px, p-4 = 28px. */
+  /* Everything sits on a 7px rhythm: p-1 = 7px, p-2 = 14px, p-4 = 28px. Every left edge in the
+     station — wordmark, tile furniture, chyron label, panel padding — starts at 14px. */
   --spacing: 0.4375rem;
 
   --radius-xs: 1px;
@@ -74,30 +75,14 @@
 }
 
 @layer components {
-  /* Vignette over the whole viewport. The scanlines live on `.signal` instead, so no rule ever
-     runs through a caption. */
-  .crt::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: 60;
-    pointer-events: none;
-    background: radial-gradient(ellipse at 50% 40%, transparent 58%, rgba(0, 0, 0, 0.5) 100%);
-  }
-
-  /* A video frame treated as a signal rather than a rectangle: interlace, phosphor bloom, tube
-     vignette. It covers the footage only — every caption layer sits above it. The picture itself is
-     dimmed by a brightness filter on the wrapper, so bars never outshine the type over them. */
+  /* One honest treatment on the picture: interlace, nothing else. No vignette, no bloom, no wash —
+     a tile is either a full-brightness signal or a hard-black standby slate. */
   .signal {
     position: absolute;
     inset: 0;
     z-index: 1;
     pointer-events: none;
-    background:
-      repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.42) 0 1px, transparent 1px 3px),
-      radial-gradient(ellipse at 50% 45%, rgba(242, 169, 59, 0.05) 0%, transparent 55%),
-      radial-gradient(ellipse at 50% 50%, transparent 26%, rgba(0, 0, 0, 0.8) 100%),
-      linear-gradient(rgba(7, 10, 8, 0.34), rgba(7, 10, 8, 0.34));
+    background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.34) 0 1px, transparent 1px 3px);
   }
 
   .panel {
@@ -105,22 +90,26 @@
     background: var(--color-panel);
   }
 
-  /* Small uppercase mono label used on every piece of station furniture. */
+  /* The one label style in the station: every LOCKS IN / SEQ / MARKETS / panel title is this size
+     and this tracking, in the mono, so labels never compete with each other. */
   .tag {
     font-family: var(--font-mono);
     font-size: 11px;
+    font-weight: 400;
     letter-spacing: 0.18em;
+    line-height: 1.2;
     text-transform: uppercase;
     color: var(--color-dim);
   }
 
-  /* The label above a number big enough to read across the room. */
-  .tag-lg {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--color-dim);
+  /* Prose is the grotesk at 14/20 — the mono is for labels and numbers only, never paragraphs. */
+  .prose {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 20px;
+    letter-spacing: 0;
+    text-transform: none;
   }
 
   .chip {
@@ -136,12 +125,29 @@
     color: var(--color-bone);
   }
 
+  /* The tally: a real UMD lights a solid block when a source is on air. It is the only filled red
+     in the station and it reads from across the room. */
+  .tally {
+    display: inline-flex;
+    align-items: center;
+    background: var(--color-flare);
+    color: #000;
+    padding: 2px calc(var(--spacing) * 0.75);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    line-height: 1.2;
+    text-transform: uppercase;
+  }
+
   .num {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
 
-  /* Money and clocks: the display face, always tabular, so a countdown never shifts its own width. */
+  /* Money and clocks: the headline grotesk, always tabular, so the countdown is the same face as
+     the headline above it and never shifts its own width. */
   .money {
     font-family: var(--font-display);
     font-weight: 700;
@@ -150,11 +156,10 @@
     letter-spacing: -0.02em;
   }
 
-  /* A keyed lower-third: the picture fades into the type instead of being guillotined by a black
-     box, and one amber hairline keys the band to the signal above it. */
+  /* The lower-third plate: solid black, punched through the picture under one hairline. */
   .slate {
-    border-top: 1px solid var(--color-amber);
-    background: linear-gradient(to top, rgba(4, 6, 5, 0.95) 0%, rgba(4, 6, 5, 0.88) 58%, rgba(4, 6, 5, 0) 100%);
+    border-top: 1px solid var(--color-line);
+    background: #000;
   }
 
   /* One chyron for the whole station: fixed to the foot of the viewport, full bleed, so it reads
@@ -171,22 +176,35 @@
     background: #000;
   }
 
-  /* Fixed cell so the label never clips and the crawl is masked behind it. */
+  /* Fixed cell, left-aligned on the station's 14px edge, so the label never clips and the crawl is
+     masked behind it. */
   .chyron-label {
     position: relative;
-    z-index: 1;
+    z-index: 2;
     display: flex;
-    width: 96px;
+    width: 112px;
     flex: none;
     align-items: center;
-    justify-content: center;
+    padding-inline: calc(var(--spacing) * 2);
     border-right: 1px solid var(--color-line);
     background: #000;
     font-family: var(--font-mono);
     font-size: 12px;
+    font-weight: 700;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: var(--color-amber);
+    color: var(--color-bone);
+  }
+
+  /* 48px of black falling off the label cell, so the crawl fades in instead of being sliced. */
+  .chyron-mask {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    z-index: 1;
+    width: 48px;
+    pointer-events: none;
+    background: linear-gradient(to right, #000 0%, rgba(0, 0, 0, 0) 100%);
   }
 
   .btn {
@@ -245,11 +263,6 @@
     padding: var(--spacing);
   }
 
-  /* The live dot on air. */
-  .pulse {
-    animation: pulse 1.6s steps(2, end) infinite;
-  }
-
   /* Broadcast ticker: the content is rendered twice so the loop has no seam. */
   .marquee {
     display: flex;
@@ -259,37 +272,18 @@
     animation: marquee 34s linear infinite;
   }
 
-  /* One slow beam, crossing the hero screen only: a rare deliberate event, not a sticker printed
-     on every tile of the wall. */
-  .beam::before {
-    content: "";
+  /* The implied-odds bar on a wall market row: a rule that fills, not a chart. */
+  .odds-bar {
+    position: relative;
+    height: 3px;
+    background: var(--color-line);
+  }
+
+  .odds-bar > span {
     position: absolute;
-    inset: 0;
-    z-index: 20;
-    pointer-events: none;
-    background: linear-gradient(105deg, transparent 42%, rgba(242, 169, 59, 0.07) 50%, transparent 58%);
-    background-size: 260% 100%;
-    animation: beam 17s linear infinite;
-  }
-}
-
-@keyframes pulse {
-  0%,
-  50% {
-    opacity: 1;
-  }
-  51%,
-  100% {
-    opacity: 0.15;
-  }
-}
-
-@keyframes beam {
-  from {
-    background-position: 130% 0;
-  }
-  to {
-    background-position: -130% 0;
+    inset-block: 0;
+    left: 0;
+    background: var(--color-bone);
   }
 }
 
@@ -303,9 +297,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pulse,
-  .marquee,
-  .beam::before {
+  .marquee {
     animation: none;
   }
 }
