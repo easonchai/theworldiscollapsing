@@ -56,7 +56,7 @@ export function VerifyBadge({ event }: { event: EventPublic }) {
         </span>
         <span className="tag">
           {ok
-            ? "verified against drand quicknet"
+            ? "verified against drand evmnet"
             : error
               ? "could not reach drand"
               : check

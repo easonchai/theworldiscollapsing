@@ -1,10 +1,11 @@
 import { concatHex, keccak256, type Hex } from "viem";
 
-// drand quicknet: round r is published at GENESIS + (r - 1) * PERIOD. Mirrors Arena.sol.
-export const GENESIS = 1692803367n;
+// drand evmnet (BN254, verified on chain by DrandVerifier): round r is published at
+// GENESIS + (r - 1) * PERIOD. Mirrors Arena.sol.
+export const GENESIS = 1727521075n;
 export const PERIOD = 3n;
 export const SUSPENSE_GAP = 10n;
-export const DRAND_URL = "https://api.drand.sh/v2/beacons/quicknet/rounds";
+export const DRAND_URL = "https://api.drand.sh/v2/beacons/evmnet/rounds";
 
 export const roundTime = (round: bigint): bigint => GENESIS + (round - 1n) * PERIOD;
 
@@ -26,7 +27,8 @@ export async function fetchRound(round: bigint, fetchImpl: typeof fetch = fetch)
   if (!res.ok) throw new Error(`drand round ${round}: HTTP ${res.status}`);
   const body = (await res.json()) as { round?: unknown; signature?: unknown };
   if (body.round !== Number(round)) throw new Error(`drand: expected round ${round}, got ${body.round}`);
-  if (typeof body.signature !== "string" || !/^[0-9a-f]{96}$/.test(body.signature)) {
+  // evmnet signatures are uncompressed BN254 G1 points: 64 bytes.
+  if (typeof body.signature !== "string" || !/^[0-9a-f]{128}$/.test(body.signature)) {
     throw new Error("drand: malformed signature");
   }
   return { round, signature: `0x${body.signature}` };

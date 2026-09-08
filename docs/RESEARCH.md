@@ -48,6 +48,9 @@ Cost model used in plan: event = 10 first-half clips @480P + N branches × 10 cl
 
 Outcome derivation (B-long): `outcome = uint(keccak256(sig_R ‖ eventId)) % n`, round R fixed on-chain at creation, `R` chosen after `lockTime + 10s`.
 
+**Superseded on 2026-09-09**: the beacon is now drand `evmnet`, verified on chain. See
+"On-chain drand verification" below.
+
 ## Market mechanism
 
 - Parimutuel: house is escrow, players pay players, pool ratio = live odds. No LP to drain. ~3–6h.
@@ -292,3 +295,56 @@ CRE account this stops at `cre workflow build`.
 ### drand (client side)
 
 `GET https://api.drand.sh/v2/beacons/quicknet/rounds/{round}` → `{ round, randomness, signature }` with a 96-hex-char signature; the badge compares `0x${signature}` with `Arena.events(eventId).signature` and recomputes `keccak256(sig ‖ eventId) mod n` with viem. Confirmed against live rounds during browser QA (e.g. round 32028612 → outcome 1 of 3).
+
+⚠ The badge now points at `.../beacons/evmnet/rounds/{round}` (128-hex-char signature). The
+derivation is unchanged.
+
+## On-chain drand verification — verified 2026-09-09 (day 7 stretch)
+
+The question: can `Arena.resolve` stop trusting the resolver and check the beacon itself?
+Both options were tested against live endpoints before choosing.
+
+### Option A — keep quicknet (BLS12-381) and use the EIP-2537 precompiles
+
+| Fact | Value | Source |
+|---|---|---|
+| quicknet scheme | `bls-unchained-g1-rfc9380`, genesis 1692803367, period 3, 48-byte compressed G1 signatures | `GET https://api.drand.sh/v2/beacons/quicknet/info` |
+| **EIP-2537 is live on Base Sepolia** | `cast call 0x…0b` (BLS12_G1ADD) with 256 zero bytes returns 128 zero bytes (infinity + infinity), and `G1ADD(G, G)` returns exactly the spec's `2G` = `0x…0572cbea904d67468808c8eb50a9450c9721db309128012543902d0ac358a62ae28f75bb8f1c7c42c39a8c5529bf0f4e` / `0x…166a9d8cabc673a322fda673779d8e3822ba3ecb8670e461f73bb9021d5fd76a4c56d9d4cd16bd1bba86881979749d28`. An address with no code returns `0x`, so this is the precompile, not an account. | `cast call --rpc-url https://sepolia.base.org` (chain id 84532), 2026-09-09 |
+| Pairing precompile 0x11 | rejects empty input (`PrecompileError`) — expected: EIP-2537 requires a non-empty multiple of 384 bytes | same |
+| What is still missing | No audited Solidity `hash_to_curve` for BLS12-381 G1. It would have to be hand-written: `expand_message_xmd` with SHA-256, `hash_to_field` over a 381-bit prime (two 64-byte reductions through the modexp precompile), then `MAP_FP_TO_G1` (0x10) ×2 + `G1ADD`. Plus G1 points must be decompressed off-chain, since EIP-2537 only takes uncompressed encodings. | reading the EIP + the drand scheme |
+
+So option A is *possible* on Base Sepolia today, but it means shipping hand-written hash-to-curve
+with no reference implementation to compare against, and it does not work on chains without Prague.
+
+### Option B — switch the beacon to drand `evmnet` (BN254) — **chosen**
+
+| Fact | Value | Source |
+|---|---|---|
+| Beacons offered | `["default","evmnet","quicknet"]` | `GET https://api.drand.sh/v2/beacons` |
+| `evmnet` info | `public_key` 128 bytes, `period` 3, `genesis_time` **1727521075**, `scheme` **`bls-bn254-unchained-on-g1`**, `chain_hash` `04f1e9062b8a81f848fded9c12306733282b2727ecced50032187751166ec8c3` | `GET https://api.drand.sh/v2/beacons/evmnet/info` |
+| Round shape | `{ "round": 20456251, "signature": "<128 hex>" }` — 64 bytes, an **uncompressed** BN254 G1 point (x ‖ y), so no decompression is needed on chain | `GET https://api.drand.sh/v2/beacons/evmnet/rounds/{round}` |
+| Signed message (unchained) | `keccak256(binary.BigEndian uint64(round))` — the scheme's `DigestBeacon` writes the round big-endian into a legacy-keccak256 | `drand/crypto/schemes.go`, `NewPedersenBLSBN254UnchainedOnG1Scheme` |
+| Hash-to-curve DST | G1: **`BLS_SIG_BN254G1_XMD:KECCAK-256_SVDW_RO_NUL_`** (G2: `…BN254G2…`) — set explicitly by that scheme | same |
+| Public key encoding | 128 bytes marshalling as `x.c1 ‖ x.c0 ‖ y.c1 ‖ y.c0`, i.e. already in the (imaginary, real) order the EIP-197 pairing precompile wants | inferred from kyber's bn254 `gfP2{x = c1, y = c0}` marshalling, then **confirmed empirically**: a real beacon verifies with this ordering (`test_VerifiesRealBeacons`) |
+| Reference Solidity | `randa-mu/blocklock-solidity` `src/libraries/BLS.sol` (MIT, adapted from `kevincharm/bls-bn254`): `expandMsgTo96` (RFC 9380 §5.3.1 with H = keccak256), `hashToField`, SVDW `mapToPoint`, `verifySingle` (precompile 0x08 with the negated G2 generator) | raw.githubusercontent.com/randa-mu/blocklock-solidity/main/src/libraries/BLS.sol |
+
+`packages/contracts/src/DrandVerifier.sol` is that code trimmed to the four functions the check needs,
+with `ModexpInverse`/`ModexpSqrt` (24 KB of unrolled addition chains in the original) replaced by the
+modexp precompile 0x05: `inverse = a^(P−2)`, `sqrt = a^((P+1)/4)` (valid because `P ≡ 3 mod 4`).
+Result: 3,020 bytes of runtime code and ~153k gas per `verify`.
+
+Measured (`forge test -vv`, foundry 1.7.1):
+
+| | Gas |
+|---|---|
+| `DrandVerifier.verify` (real round 20456251) | 153,066 |
+| `Arena.resolve` — trusted mode (`verifier == address(0)`) | 72,651 |
+| `Arena.resolve` — verified | 219,202 |
+
+Negative cases proven, not assumed: a signature with one flipped bit in `y` fails the on-curve
+pre-check, and the *genuine* beacon of round 20456252 fails the pairing for round 20456251 (and vice
+versa) — so the round binding is real, not just a length check.
+
+⚠ Not verified: nothing has been deployed to Base Sepolia, so the verifier has only ever run on
+anvil (foundry 1.7.1) and in `forge test`. The bn254 precompiles 0x05/0x06/0x08 are pre-Byzantium/
+Byzantium-era and present on every EVM chain, but that is reasoning, not a measurement on 84532.

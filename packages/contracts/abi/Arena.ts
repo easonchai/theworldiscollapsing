@@ -404,6 +404,19 @@ export const arenaAbi = [
   },
   {
     "type": "function",
+    "name": "setVerifier",
+    "inputs": [
+      {
+        "name": "v",
+        "type": "address",
+        "internalType": "contract IDrandVerifier"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "stakes",
     "inputs": [
       {
@@ -471,6 +484,19 @@ export const arenaAbi = [
         "name": "",
         "type": "address",
         "internalType": "contract IERC20"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "verifier",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IDrandVerifier"
       }
     ],
     "stateMutability": "view"
@@ -637,6 +663,19 @@ export const arenaAbi = [
     "inputs": [
       {
         "name": "treasury",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VerifierSet",
+    "inputs": [
+      {
+        "name": "verifier",
         "type": "address",
         "indexed": false,
         "internalType": "address"

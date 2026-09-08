@@ -6,7 +6,7 @@ Every agent working in this repo codes against the names, routes, env vars and r
 
 | Package | Role | Key exports / commands |
 |---|---|---|
-| `packages/contracts` (Foundry) | `Gate`, `MockUSDC`, `Arena` | `import { arenaAbi } from "contracts/abi/Arena"` (also `MockUSDC`, `Gate`). `pnpm --filter contracts abi` regenerates. `forge test`. |
+| `packages/contracts` (Foundry) | `Gate`, `MockUSDC`, `Arena`, `DrandVerifier` | `import { arenaAbi } from "contracts/abi/Arena"` (also `MockUSDC`, `Gate`). `pnpm --filter contracts abi` regenerates. `forge test`. |
 | `packages/db` (Prisma 7 + adapter-pg) | schema, migrations, client | `import { makePrisma, Prisma, type Event } from "db"`. `pnpm --filter db generate|migrate|deploy|reset`. CLI reads `packages/db/.env`. |
 | `apps/engine` | the autonomous loop | `pnpm --filter engine dev|start|typecheck`, `vitest run`. |
 | `apps/web` | Next.js 16 app router | `pnpm --filter web dev|build|lint`. |
@@ -25,7 +25,7 @@ Every agent working in this repo codes against the names, routes, env vars and r
 `RENDER → READY → BETTING → LOCKED → RESOLVE → REVEAL → CANON → PAUSE → DONE`, or `SKIPPED`.
 
 - `BETTING`: first half plays from `startTime`; betting open until `lockTime`.
-- `LOCKED`: lock passed; waiting for the drand round. Round time = `1692803367 + (round − 1) × 3` (unix seconds).
+- `LOCKED`: lock passed; waiting for the drand round. Round time = `1727521075 + (round − 1) × 3` (unix seconds) — drand **evmnet** genesis, see "Randomness" below.
 - `RESOLVE`: beacon fetched / resolve tx in flight (seconds).
 - `REVEAL`, `CANON`, `PAUSE`, `DONE`: outcome known; winning branch plays from `revealTime`.
 - **`branchUrls` must never reach a client before state ∈ {REVEAL, CANON, PAUSE, DONE}**, and then only `branchUrls[outcome]` as `winningBranchUrl`. Enforce in the web API layer; never pass a raw row to the client.
@@ -119,6 +119,32 @@ Ids: `Event.id` = eventId; `Market.id` = eventId ++ outcomeIdx (1 byte); `Positi
 
 Subgraph name is `twic/arena` locally and `twic-arena` in Studio, so `NEXT_PUBLIC_SUBGRAPH_URL` / `SUBGRAPH_URL` = `http://localhost:8000/subgraphs/name/twic/arena` against the local graph-node. Semantics worth coding against: a `Market` row exists for every outcome index from `EventCreated`, before any bet (pools 0). `Position.claimed` flips to true for **every** position that bettor holds on the event, because `Arena.claim(eventId)` settles all of its markets in one call. `Event.outcome` and `Event.signature` are null until `Resolved`.
 
+## Randomness — drand `evmnet`, verified on chain (day 7 stretch)
+
+The beacon is **drand `evmnet`**, not quicknet. It is drand's BN254 network, built so the EVM can
+check its signatures with the cheap bn254 precompiles (0x06 / 0x08).
+
+| | |
+|---|---|
+| Beacon URL | `https://api.drand.sh/v2/beacons/evmnet/rounds/{round}` |
+| Genesis / period | `1727521075` / `3 s` (`Arena.DRAND_GENESIS` / `DRAND_PERIOD`, `apps/engine/src/drand.ts`, `apps/web/src/lib/chain.ts` all mirror these) |
+| Round math | `roundTime(r) = GENESIS + (r − 1) × 3`; `roundAt(t)` is the first round published at or after `t`; the committed round is `roundAt(lockTime + SUSPENSE_GAP)`, `SUSPENSE_GAP = 10 s` |
+| Signature | **64 bytes**, an uncompressed BN254 G1 point (quicknet's were 48). `Arena.resolve` rejects any other length |
+| Signed message | `keccak256(uint64be(round))`, hashed to G1 with DST `BLS_SIG_BN254G1_XMD:KECCAK-256_SVDW_RO_NUL_` (scheme `bls-bn254-unchained-on-g1`) |
+| Outcome | unchanged: `outcome = uint(keccak256(signature ‖ eventId)) % n` |
+
+`Arena.verifier` (an `IDrandVerifier`, `setVerifier` is `onlyOwner`) decides how much resolution trusts
+the resolver:
+
+- `address(0)` — **trusted mode**, the pre-day-7 behaviour: the signature is stored as submitted and
+  only checked off-chain (the web verify badge). This is still the default in a fresh `Arena`.
+- a `DrandVerifier` — `resolve()` reverts `BadSignature` unless the BLS signature verifies against the
+  evmnet group public key **for the round the event committed at creation**. `script/Deploy.s.sol`
+  deploys one and sets it, so every deployed stack runs verified.
+
+Gas: `resolve` costs ~73k in trusted mode and ~219k with the verifier (`DrandVerifier.verify` alone is
+~153k). Numbers logged by `forge test -vv` (`test_ResolveGasInTrustedMode`, `test_ResolveWithVerifierAcceptsRealBeacon`).
+
 ## Gate / verification
 
 `Gate.setVerified(addr, bool)` is `onlyOwner`; the owner key is `GATE_OWNER_PRIVATE_KEY` (the deployer). The web verify route is its only caller.
@@ -134,7 +160,7 @@ REAL: txBuffer 15 s, first half 60 s, second half 60 s, pause 30 s. DEMO: 3 / 15
 | Service | Port(s) | Notes |
 |---|---|---|
 | Postgres (docker) | 5433 | `docker compose up -d`. Use a separate database per agent: `CREATE DATABASE twic_web;` etc. via `docker exec theworldiscollapsing-db-1 psql -U twic -d twic -c ...`. |
-| anvil | 8545 (web agent), 8546 (subgraph agent), 8547 (cre agent) | `anvil --port N`. Deploy: `RESOLVER=<acct0> TREASURY=<acct1> forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:N --private-key <acct0 key> --broadcast`; addresses in `broadcast/Deploy.s.sol/31337/run-latest.json`. |
+| anvil | 8545 (web agent), 8546 (subgraph agent), 8547 (cre agent) | `anvil --port N`. Deploy: `RESOLVER=<acct0> TREASURY=<acct1> forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:N --private-key <acct0 key> --broadcast`; addresses in `broadcast/Deploy.s.sol/31337/run-latest.json`. The script also deploys `DrandVerifier` and calls `arena.setVerifier(...)`. |
 | engine media | 4000 / 4001 / 4002 (cre agent) | `MEDIA_PORT` |
 | fake OpenRouter | 4100 / 4101 | `FAKE_PORT` |
 | graph-node | 8000 (GraphQL), 8001, 8020 (admin), 8030 (status), 8040; ipfs 5001; its own postgres 5434 | `docker compose -f packages/subgraph/docker-compose.yml up -d`. Ethereum network name `localhost` → `host.docker.internal:8546`. Teardown with `down -v`. |

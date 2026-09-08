@@ -5,7 +5,7 @@ import { DEMO, runChannel, type Chain, type Deps, type EventRow, type Store, typ
 import { stubAuthor } from "./stubs.js";
 
 const SIG =
-  "0x86da6c35d9cad6916a54c9a0679f031bc5dd6ec3515a5d4eaa512077fd9fb97164c1838a9ad6ac70a00f36f016c86977" as const;
+  "0x1a909b075202e693fc0e3bd141bbb24fce116a6ffb4343674417b89de6c658492379ad0c3a0c34a4ac46b9130948e781e527430db6240fef8253931abbb7f768" as const;
 
 // Virtual clock: sleeping advances time instantly, so a full lifecycle runs in microseconds.
 function fakeClock(start = 1_788_912_000_000) {

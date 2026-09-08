@@ -5,10 +5,11 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IGate} from "./Gate.sol";
+import {IDrandVerifier} from "./DrandVerifier.sol";
 
 /// @title Arena — parimutuel casino over AI-generated events.
 /// @notice An event has n outcomes. Each outcome index is an implicit binary YES/NO market.
-///         One drand quicknet round, fixed at creation, resolves every market of the event:
+///         One drand evmnet round, fixed at creation, resolves every market of the event:
 ///         outcome = keccak256(signature ‖ eventId) mod n. Winners split the market's pool
 ///         pro rata, less FEE_BPS to the treasury. Markets with an empty winning pool refund.
 contract Arena is Ownable {
@@ -18,8 +19,8 @@ contract Arena is Ownable {
     uint8 public constant NO = 0;
     uint8 public constant YES = 1;
 
-    // drand quicknet: round r is published at DRAND_GENESIS + (r - 1) * DRAND_PERIOD.
-    uint64 public constant DRAND_GENESIS = 1692803367;
+    // drand evmnet: round r is published at DRAND_GENESIS + (r - 1) * DRAND_PERIOD.
+    uint64 public constant DRAND_GENESIS = 1727521075;
     uint64 public constant DRAND_PERIOD = 3;
     /// @notice Betting must lock at least this long before the deciding round is published.
     uint64 public constant SUSPENSE_GAP = 10;
@@ -37,6 +38,9 @@ contract Arena is Ownable {
     IGate public immutable gate;
     address public resolver;
     address public treasury;
+    /// @notice On-chain drand beacon verifier. `address(0)` = trusted mode: the resolver's
+    ///         signature is stored as submitted and only checked off-chain.
+    IDrandVerifier public verifier;
 
     mapping(bytes32 => EventData) public events;
     /// @dev eventId => outcome index => [NO pool, YES pool]
@@ -50,6 +54,7 @@ contract Arena is Ownable {
     event Claimed(bytes32 indexed eventId, address indexed bettor, uint256 payout, uint256 fee);
     event ResolverSet(address resolver);
     event TreasurySet(address treasury);
+    event VerifierSet(address verifier);
 
     error NotResolver();
     error EventExists();
@@ -91,6 +96,12 @@ contract Arena is Ownable {
         emit TreasurySet(t);
     }
 
+    /// @notice Point resolution at an on-chain beacon verifier, or `address(0)` for trusted mode.
+    function setVerifier(IDrandVerifier v) external onlyOwner {
+        verifier = v;
+        emit VerifierSet(address(v));
+    }
+
     // ── lifecycle ──────────────────────────────────────────────────────────
 
     /// @notice Open an event. The deciding drand round is committed here, before any bet.
@@ -117,14 +128,16 @@ contract Arena is Ownable {
         emit Bet(eventId, msg.sender, outcomeIdx, yes, amount);
     }
 
-    /// @notice Submit the drand signature for the committed round. v1 trusts the resolver;
-    ///         the signature is stored so anyone can check it against the drand API.
+    /// @notice Submit the drand signature for the committed round. When `verifier` is set the
+    ///         signature is checked on chain, so resolution no longer trusts the resolver; it is
+    ///         stored either way so anyone can check it against the drand API.
     function resolve(bytes32 eventId, bytes calldata signature) external onlyResolver {
         EventData storage e = events[eventId];
         if (e.lockTime == 0) revert UnknownEvent();
         if (block.timestamp < e.lockTime) revert BettingOpen();
         if (e.resolved) revert AlreadyResolved();
-        if (signature.length != 48) revert BadSignature(); // quicknet: compressed G1 point
+        if (signature.length != 64) revert BadSignature(); // evmnet: uncompressed BN254 G1 point
+        if (address(verifier) != address(0) && !verifier.verify(e.drandRound, signature)) revert BadSignature();
         uint8 outcome = deriveOutcome(signature, eventId, e.nOutcomes);
         e.resolved = true;
         e.outcome = outcome;

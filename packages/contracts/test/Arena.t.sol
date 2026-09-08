@@ -5,16 +5,22 @@ import {Test} from "forge-std/Test.sol";
 import {Gate} from "../src/Gate.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
 import {Arena} from "../src/Arena.sol";
+import {DrandVerifier} from "../src/DrandVerifier.sol";
 
 contract ArenaTest is Test {
-    // Real drand quicknet beacon, round 32026121 (2026-09-08T15:35:27Z).
+    // Real drand evmnet beacon, round 20456251 (published 1788889825).
     // Reference hash computed off-chain: cast keccak 0x<sig><eventId>.
+    uint64 constant ROUND = 20456251;
     bytes constant SIG =
-        hex"86da6c35d9cad6916a54c9a0679f031bc5dd6ec3515a5d4eaa512077fd9fb97164c1838a9ad6ac70a00f36f016c86977";
+        hex"1a909b075202e693fc0e3bd141bbb24fce116a6ffb4343674417b89de6c658492379ad0c3a0c34a4ac46b9130948e781e527430db6240fef8253931abbb7f768";
+    // Genuine beacon of the next round — a valid signature for the wrong round.
+    bytes constant SIG2 =
+        hex"1c4598779baab0fd24c12d33883eaf6e3b76cc7972d45d30876b2518acc75627278c2368c015a912365e4ca4e06bdab0e6042c72f0449824e4589fdeeb46fa0d";
     bytes32 constant EID = keccak256("sports:1"); // 0xfa9065743d1211e328d8534fe669e4f60e9a24fec6efb614d9add44c96f9b674
-    bytes32 constant HASH = 0x2e085a78ceaf8e9d17b6ea974972338a20bd486dbbd4386bb181bd1a709f9991;
+    bytes32 constant HASH = 0x206ce67f980f0f6700f2dcec72773785f358e984441ddd6e5748246bfe33f9aa;
 
-    uint256 constant T0 = 1_788_912_000;
+    // 300 s before round ROUND is published, so `open()` commits a round in the near future.
+    uint256 constant T0 = 1_788_889_525;
 
     Gate gate;
     MockUSDC usdc;
@@ -116,9 +122,9 @@ contract ArenaTest is Test {
 
     function test_KnownSignatureDerivation() public {
         assertEq(keccak256(abi.encodePacked(SIG, EID)), HASH);
-        assertEq(arena.deriveOutcome(SIG, EID, 2), 1);
+        assertEq(arena.deriveOutcome(SIG, EID, 2), 0);
         assertEq(arena.deriveOutcome(SIG, EID, 3), 1);
-        assertEq(arena.deriveOutcome(SIG, EID, 5), 4);
+        assertEq(arena.deriveOutcome(SIG, EID, 5), 1);
 
         uint64 lock = open(EID, 3);
         lockAndResolve(EID, lock);
@@ -241,11 +247,12 @@ contract ArenaTest is Test {
 
     function test_RoundMath() public view {
         // round r is published at genesis + (r-1)*3
+        assertEq(arena.DRAND_GENESIS(), 1_727_521_075); // drand evmnet genesis_time
         assertEq(arena.roundTime(1), arena.DRAND_GENESIS());
-        assertEq(arena.roundTime(32026121), 1_788_881_727);
-        assertEq(arena.roundAt(1_788_881_727), 32026121);
-        assertEq(arena.roundAt(1_788_881_726), 32026121);
-        assertEq(arena.roundAt(1_788_881_728), 32026122);
+        assertEq(arena.roundTime(ROUND), 1_788_889_825);
+        assertEq(arena.roundAt(1_788_889_825), ROUND);
+        assertEq(arena.roundAt(1_788_889_824), ROUND);
+        assertEq(arena.roundAt(1_788_889_826), ROUND + 1);
         assertEq(arena.roundAt(0), 1);
     }
 
@@ -277,5 +284,68 @@ contract ArenaTest is Test {
         vm.warp(lock);
         vm.expectRevert(Arena.BadSignature.selector);
         arena.resolve(id, hex"00");
+    }
+
+    // ── on-chain beacon verification ───────────────────────────────────────
+
+    /// Open an event whose committed round is the pinned real beacon, then warp past its lock.
+    function openAtPinnedRound(bytes32 id, uint8 n) internal returns (uint64 lock) {
+        lock = uint64(block.timestamp + 60);
+        require(arena.roundTime(ROUND) >= lock + arena.SUSPENSE_GAP(), "fixture round too early");
+        arena.createEvent(id, n, lock, ROUND);
+        vm.warp(lock);
+    }
+
+    function test_VerifierIsOffByDefault() public view {
+        assertEq(address(arena.verifier()), address(0));
+    }
+
+    function test_SetVerifierIsOwnerOnly() public {
+        DrandVerifier v = new DrandVerifier();
+        vm.prank(alice);
+        vm.expectRevert();
+        arena.setVerifier(v);
+        arena.setVerifier(v);
+        assertEq(address(arena.verifier()), address(v));
+    }
+
+    function test_ResolveWithVerifierAcceptsRealBeacon() public {
+        arena.setVerifier(new DrandVerifier());
+        bytes32 id = keccak256("v1");
+        openAtPinnedRound(id, 3);
+        uint256 before = gasleft();
+        arena.resolve(id, SIG);
+        emit log_named_uint("Arena.resolve gas (verified)", before - gasleft());
+        (,,, bool resolved, uint8 outcome,) = arena.events(id);
+        assertTrue(resolved);
+        assertEq(outcome, arena.deriveOutcome(SIG, id, 3));
+    }
+
+    function test_ResolveWithVerifierRejectsTamperedSignature() public {
+        arena.setVerifier(new DrandVerifier());
+        bytes32 id = keccak256("v2");
+        openAtPinnedRound(id, 3);
+        bytes memory bad = SIG;
+        bad[63] = bytes1(uint8(bad[63]) ^ 0x01);
+        vm.expectRevert(Arena.BadSignature.selector);
+        arena.resolve(id, bad);
+    }
+
+    /// SIG2 is a genuine beacon — for round ROUND + 1, not the round this event committed.
+    function test_ResolveWithVerifierRejectsWrongRound() public {
+        arena.setVerifier(new DrandVerifier());
+        bytes32 id = keccak256("v3");
+        openAtPinnedRound(id, 3);
+        vm.expectRevert(Arena.BadSignature.selector);
+        arena.resolve(id, SIG2);
+    }
+
+    function test_ResolveGasInTrustedMode() public {
+        bytes32 id = keccak256("v4");
+        uint64 lock = open(id, 3);
+        vm.warp(lock);
+        uint256 before = gasleft();
+        arena.resolve(id, SIG);
+        emit log_named_uint("Arena.resolve gas (trusted)", before - gasleft());
     }
 }

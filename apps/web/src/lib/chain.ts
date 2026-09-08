@@ -22,10 +22,10 @@ export const chain = CHAIN_ID === 84532 ? baseSepolia : anvil;
 
 export const publicClient = createPublicClient({ chain, transport: http(RPC_URL) });
 
-// ── drand quicknet (mirrors Arena.sol and apps/engine/src/drand.ts) ───────────
-export const DRAND_GENESIS = 1692803367n;
+// ── drand evmnet (mirrors Arena.sol and apps/engine/src/drand.ts) ─────────────
+export const DRAND_GENESIS = 1727521075n;
 export const DRAND_PERIOD = 3n;
-export const DRAND_URL = "https://api.drand.sh/v2/beacons/quicknet/rounds";
+export const DRAND_URL = "https://api.drand.sh/v2/beacons/evmnet/rounds";
 
 export const roundTime = (round: bigint): bigint => DRAND_GENESIS + (round - 1n) * DRAND_PERIOD;
 
