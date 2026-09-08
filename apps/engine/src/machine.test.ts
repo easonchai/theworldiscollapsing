@@ -115,7 +115,10 @@ function harness(over: Partial<Deps> & { fc?: ReturnType<typeof fakeChain> } = {
     chain: fc.chain,
     drand: { fetchRound: async (round) => ({ round, signature: SIG }) },
     author: stubAuthor,
-    render: { firstHalf: async (ev) => `first:${ev.seq}`, branches: async (ev) => ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`) },
+    render: {
+      firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
+      branches: async (ev) => ({ urls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`), costUsd: 2 }),
+    },
     timing: T,
     ...clock,
     log: () => {},
@@ -145,6 +148,7 @@ describe("channel lifecycle", () => {
     expect(ev.signature).toBe(SIG);
     expect(ev.firstHalfUrl).toBe("first:1");
     expect(ev.branchUrls).toEqual(["branch:1:0", "branch:1:1", "branch:1:2"]);
+    expect(ev.costUsd).toBe(3); // first half + branches
     expect(ev.revealTime).not.toBeNull();
     expect(store.canonLog).toEqual(ev.script.canonUpdates[ev.outcome!]);
   });
@@ -198,9 +202,9 @@ describe("channel lifecycle", () => {
             attempts++;
             throw new Error("boom");
           }
-          return `first:${ev.seq}`;
+          return { url: `first:${ev.seq}`, costUsd: 1 };
         },
-        branches: async (ev) => ev.outcomes.map(() => "b"),
+        branches: async (ev) => ({ urls: ev.outcomes.map(() => "b"), costUsd: 2 }),
       },
     });
     const store = await h.run((s) => doneCount(s) >= 1);
@@ -212,7 +216,9 @@ describe("channel lifecycle", () => {
   });
 
   it("backs off exponentially while every production fails", async () => {
-    const h = harness({ render: { firstHalf: async () => { throw new Error("vendor down"); }, branches: async () => [] } });
+    const h = harness({
+      render: { firstHalf: async () => { throw new Error("vendor down"); }, branches: async () => ({ urls: [], costUsd: 0 }) },
+    });
     const t0 = h.clock.now();
     await h.run((s) => rows(s).filter((r) => r.state === "SKIPPED").length >= 5);
     // 5 skips → 4 backoffs of idlePoll * 2^1..2^4 = 30 * idlePoll, plus render retries
@@ -221,7 +227,10 @@ describe("channel lifecycle", () => {
 
   it("still resolves and reveals when branch rendering fails", async () => {
     const h = harness({
-      render: { firstHalf: async (ev) => `first:${ev.seq}`, branches: async () => { throw new Error("vendor down"); } },
+      render: {
+        firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
+        branches: async () => { throw new Error("vendor down"); },
+      },
     });
     const store = await h.run((s) => doneCount(s) >= 1);
     const ev = rows(store)[0];

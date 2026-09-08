@@ -35,6 +35,7 @@ model Event {
   signature      String?
   createTx       String?
   resolveTx      String?
+  costUsd        Float? // video spend for this event: first half + branches
   renderAttempts Int       @default(0)
   error          String?
   createdAt      DateTime  @default(now())

@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import type { Authored } from "./authored.js";
 import type { Author, EventRow, Render } from "./machine.js";
+import type { MediaStore } from "./media.js";
 
 // Day-2 stand-ins. Real authoring (GPT-6 Astra) and rendering (MiniMax via OpenRouter) replace these on day 3.
 
@@ -66,22 +67,34 @@ export const stubAuthor: Author = {
 
 const run = promisify(execFile);
 
-/** Renders real, playable placeholder MP4s with ffmpeg (test pattern with a running clock) so the player works end to end before real video lands. */
-export function stubRender(cfg: { dir: string; baseUrl: string; firstHalfSec: number; secondHalfSec: number }): Render {
+/** Renders real, playable placeholder MP4s with ffmpeg (test pattern with a running clock) so the player works end to end without OpenRouter. */
+export function stubRender(cfg: {
+  workDir: string;
+  store: MediaStore;
+  firstHalfSec: number;
+  secondHalfSec: number;
+}): Render {
   async function file(ev: EventRow, name: string, sec: number, hueDeg: number) {
-    const dir = path.join(cfg.dir, ev.id);
+    const dir = path.join(cfg.workDir, ev.id);
     await mkdir(dir, { recursive: true });
+    const out = path.join(dir, name);
     await run("ffmpeg", [
       "-y", "-loglevel", "error",
       "-f", "lavfi", "-i", `testsrc2=s=854x480:r=24:d=${sec}`,
       "-vf", `hue=h=${hueDeg}`,
       "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
-      path.join(dir, name),
+      out,
     ]);
-    return `${cfg.baseUrl}/${ev.id}/${name}`;
+    return cfg.store.storeFile(ev.id, name, out);
   }
   return {
-    firstHalf: (ev) => file(ev, "first.mp4", cfg.firstHalfSec, 0),
-    branches: (ev) => Promise.all(ev.outcomes.map((_, i) => file(ev, `branch-${i}.mp4`, cfg.secondHalfSec, 60 + i * 90))),
+    async firstHalf(ev) {
+      return { url: await file(ev, "first.mp4", cfg.firstHalfSec, 0), costUsd: 0 };
+    },
+    async branches(ev) {
+      const urls = [];
+      for (const [i] of ev.outcomes.entries()) urls.push(await file(ev, `branch-${i}.mp4`, cfg.secondHalfSec, 60 + i * 90));
+      return { urls, costUsd: 0 };
+    },
   };
 }

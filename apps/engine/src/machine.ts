@@ -35,6 +35,7 @@ export type EventRow = {
   signature: Hex | null;
   createTx: Hex | null;
   resolveTx: Hex | null;
+  costUsd: number | null; // video spend so far: first half + branches
   renderAttempts: number;
   error: string | null;
 };
@@ -60,13 +61,22 @@ export interface Chain {
   resolve(id: Hex, signature: Hex): Promise<{ tx: Hex }>;
 }
 
+export type AuthorCtx = {
+  channelId: string;
+  seq: number;
+  canon: string[];
+  /** Playback budgets from Timing: the shot lists must add up to these. */
+  firstHalfSec: number;
+  secondHalfSec: number;
+};
+
 export interface Author {
-  author(ctx: { channelId: string; seq: number; canon: string[] }): Promise<Authored>;
+  author(ctx: AuthorCtx): Promise<Authored>;
 }
 
 export interface Render {
-  firstHalf(ev: EventRow): Promise<string>;
-  branches(ev: EventRow): Promise<string[]>;
+  firstHalf(ev: EventRow): Promise<{ url: string; costUsd: number }>;
+  branches(ev: EventRow): Promise<{ urls: string[]; costUsd: number }>;
 }
 
 export type Timing = {
@@ -171,7 +181,13 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
     if (!ev) {
       const seq = await d.store.nextSeq(channelId);
       const canon = await d.store.canon(channelId, 50);
-      const a = await d.author.author({ channelId, seq, canon });
+      const a = await d.author.author({
+        channelId,
+        seq,
+        canon,
+        firstHalfSec: d.timing.firstHalfMs / 1000,
+        secondHalfSec: d.timing.secondHalfMs / 1000,
+      });
       ev = await d.store.insert({
         id: eventIdFor(channelId, seq),
         channelId,
@@ -192,6 +208,7 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
         signature: null,
         createTx: null,
         resolveTx: null,
+        costUsd: null,
         renderAttempts: 0,
         error: null,
       });
@@ -199,8 +216,13 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
     }
     while (ev.state === "RENDER") {
       try {
-        const url = await d.render.firstHalf(ev);
-        ev = await d.store.update(ev.id, { firstHalfUrl: url, state: "READY", error: null });
+        const r = await d.render.firstHalf(ev);
+        ev = await d.store.update(ev.id, {
+          firstHalfUrl: r.url,
+          costUsd: (ev.costUsd ?? 0) + r.costUsd,
+          state: "READY",
+          error: null,
+        });
       } catch (e) {
         ev = await d.store.update(ev.id, { renderAttempts: ev.renderAttempts + 1, error: String(e) });
         if (ev.renderAttempts >= d.timing.maxRenderAttempts) {
@@ -224,7 +246,7 @@ function ensureBranches(ev: EventRow, d: Deps): Promise<EventRow> {
   if (!p) {
     p = d.render
       .branches(ev)
-      .then((urls) => d.store.update(ev.id, { branchUrls: urls }))
+      .then((r) => d.store.update(ev.id, { branchUrls: r.urls, costUsd: (ev.costUsd ?? 0) + r.costUsd }))
       .finally(() => inflightBranches.delete(ev.id));
     inflightBranches.set(ev.id, p);
   }

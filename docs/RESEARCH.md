@@ -85,3 +85,70 @@ Outcome derivation (B-long): `outcome = uint(keccak256(sig_R ‖ eventId)) % n`,
 - Video: ~$6–9/event → ~$600–900 for ~100 events.
 - Authoring: GPT-6 Astra ≲$1/event.
 - 24/7 continuous generation (rejected): $4,320/day at 480P per channel.
+
+## OpenRouter API shapes — verified 2026-09-09 (day 3)
+
+Fetched live from the doc markdown mirrors (`<page>.md`) and the raw JSON APIs, because the rendered pages are client-side.
+
+### Chat completions — structured outputs
+
+| Fact | Value | Source |
+|---|---|---|
+| Request | `response_format: { type: "json_schema", json_schema: { name, strict: true, schema } }` | openrouter.ai/docs/guides/features/structured-outputs |
+| Hard-fail non-supporting routes | `provider: { require_parameters: true }` | same |
+| Where the object lands | `choices[0].message.content` (a JSON string) | same |
+| Response envelope | `{ id, object: "chat.completion", created, model, choices: [{ index, finish_reason, message: { role, content, reasoning, reasoning_details, refusal, tool_calls } }], usage: { prompt_tokens, completion_tokens, total_tokens } }` | openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion.md (`ChatResult`, `ChatAssistantMessage`) |
+| ⚠ Strict compliance | Docs: "exact compliance is not guaranteed on every endpoint" and strict mode "may restrict which JSON Schema features you can use". We validate every response with zod anyway. | same |
+
+### Reasoning capture
+
+| Fact | Value | Source |
+|---|---|---|
+| Request param | `reasoning: { effort: "max"\|"xhigh"\|"high"\|"medium"\|"low"\|"minimal"\|"none", max_tokens?, exclude?, enabled? }` | openrouter.ai/docs/guides/best-practices/reasoning-tokens.md |
+| Response fields | `choices[0].message.reasoning` (string \| null) and `choices[0].message.reasoning_details` | same + chat API reference |
+| Reasoning is on by default | "Reasoning tokens are included in the response by default if the model decides to output them" | same |
+| `openai/gpt-6-astra` | `reasoning: { mandatory: true, default_enabled: true, default_effort: "medium", supported_efforts: ["max","xhigh","high","medium","low"] }` — `effort: "none"` is rejected | `GET https://openrouter.ai/api/v1/models` |
+| `openai/gpt-6-astra` params | `supported_parameters` includes `reasoning`, `response_format`, `structured_outputs`, `seed`; output modality text only | same |
+| `openai/gpt-6-astra` price | prompt $10/M, completion $50/M (2x above 272k prompt tokens) | same |
+
+### Video generation
+
+| Fact | Value | Source |
+|---|---|---|
+| Submit | `POST /api/v1/videos` with `{ model, prompt, duration?, resolution?, aspect_ratio?, size?, frame_images?, input_references?, generate_audio?, seed?, callback_url?, provider? }` | openrouter.ai/docs/guides/overview/multimodal/video-generation.md |
+| Image-to-video input | `frame_images: [{ type: "image_url", image_url: { url }, frame_type: "first_frame" \| "last_frame" }]`; takes precedence over `input_references` | same |
+| Submit response (202) | `{ id, polling_url, status: "pending" }` | same |
+| Poll | `GET /api/v1/videos/{id}` → `{ id, generation_id, polling_url, status, unsigned_urls: [...], usage: { cost, is_byok } }` | same |
+| Statuses | `pending`, `in_progress`, `completed`, `failed` (webhooks add `cancelled`, `expired`) | same |
+| Download | `GET /api/v1/videos/{id}/content?index=0` with `Authorization: Bearer` — same URL as `unsigned_urls[0]` | same |
+| Resolutions accepted by the API | `480p 720p 768p 1080p 1K 2K 4K` | same |
+| Validate before submitting | Docs tell you to check `duration`/`resolution`/`aspect_ratio` against the model's `supported_*` from `GET /api/v1/videos/models` | same |
+| ⚠ Download URL expiry | No TTL published. A `video.generation.expired` webhook exists ("Job exceeded maximum time to live") but no duration is stated. We download immediately after `completed`. | same |
+| ⚠ `image_url.url` accepting a `data:` URI | Not stated anywhere in the video docs; only https examples. We pass a URL served by our own media store instead. | same |
+
+### `minimax/hailuo-3-max` (from `GET https://openrouter.ai/api/v1/videos/models`, 2026-09-09)
+
+```json
+{ "id": "minimax/hailuo-3-max", "canonical_slug": "minimax/hailuo-3-max-20260901",
+  "supported_resolutions": ["768p", "480p"],
+  "supported_aspect_ratios": ["21:9","16:9","4:3","1:1","3:4","9:16"],
+  "supported_durations": [5,6,7,8,9,10,11,12,13,14,15],
+  "supported_frame_images": ["first_frame","last_frame"],
+  "generate_audio": false, "seed": false,
+  "pricing_skus": { "duration_seconds": "0.08", "duration_seconds_480p": "0.05", "duration_seconds_768p": "0.08" },
+  "allowed_passthrough_parameters": ["aigc_watermark"] }
+```
+
+This confirms the plan's cost model exactly: **480p $0.05/s, 768p $0.08/s**, clips 5–15 s, first/last frame image-to-video supported. `seed: false` — no determinism on this model.
+
+### Image generation — yes, and usable for key art
+
+| Fact | Value | Source |
+|---|---|---|
+| Endpoint | `POST /api/v1/images` with `{ model, prompt, resolution?, aspect_ratio?, size?, n?, quality?, input_references? }` | openrouter.ai/docs/guides/overview/multimodal/image-generation.md |
+| Response | `{ created, data: [{ b64_json, media_type }], usage: { prompt_tokens, completion_tokens, total_tokens, cost } }` — base64 bytes, never a URL | same |
+| Model list | `GET /api/v1/images/models` (50 models on 2026-09-09) | same |
+| Model we use | `google/gemini-3.1-flash-image` ("Nano Banana 2") — `resolution` enum `512 \| 1K \| 2K \| 4K`, `aspect_ratio` includes `16:9`, `n` max 1 | `GET https://openrouter.ai/api/v1/images/models` |
+| ⚠ Image price | `pricing_skus` is null on the image models list; per-endpoint pricing lives at `/api/v1/images/models/{id}/endpoints`, not fetched. One still per event, so it is noise against $6–9 of video. | same |
+
+Cost accounting in the engine therefore counts video seconds only: `sum(firstHalf seconds) * 0.05 + sum(all branch seconds) * 0.08` → `Event.costUsd`.

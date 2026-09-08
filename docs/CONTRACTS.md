@@ -68,7 +68,7 @@ All writes go through `walletClient.writeContract`. Bet flow: `approve` (if allo
 
 ## Engine env (`apps/engine/.env`)
 
-`DATABASE_URL`, `RPC_URL`, `CHAIN_ID`, `RESOLVER_PRIVATE_KEY`, `ARENA_ADDRESS`, `DEMO_MODE`, `ALWAYS_ON`, `CHANNELS`, `MEDIA_DIR`, `MEDIA_BASE_URL`, `MEDIA_PORT` (static server with HTTP Range), `MEDIA_STORE` (local | blob), `BLOB_READ_WRITE_TOKEN?`, `STUB_MODE` (1 = canned author + ffmpeg renderer, no OpenRouter), `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` (default `https://openrouter.ai`; e2e points at the fake), `AUTHOR_MODEL` (`openai/gpt-6-astra`), `FILLER_MODEL` (`openai/gpt-5-nano`), `VIDEO_MODEL` (`minimax/hailuo-3-max`), `SUBGRAPH_URL?` (previous event pool state for authoring).
+`DATABASE_URL`, `RPC_URL`, `CHAIN_ID`, `RESOLVER_PRIVATE_KEY`, `ARENA_ADDRESS`, `DEMO_MODE`, `ALWAYS_ON`, `CHANNELS`, `MEDIA_DIR`, `MEDIA_BASE_URL`, `MEDIA_PORT` (static server with HTTP Range), `MEDIA_STORE` (local | blob), `BLOB_READ_WRITE_TOKEN?`, `STUB_MODE` (1 = canned author + ffmpeg renderer, no OpenRouter), `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` (default `https://openrouter.ai`; e2e points at the fake), `AUTHOR_MODEL` (`openai/gpt-6-astra`), `FILLER_MODEL` (`openai/gpt-5-nano`), `VIDEO_MODEL` (`minimax/hailuo-3-max`), `IMAGE_MODEL` (`google/gemini-3.1-flash-image`, key-art still), `SUBGRAPH_URL?` (previous event pool state for authoring).
 
 ## OpenRouter (engine, day 3)
 
@@ -81,8 +81,9 @@ Fake server `apps/engine/src/fake/openrouter.ts` (stdlib `node:http`, no deps): 
 - `Authored.firstHalf` shots (5–15 s each) → clips at 480p → concat → `first.mp4`. `Authored.branches[i]` → clips at 768p → `branch-<i>.mp4`. Clips within a list are generated in parallel (concurrency ≤ 8). Continuity: one key-art still per event as the image-to-video input for every first-half clip (image generation through OpenRouter if the docs offer it, else the first shot is text-to-video and its last frame, extracted with ffmpeg, becomes the key art); branch clips use the first half's last frame as their image-to-video input.
 - No text burn-in (this machine's ffmpeg has no `drawtext`). The ticker is an HTML overlay in web from `Authored.ticker`.
 - Concat with the ffmpeg concat demuxer; re-encode if clip parameters differ.
-- Per-event cost log: clips × seconds × rate (480p $0.05/s, 768p $0.08/s) → log line and `Event.costUsd` (add a migration).
-- Media store: `local` (engine serves `MEDIA_DIR` on `MEDIA_PORT` with Range support and CORS) or `blob` (`@vercel/blob` `put`, public access).
+- Per-event cost log: clips × seconds × rate (480p $0.05/s, 768p $0.08/s) → log line and `Event.costUsd` (`Float?`, migration `20260908164147_event_cost`). `Render` returns `{ url, costUsd }` / `{ urls, costUsd }` and the machine accumulates into the column.
+- `Author.author(ctx)` takes `{ channelId, seq, canon, firstHalfSec, secondHalfSec }`; the durations come from `Timing` and the shot lists must sum to them.
+- Media store: `local` (engine serves `MEDIA_DIR` on `MEDIA_PORT` with Range support and CORS) or `blob` (`@vercel/blob` `put`, public access). `storeFile(eventId, name, localPath) → url`; intermediate clips live in `MEDIA_DIR/.work` and are never served. The key-art still is passed to the video API as a URL from this store, so **image-to-video against the real OpenRouter needs `MEDIA_STORE=blob`** (a `localhost` media URL is not reachable from their side).
 
 ## Subgraph entities (`packages/subgraph/schema.graphql`)
 
