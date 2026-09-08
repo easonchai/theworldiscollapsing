@@ -20,7 +20,7 @@ export function StationBar() {
   return (
     <header className="fixed inset-x-0 top-0 z-50 flex h-[46px] items-stretch overflow-x-auto border-b border-line bg-vac/95 backdrop-blur-[2px]">
       <Link href="/" className="flex items-center gap-2 border-r border-line px-3 hover:bg-panel2">
-        <span className="pulse size-[7px] rounded-full bg-flare" aria-hidden />
+        <span className="pulse size-[7px] bg-bone" aria-hidden />
         <span className="font-display text-[19px] leading-none tracking-[0.02em] text-bone">
           theworldis<span className="text-amber">collapsing</span>
         </span>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import type { EventPublic } from "@/lib/public";
 import { sourceFor } from "@/lib/playback";
 
@@ -8,10 +8,12 @@ export function Player({
   event,
   className = "",
   poster,
+  style,
 }: {
   event: EventPublic;
   className?: string;
   poster?: string;
+  style?: CSSProperties;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const { src, t0, archive } = sourceFor(event);
@@ -58,6 +60,7 @@ export function Player({
       key={src}
       src={src}
       poster={poster}
+      style={style}
       className={`bg-black object-cover ${className}`}
       muted
       playsInline

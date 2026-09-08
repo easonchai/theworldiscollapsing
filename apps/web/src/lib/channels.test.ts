@@ -5,16 +5,17 @@ import { channelIdents, identOf } from "./channels";
 const CHANNELS = ["sports", "politics", "culture", "region"];
 
 describe("identOf", () => {
-  it("gives every channel its own accent and glyph", () => {
+  it("gives every channel its own accent, number and signal hue", () => {
     const idents = CHANNELS.map(identOf);
     expect(new Set(idents.map((i) => i.accent)).size).toBe(CHANNELS.length);
-    expect(new Set(idents.map((i) => i.glyph)).size).toBe(CHANNELS.length);
+    expect(new Set(idents.map((i) => i.num)).size).toBe(CHANNELS.length);
+    expect(new Set(idents.map((i) => i.hue)).size).toBe(CHANNELS.length);
   });
 
   it("keeps the whole map distinct, so a new channel cannot reuse a look", () => {
     const all = Object.values(channelIdents);
     expect(new Set(all.map((i) => i.accent)).size).toBe(all.length);
-    expect(new Set(all.map((i) => i.glyph)).size).toBe(all.length);
+    expect(new Set(all.map((i) => i.num)).size).toBe(all.length);
     expect(Object.keys(channelIdents).sort()).toEqual([...CHANNELS].sort());
   });
 

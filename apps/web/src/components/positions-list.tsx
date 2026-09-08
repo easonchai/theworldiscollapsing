@@ -75,7 +75,7 @@ export function PositionsList() {
   }, [address]);
 
   if (!subgraphConfigured) return <SubgraphNotConfigured what="Your positions list" />;
-  if (!address) return <p className="px-3 py-6 font-mono text-[12px] text-dim">Sign in to see your positions.</p>;
+  if (!address) return <p className="px-3 py-6 text-[12px] text-dim">Sign in to see your positions.</p>;
 
   return (
     <div>
@@ -84,7 +84,7 @@ export function PositionsList() {
         {(rows ?? []).map(({ event, positions, claimable }) => (
           <li key={event.id} className="grid gap-2 px-3 py-3 lg:grid-cols-[1fr_260px]">
             <div>
-              <Link href={`/e/${event.id}`} className="font-body text-[18px] text-bone hover:text-amber">
+              <Link href={`/e/${event.id}`} className="text-[15px] text-bone hover:text-amber">
                 {event.title}
               </Link>
               <p className="num text-[11px] text-dim">
@@ -94,8 +94,8 @@ export function PositionsList() {
                 {positions.map((p) => (
                   <li key={p.id}>
                     {event.outcomes[p.market.outcomeIdx] ?? `outcome ${p.market.outcomeIdx}`}:{" "}
-                    <span className="text-phos">{usdc(BigInt(p.yesStake))} yes</span> ·{" "}
-                    <span className="text-flare">{usdc(BigInt(p.noStake))} no</span>
+                    <span className="text-yes">{usdc(BigInt(p.yesStake))} yes</span> ·{" "}
+                    <span className="text-no">{usdc(BigInt(p.noStake))} no</span>
                     {p.claimed ? " · claimed" : ""}
                   </li>
                 ))}
@@ -112,7 +112,7 @@ export function PositionsList() {
         ))}
       </ul>
       {rows && !rows.length ? (
-        <p className="px-3 py-6 font-mono text-[12px] text-dim">No positions indexed for this address yet.</p>
+        <p className="px-3 py-6 text-[12px] text-dim">No positions indexed for this address yet.</p>
       ) : null}
     </div>
   );

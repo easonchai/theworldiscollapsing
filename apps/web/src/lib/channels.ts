@@ -1,17 +1,19 @@
 /**
- * Station identity per channel: one accent colour and one ident glyph each, so the four tiles on
- * the wall read as four channels rather than one channel shown four times (PRD story 21).
+ * Station identity per channel (PRD story 21): a channel number, one accent used only for hairline
+ * rules, and the hue its signal is tinted to, so four tiles carrying the same footage still read as
+ * four different channels. Numbers, not shapes — a triangle beside SPORTS is a button, not a mark.
+ * The accents deliberately avoid the semantic hues (live, urgency, fault, yes, no).
  * This map is the only place a channel's look is decided.
  */
-const IDENT: Record<string, { accent: string; glyph: string }> = {
-  sports: { accent: "#64e39b", glyph: "▲" },
-  politics: { accent: "#f2a93b", glyph: "■" },
-  culture: { accent: "#c07bff", glyph: "●" },
-  region: { accent: "#4fb8ff", glyph: "◆" },
+const IDENT: Record<string, { accent: string; num: string; hue: number }> = {
+  sports: { accent: "#c8e05a", num: "01", hue: 0 },
+  politics: { accent: "#48b0ff", num: "02", hue: 70 },
+  culture: { accent: "#e06bd8", num: "03", hue: 150 },
+  region: { accent: "#8f8fff", num: "04", hue: 230 },
 };
 
 /** Anything the engine adds later still gets furniture, just the house bone-white one. */
-const FALLBACK = { accent: "#ece7da", glyph: "◇" };
+const FALLBACK = { accent: "#ece7da", num: "00", hue: 300 };
 
 export const identOf = (channelId: string) => IDENT[channelId] ?? FALLBACK;
 

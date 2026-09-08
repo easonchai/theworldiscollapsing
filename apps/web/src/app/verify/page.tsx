@@ -32,7 +32,7 @@ export default async function VerifyPage() {
       <section className="grid gap-px border-t border-line bg-line lg:grid-cols-2">
         <div className="bg-vac p-3">
           <p className="tag">what this proves</p>
-          <ul className="mt-2 max-w-[60ch] space-y-2 font-body text-[17px] text-bone">
+          <ul className="mt-2 max-w-[60ch] space-y-2 text-[14px] text-bone">
             <li>Betting closes on chain before the deciding drand round exists.</li>
             <li>The outcome is a public function of that round&rsquo;s signature and the event id.</li>
             <li>Every event page checks the stored signature against drand itself.</li>
@@ -41,7 +41,7 @@ export default async function VerifyPage() {
         </div>
         <div className="bg-vac p-3">
           <p className="tag">what it does not</p>
-          <ul className="mt-2 max-w-[60ch] space-y-2 font-body text-[17px] text-dim">
+          <ul className="mt-2 max-w-[60ch] space-y-2 text-[14px] text-dim">
             <li>Verification is liveness, not age. 18+ is your own word.</li>
             <li>{trust.doesNot}</li>
             <li>

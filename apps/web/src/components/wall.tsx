@@ -4,8 +4,61 @@ import Link from "next/link";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { identOf } from "@/lib/channels";
 import type { ChannelPublic } from "@/lib/data";
-import { Countdown, StateBadge } from "./bits";
+import type { EventPublic } from "@/lib/public";
+import { Chyron, Countdown, StateBadge } from "./bits";
 import { Player } from "./player";
+
+/**
+ * The right-hand readout of a tile. Every phase shows a different number, so a wall of four
+ * channels never reads as the same card printed four times.
+ */
+function Readout({ event, featured }: { event: EventPublic; featured: boolean }) {
+  const big = featured
+    ? "block text-[clamp(34px,4vw,68px)] leading-[0.82] tracking-[-0.02em]"
+    : "block text-[20px] leading-none";
+  const small = featured ? "block text-[clamp(15px,1.5vw,22px)] leading-tight" : "block text-[13px] leading-tight";
+
+  if (event.state === "BETTING" && event.lockTime) {
+    return (
+      <>
+        <span className="tag block">locks in</span>
+        <Countdown to={event.lockTime} className={`${big} text-amber`} />
+      </>
+    );
+  }
+  if (event.state === "LOCKED" || event.state === "RESOLVE") {
+    return (
+      <>
+        <span className="tag block">round</span>
+        <span className={`num ${small} text-amber`}>{event.drandRound ?? "—"}</span>
+      </>
+    );
+  }
+  if (event.outcome !== null) {
+    return (
+      <>
+        <span className="tag block">result</span>
+        <span className={`${small} max-w-[18ch] text-bone`}>{event.outcomes[event.outcome]}</span>
+      </>
+    );
+  }
+  return (
+    <>
+      <span className="tag block">status</span>
+      <span className={`${small} text-dim`}>{event.state.toLowerCase()}</span>
+    </>
+  );
+}
+
+/**
+ * Four channels carrying the same generated footage must not frame it identically: each one is
+ * pushed into its own corner of the picture, so a streak that crosses every feed never crosses
+ * four screens at the same point.
+ */
+function crop(num: string): CSSProperties {
+  const n = Number(num);
+  return { transform: `scale(1.16) translate(${n % 2 ? -4 : 4}%, ${n < 3 ? -4 : 4}%)` };
+}
 
 function Tile({ channel, featured }: { channel: ChannelPublic; featured: boolean }) {
   const ref = useRef<HTMLAnchorElement>(null);
@@ -33,48 +86,68 @@ function Tile({ channel, featured }: { channel: ChannelPublic; featured: boolean
       }`}
     >
       {event && visible ? (
-        // Footage is held back a little so the station furniture always reads over it.
-        <Player
-          event={event}
-          className="absolute inset-0 size-full saturate-[0.85] brightness-[0.82] transition duration-500 group-hover:saturate-100 group-hover:brightness-100"
-        />
+        // Each channel tints its own signal, so identical footage still reads as four channels, and
+        // the saturation is held well under the source's so the amber furniture survives over it.
+        <div
+          className="absolute inset-0 overflow-hidden [--sat:0.42] transition-[filter] duration-500 group-hover:[--sat:0.8]"
+          style={{ filter: `hue-rotate(${ident.hue}deg) saturate(var(--sat)) contrast(1.08)` }}
+        >
+          <Player event={event} className="size-full" style={crop(ident.num)} />
+        </div>
       ) : (
         <div className="absolute inset-0 grid place-items-center">
           <span className="tag">{event ? "standby" : "off air"}</span>
         </div>
       )}
 
-      {/* lower third */}
-      <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/75 to-transparent p-2 pt-6">
-        <div className="flex items-end justify-between gap-2">
+      <span className="signal" aria-hidden />
+
+      {/* channel bug, the way a broadcaster corners its own screen */}
+      <div
+        className="absolute top-0 left-0 z-10 flex items-center gap-2 border-r border-b bg-black px-2 py-1"
+        style={{ borderColor: "var(--ch)" }}
+      >
+        <span className="num text-[12px] leading-none text-[color:var(--ch)]">CH {ident.num}</span>
+        <span className="text-[12px] leading-none font-medium tracking-[0.2em] text-bone uppercase">
+          {channel.name}
+        </span>
+        {event ? <StateBadge state={event.state} className="border-0 p-0" /> : null}
+      </div>
+
+      {/* caption band: solid black under the type, one hairline rule, no scanlines through words */}
+      <div className="absolute inset-x-0 bottom-0 z-10 border-t bg-black" style={{ borderColor: "var(--ch)" }}>
+        <div className="flex items-end justify-between gap-3 px-2 py-2">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span
-                aria-hidden
-                className="font-mono text-[clamp(13px,1.5vw,18px)] leading-none text-[color:var(--ch)]"
-              >
-                {ident.glyph}
-              </span>
-              <span className="border-l-2 border-[color:var(--ch)] pl-2 font-display text-[clamp(20px,2.6vw,34px)] leading-none tracking-wide text-bone uppercase">
-                {channel.name}
-              </span>
-              {event ? <StateBadge state={event.state} /> : null}
-            </div>
-            <p className="mt-1 truncate font-mono text-[11px] tracking-[0.08em] text-dim">
-              {event?.title ?? "no transmission"}
-            </p>
+            {featured ? (
+              <>
+                <h2 className="font-display text-[clamp(24px,2.7vw,46px)] leading-[0.9] text-bone">
+                  {event?.title ?? "no transmission"}
+                </h2>
+                <p className="mt-1 truncate text-[12px] tracking-[0.12em] text-dim uppercase">
+                  {event
+                    ? `${event.outcomes.length} markets · parimutuel 2% fee · seq ${String(event.seq).padStart(3, "0")}`
+                    : "this channel has not gone on air yet"}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="truncate text-[13px] leading-tight text-bone">{event?.title ?? "no transmission"}</p>
+                <p className="num mt-0.5 text-[11px] tracking-[0.12em] text-dim uppercase">
+                  {event ? `seq ${String(event.seq).padStart(3, "0")} · ${event.outcomes.length} markets` : "off air"}
+                </p>
+              </>
+            )}
           </div>
-          {event?.state === "BETTING" && event.lockTime ? (
-            <span className="shrink-0 text-right">
-              <span className="tag block">locks in</span>
-              <Countdown to={event.lockTime} className="text-[22px] leading-none text-amber" />
-            </span>
+          {event ? (
+            <div className="shrink-0 text-right">
+              <Readout event={event} featured={featured} />
+            </div>
           ) : null}
         </div>
       </div>
 
       <span
-        className="absolute inset-0 border border-transparent transition group-hover:border-[color:var(--ch)]"
+        className="absolute inset-0 z-10 border border-transparent transition group-hover:border-[color:var(--ch)]"
         aria-hidden
       />
     </Link>
@@ -95,11 +168,7 @@ export function Wall({ initial }: { initial: ChannelPublic[] }) {
   }, []);
 
   if (!channels.length) {
-    return (
-      <p className="p-4 font-mono text-sm text-dim">
-        No channels yet. Start the engine and the wall fills itself.
-      </p>
-    );
+    return <p className="p-4 text-[13px] text-dim">No channels yet. Start the engine and the wall fills itself.</p>;
   }
 
   // Fixed furniture: channel one takes the big screen, the rest stack beside it. The wall is a
@@ -107,34 +176,18 @@ export function Wall({ initial }: { initial: ChannelPublic[] }) {
   const [lead, ...rest] = channels;
 
   // Whatever the world last decided, running along the bottom of the wall.
-  const canon = channels.flatMap((c) => c.canon.slice(-2).map((line) => ({ channel: c.name, line })));
+  const canon = channels.flatMap((c) => c.canon.slice(-2).map((line) => ({ cat: c.name, text: line })));
 
   return (
     <div className="beam relative">
-      <div className="grid gap-px bg-line lg:h-[calc(100dvh-72px)] lg:grid-cols-12 lg:grid-rows-3">
+      <div className="grid gap-px bg-line lg:h-[calc(100dvh-74px)] lg:grid-cols-12 lg:grid-rows-3">
         <Tile channel={lead} featured />
         {rest.map((c) => (
           <Tile key={c.id} channel={c} featured={false} />
         ))}
       </div>
 
-      <div className="flex h-[26px] items-center border-t border-line bg-black">
-        <span className="tag shrink-0 border-r border-line px-2 text-amber">canon</span>
-        <div className="flex-1 overflow-hidden pl-2">
-          {canon.length ? (
-            <div className="marquee font-mono text-[11px] tracking-[0.1em] text-dim uppercase">
-              {[...canon, ...canon].map((c, i) => (
-                <span key={i}>
-                  <span className="mr-2 text-bone">{c.channel}</span>
-                  {c.line}
-                </span>
-              ))}
-            </div>
-          ) : (
-            <span className="font-mono text-[11px] tracking-[0.1em] text-dim uppercase">nothing has happened yet</span>
-          )}
-        </div>
-      </div>
+      <Chyron label="canon" lines={canon} empty="nothing has happened yet" />
     </div>
   );
 }

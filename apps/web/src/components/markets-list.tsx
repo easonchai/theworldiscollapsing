@@ -88,7 +88,7 @@ export function MarketsList() {
                 className="grid grid-cols-[1fr_auto] items-center gap-3 px-3 py-2 hover:bg-panel2 sm:grid-cols-[1fr_120px_120px_120px]"
               >
                 <span className="min-w-0">
-                  <span className="block truncate font-body text-[17px] text-bone">
+                  <span className="block truncate text-[14px] text-bone">
                     {event.outcomes[market.outcomeIdx] ?? `outcome ${market.outcomeIdx}`}
                   </span>
                   <span className="num text-[11px] text-dim">
@@ -98,9 +98,9 @@ export function MarketsList() {
                 <span className="hidden sm:block">
                   <span className="tag block">yes / no</span>
                   <span className="num text-[13px]">
-                    <span className="text-phos">{p === null ? "—" : `${Math.round(p * 100)}%`}</span>
+                    <span className="text-yes">{p === null ? "—" : `${Math.round(p * 100)}%`}</span>
                     <span className="text-dim"> / </span>
-                    <span className="text-flare">{p === null ? "—" : `${Math.round((1 - p) * 100)}%`}</span>
+                    <span className="text-no">{p === null ? "—" : `${Math.round((1 - p) * 100)}%`}</span>
                   </span>
                 </span>
                 <span className="hidden sm:block">
@@ -109,7 +109,7 @@ export function MarketsList() {
                 </span>
                 <span className="text-right">
                   {ie.resolved ? (
-                    <span className={`chip ${won ? "border-phos/60 text-phos" : "border-line text-dim"}`}>
+                    <span className={`chip ${won ? "border-bone/60 text-bone" : "border-line text-dim"}`}>
                       {won ? "Yes" : "No"}
                     </span>
                   ) : (
@@ -123,7 +123,7 @@ export function MarketsList() {
       </ul>
 
       {indexed && !rows.length ? (
-        <p className="px-3 py-6 font-mono text-[12px] text-dim">The index has no markets matching this filter.</p>
+        <p className="px-3 py-6 text-[12px] text-dim">The index has no markets matching this filter.</p>
       ) : null}
     </div>
   );

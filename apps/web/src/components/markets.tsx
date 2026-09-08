@@ -60,20 +60,80 @@ export function useMarkets(event: EventPublic) {
   );
 }
 
-function Odds({ pool }: { pool: [bigint, bigint] }) {
+const ONE = 10n ** BigInt(USDC_DECIMALS);
+
+/** What one USDC on this side would come back as, if that side wins at today's pools. */
+function multiple(pool: readonly [bigint, bigint], yes: boolean): number | null {
+  if (pool[0] + pool[1] === 0n) return null;
+  return Number(previewPayout(ONE, yes, pool)) / Number(ONE);
+}
+
+/**
+ * The betting board's one object: the split bar is both the odds picture and the bet target, so
+ * there is no outlined button pretending the price lives somewhere else. An empty market is drawn
+ * as empty — a full bar over a nothing pool would be a lie.
+ */
+function SplitBar({
+  pool,
+  disabled,
+  busy,
+  blocked,
+  onBet,
+}: {
+  pool: [bigint, bigint];
+  disabled?: boolean;
+  busy: string | null;
+  blocked: string | null;
+  onBet?: (yes: boolean) => void;
+}) {
   const p = impliedYes(pool);
+  const sides = [true, false].map((yes) => ({
+    yes,
+    share: p === null ? 0.5 : yes ? p : 1 - p,
+    mult: multiple(pool, yes),
+  }));
+
   return (
-    <div className="mt-2">
-      <div className="flex items-baseline justify-between num text-[11px]">
-        <span className="text-phos">YES {p === null ? "—" : `${Math.round(p * 100)}%`}</span>
-        <span className="text-dim">
-          {usdc(pool[1])} / {usdc(pool[0])}
-        </span>
-        <span className="text-flare">NO {p === null ? "—" : `${Math.round((1 - p) * 100)}%`}</span>
-      </div>
-      <div className="mt-1 h-[6px] w-full bg-panel2" role="img" aria-label={`Implied yes ${p === null ? "unknown" : Math.round(p * 100)} percent`}>
-        <div className="h-full bg-phos" style={{ width: `${(p ?? 0.5) * 100}%` }} />
-      </div>
+    <div
+      className="mt-2 flex h-12 overflow-hidden border border-line bg-black"
+      role="group"
+      aria-label={`Implied yes ${p === null ? "unknown, no bets yet" : `${Math.round(p * 100)} percent`}`}
+    >
+      {sides.map(({ yes, share, mult }) => {
+        // Whole class strings, never assembled from pieces: Tailwind reads this file, not the DOM.
+        const tone = yes ? "text-yes" : "text-no";
+        const fill = p === null ? "" : yes ? "bg-yes/12" : "bg-no/12";
+        const hover = p === null ? "hover:bg-bone/8" : yes ? "hover:bg-yes/25" : "hover:bg-no/25";
+        const label = `${yes ? "YES" : "NO"}${p === null ? "" : ` ${Math.round(share * 100)}%`}`;
+        const shell = `flex min-w-[86px] basis-0 flex-col items-center justify-center ${fill} ${
+          yes ? "" : "border-l border-line"
+        }`;
+        const inner = (
+          <>
+            <span className={`text-[13px] leading-none font-medium tracking-[0.14em] ${tone}`}>{label}</span>
+            <span className="num mt-1 text-[11px] leading-none text-dim">
+              {mult === null ? "—" : `×${mult.toFixed(2)}`}
+            </span>
+          </>
+        );
+        return onBet ? (
+          <button
+            key={String(yes)}
+            type="button"
+            style={{ flexGrow: share }}
+            className={`${shell} ${hover} cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent`}
+            disabled={disabled}
+            title={blocked ?? undefined}
+            onClick={() => onBet(yes)}
+          >
+            {busy === String(yes) ? <span className="num text-[13px] text-bone">…</span> : inner}
+          </button>
+        ) : (
+          <div key={String(yes)} style={{ flexGrow: share }} className={shell}>
+            {inner}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -163,8 +223,9 @@ export function Markets({
 
   return (
     <section aria-label="Markets" className="flex flex-col">
-      <div className="flex items-center justify-between border-b border-line px-2 py-2">
-        <h2 className="text-[20px] text-bone">Markets</h2>
+      {/* 46px so this header sits on the same baseline as the station bar and the channel bug. */}
+      <div className="flex h-[46px] items-center justify-between border-b border-line px-2">
+        <h2 className="text-[22px] text-bone">Markets</h2>
         <span className="tag">parimutuel · 2% fee</span>
       </div>
 
@@ -180,8 +241,8 @@ export function Markets({
           onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
           aria-describedby="stake-hint"
         />
-        <span id="stake-hint" className="num text-[11px] text-dim">
-          USDC · balance {gate ? gate.balanceText : "—"}
+        <span id="stake-hint" className="num shrink-0 text-[11px] whitespace-nowrap text-dim">
+          USDC · bal {gate ? gate.balanceText : "—"}
         </span>
       </div>
 
@@ -190,23 +251,44 @@ export function Markets({
           const m = markets?.[i] ?? { pool: ZERO, stake: ZERO };
           const won = event.outcome === i;
           const resolved = event.outcome !== null;
+          const total = m.pool[0] + m.pool[1];
           return (
-            <li key={i} className={`border-b border-line px-2 py-2 ${resolved && won ? "bg-phos/5" : ""}`}>
-              <div className="flex items-start justify-between gap-2">
-                <h3 className="font-body text-[17px] normal-case tracking-normal text-bone">{label}</h3>
-                {resolved ? (
-                  <span className={`chip shrink-0 ${won ? "border-phos/60 text-phos" : "border-line text-dim"}`}>
-                    {won ? "Yes" : "No"}
+            <li key={i} className={`border-b border-line px-2 py-2 ${resolved && won ? "bg-bone/5" : ""}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <span className="tag">market {String(i + 1).padStart(2, "0")}</span>
+                  <h3 className="mt-0.5 text-[15px] leading-tight normal-case tracking-normal text-bone">{label}</h3>
+                </div>
+                <div className="shrink-0 text-right">
+                  <span className="tag block">pool</span>
+                  <span className={`num block text-[22px] leading-none ${total === 0n ? "text-dim" : "text-bone"}`}>
+                    {usdc(total)}
                   </span>
-                ) : null}
+                </div>
               </div>
 
-              <Odds pool={m.pool} />
+              <SplitBar
+                pool={m.pool}
+                disabled={!!blocked || busy !== null}
+                blocked={blocked}
+                busy={busy?.startsWith(`${i}-`) ? busy.slice(`${i}-`.length) : null}
+                onBet={resolved ? undefined : (yes) => bet(i, yes)}
+              />
+
+              {total === 0n && !resolved ? (
+                <p className="mt-1 text-[11px] tracking-[0.1em] text-dim uppercase">no bets yet</p>
+              ) : null}
+
+              {resolved ? (
+                <p className="mt-1 text-[11px] tracking-[0.1em] uppercase">
+                  <span className={won ? "text-bone" : "text-dim"}>{won ? "resolved yes" : "resolved no"}</span>
+                </p>
+              ) : null}
 
               {m.stake[0] > 0n || m.stake[1] > 0n ? (
                 <p className="mt-1 num text-[11px] text-dim">
-                  you: <span className="text-phos">{usdc(m.stake[1])} yes</span> ·{" "}
-                  <span className="text-flare">{usdc(m.stake[0])} no</span>
+                  you: <span className="text-yes">{usdc(m.stake[1])} yes</span> ·{" "}
+                  <span className="text-no">{usdc(m.stake[0])} no</span>
                   {resolved ? (
                     <>
                       {" "}
@@ -216,33 +298,23 @@ export function Markets({
                 </p>
               ) : null}
 
-              {!resolved ? (
-                <div className="mt-2 flex gap-1">
-                  {[true, false].map((yes) => (
-                    <button
-                      key={String(yes)}
-                      type="button"
-                      className="btn flex-1"
-                      disabled={!!blocked || busy !== null}
-                      title={blocked ?? undefined}
-                      onClick={() => bet(i, yes)}
-                    >
-                      {busy === `${i}-${yes}` ? "…" : yes ? "Yes" : "No"}
-                      {parsed && !blocked ? (
-                        <span className="num text-[10px] text-dim">
-                          → {usdc(previewPayout(parsed, yes, m.pool))}
-                        </span>
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
+              {parsed && !blocked ? (
+                <p className="mt-1 num text-[11px] text-dim">
+                  {usdc(parsed)} on yes returns <span className="text-yes">{usdc(previewPayout(parsed, true, m.pool))}</span>
+                  {" · "}on no <span className="text-no">{usdc(previewPayout(parsed, false, m.pool))}</span>
+                </p>
               ) : null}
             </li>
           );
         })}
       </ul>
 
-      <div aria-live="polite" className="px-2 py-2">
+      <div aria-live="polite" className="border-t border-line px-2 py-2">
+        {open ? (
+          <p className="text-[11px] tracking-[0.1em] text-dim uppercase">
+            the price is the pool: the first stake on a side sets it, every later stake moves it
+          </p>
+        ) : null}
         {blocked ? (
           <p className="num text-[11px] text-dim">
             {blocked}
@@ -256,7 +328,7 @@ export function Markets({
             ) : null}
           </p>
         ) : null}
-        {status ? <p className="num text-[11px] text-phos">{status}</p> : null}
+        {status ? <p className="num text-[11px] text-bone">{status}</p> : null}
         {error ? <p className="num text-[11px] text-flare">{error}</p> : null}
       </div>
     </section>
@@ -314,7 +386,7 @@ export function ClaimButton({
   }
 
   if (paid !== null) {
-    return <p className="num text-[13px] text-phos">Claimed {usdc(paid)} USDC.</p>;
+    return <p className="num text-[13px] text-bone">Claimed {usdc(paid)} USDC.</p>;
   }
   return (
     <div>

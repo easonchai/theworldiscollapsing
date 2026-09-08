@@ -100,7 +100,7 @@ export function VerifyFlow() {
       <section className="bg-vac p-3">
         <p className="tag">step one</p>
         <h2 className="mt-1 text-[24px] text-bone">Wallet</h2>
-        <p className="mt-2 font-body text-[16px] text-dim">
+        <p className="mt-2 text-[14px] text-dim">
           Bets, the faucet and the verified flag are all keyed to an address.
         </p>
         {address ? (
@@ -115,13 +115,13 @@ export function VerifyFlow() {
       <section className="bg-vac p-3">
         <p className="tag">step two</p>
         <h2 className="mt-1 text-[24px] text-bone">Verify</h2>
-        <p className="mt-2 font-body text-[16px] text-dim">
+        <p className="mt-2 text-[14px] text-dim">
           {GATE_MODE === "world"
             ? "World Selfie Check proves a live human is behind the address, so bots cannot farm the faucet."
             : "Self-attestation stands in for Selfie Check while the beta flag is pending."}
         </p>
 
-        <label className="mt-3 flex items-start gap-2 font-body text-[15px] text-bone">
+        <label className="mt-3 flex items-start gap-2 text-[14px] text-bone">
           <input
             type="checkbox"
             className="mt-1 size-4 accent-amber"
@@ -158,7 +158,7 @@ export function VerifyFlow() {
       <section className="bg-vac p-3">
         <p className="tag">step three</p>
         <h2 className="mt-1 text-[24px] text-bone">Faucet</h2>
-        <p className="mt-2 font-body text-[16px] text-dim">
+        <p className="mt-2 text-[14px] text-dim">
           1,000 play USDC per day per verified address. Balance: {gate ? gate.balanceText : "—"}.
         </p>
         <button

@@ -21,9 +21,9 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
       <header className="flex flex-wrap items-end justify-between gap-2 border-b border-line px-3 py-3">
         <div className="border-l-4 pl-2" style={{ borderColor: ident.accent }}>
           <p className="tag">channel</p>
-          <h1 className="mt-1 flex items-center gap-2 text-[clamp(34px,5vw,66px)] leading-none text-bone">
-            <span aria-hidden className="font-mono text-[0.45em]" style={{ color: ident.accent }}>
-              {ident.glyph}
+          <h1 className="mt-1 flex items-baseline gap-2 text-[clamp(34px,5vw,66px)] leading-none text-bone">
+            <span className="num text-[0.28em] tracking-[0.2em]" style={{ color: ident.accent }}>
+              CH {ident.num}
             </span>
             {info.name}
           </h1>
@@ -39,7 +39,7 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
       {current ? (
         <EventStage key={current.id} initial={current} showHeader={false} />
       ) : (
-        <p className="px-3 py-6 font-mono text-sm text-dim">This channel has not gone on air yet.</p>
+        <p className="px-3 py-6 text-[13px] text-dim">This channel has not gone on air yet.</p>
       )}
 
       <div className="grid gap-px border-t border-line bg-line lg:grid-cols-3">
@@ -49,12 +49,12 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
           <ol className="mt-2 space-y-2">
             {info.canon.length ? (
               info.canon.map((line, i) => (
-                <li key={i} className="border-l-2 border-amber/60 pl-2 font-body text-[16px] text-bone">
+                <li key={i} className="border-l-2 border-line pl-2 text-[13px] text-bone">
                   {line}
                 </li>
               ))
             ) : (
-              <li className="font-mono text-[12px] text-dim">Nothing has happened here yet.</li>
+              <li className="text-[12px] text-dim">Nothing has happened here yet.</li>
             )}
           </ol>
         </section>
@@ -63,10 +63,10 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
           <h2 className="text-[20px] text-bone">Newsroom</h2>
           <p className="tag mt-1">how this event was thought up</p>
           <details className="mt-2 panel p-2">
-            <summary className="cursor-pointer font-mono text-[11px] tracking-[0.14em] text-amber uppercase">
+            <summary className="cursor-pointer text-[12px] tracking-[0.14em] text-amber uppercase">
               Reasoning trace
             </summary>
-            <p className="mt-2 max-h-64 overflow-y-auto font-mono text-[12px] leading-relaxed break-words whitespace-pre-wrap text-dim">
+            <p className="mt-2 max-h-64 overflow-y-auto text-[12px] leading-relaxed break-words whitespace-pre-wrap text-dim">
               {current?.reasoning ?? "No trace recorded for this event."}
             </p>
           </details>
@@ -81,7 +81,7 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
                 <li key={e.id}>
                   <Link href={`/e/${e.id}`} className="flex items-center justify-between gap-2 py-2 hover:bg-panel2">
                     <span className="min-w-0">
-                      <span className="block truncate font-body text-[16px] text-bone">{e.title}</span>
+                      <span className="block truncate text-[13px] text-bone">{e.title}</span>
                       <span className="num text-[11px] text-dim">
                         #{String(e.seq).padStart(3, "0")}
                         {e.outcome !== null ? ` · ${e.outcomes[e.outcome]}` : " · undecided"}
@@ -92,7 +92,7 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
                 </li>
               ))
             ) : (
-              <li className="py-2 font-mono text-[12px] text-dim">No archive yet.</li>
+              <li className="py-2 text-[12px] text-dim">No archive yet.</li>
             )}
           </ul>
         </section>
