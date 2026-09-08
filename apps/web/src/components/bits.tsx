@@ -9,10 +9,10 @@ export const usdc = (v: bigint, dp = 2) => {
   return n.toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 };
 
-// Green is live and nothing else; amber is urgency and nothing else; everything settled is bone or
-// dim. Red is reserved for faults, so no state badge wears it.
+// One accent: amber means live or urgent, bone means settled, dim means idle. Nothing in the
+// chrome wears a second hue, and red is reserved for faults, so no state badge wears it.
 export const BADGE: Record<string, { label: string; className: string }> = {
-  BETTING: { label: "On air", className: "text-phos border-phos/50" },
+  BETTING: { label: "On air", className: "text-amber border-amber/60" },
   LOCKED: { label: "Locked", className: "text-amber border-amber/60" },
   RESOLVE: { label: "Locked", className: "text-amber border-amber/60" },
   REVEAL: { label: "Reveal", className: "text-bone border-bone/50" },
@@ -27,7 +27,7 @@ export function StateBadge({ state, className = "" }: { state: string; className
   const b = BADGE[state] ?? { label: state, className: "text-dim border-line" };
   return (
     <span className={`chip ${b.className} ${className}`}>
-      {state === "BETTING" ? <span className="pulse size-[6px] rounded-full bg-phos" aria-hidden /> : null}
+      {state === "BETTING" ? <span className="pulse size-[6px] rounded-full bg-amber" aria-hidden /> : null}
       {b.label}
     </span>
   );
@@ -77,10 +77,9 @@ export function Chyron({
 }) {
   return (
     <div className="chyron">
-      <span className="shrink-0 self-stretch border-r border-line px-2 py-1 text-[12px] leading-[18px] tracking-[0.22em] text-amber uppercase">
-        {label}
-      </span>
-      <div className="min-w-0 flex-1 overflow-hidden pl-2">
+      {/* A fixed, opaque cell: the label can never clip, and the crawl runs behind it. */}
+      <span className="chyron-label">{label}</span>
+      <div className="flex min-w-0 flex-1 items-center overflow-hidden pl-2">
         {lines.length ? (
           <div className="marquee text-[12px] tracking-[0.08em] text-dim uppercase">
             {[...lines, ...lines].map((line, i) => (

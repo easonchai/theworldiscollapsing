@@ -31,7 +31,7 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
         {current ? (
           <div className="text-right">
             <p className="tag">now on air</p>
-            <p className="mt-1 max-w-[46ch] font-body text-[17px] text-dim italic">{current.title}</p>
+            <p className="mt-1 max-w-[46ch] text-[13px] leading-[1.5] text-dim">{current.title}</p>
           </div>
         ) : null}
       </header>
@@ -45,7 +45,7 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
       <div className="grid gap-px border-t border-line bg-line lg:grid-cols-3">
         <section className="min-w-0 bg-vac p-3">
           <h2 className="text-[20px] text-bone">Canon</h2>
-          <p className="tag mt-1">what the world now believes</p>
+          <p className="mt-1 text-[13px] leading-[1.5] text-dim">What the world now believes.</p>
           <ol className="mt-2 space-y-2">
             {info.canon.length ? (
               info.canon.map((line, i) => (
@@ -61,7 +61,7 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
 
         <section className="min-w-0 bg-vac p-3">
           <h2 className="text-[20px] text-bone">Newsroom</h2>
-          <p className="tag mt-1">how this event was thought up</p>
+          <p className="mt-1 text-[13px] leading-[1.5] text-dim">How this event was thought up.</p>
           <details className="mt-2 panel p-2">
             <summary className="cursor-pointer text-[12px] tracking-[0.14em] text-amber uppercase">
               Reasoning trace
@@ -74,7 +74,7 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
 
         <section className="min-w-0 bg-vac p-3">
           <h2 className="text-[20px] text-bone">Recent events</h2>
-          <p className="tag mt-1">this channel&rsquo;s history</p>
+          <p className="mt-1 text-[13px] leading-[1.5] text-dim">This channel&rsquo;s history.</p>
           <ul className="mt-2 divide-y divide-line">
             {history.length ? (
               history.map((e) => (

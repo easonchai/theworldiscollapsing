@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import { parseUnits, type Hex } from "viem";
 import {
@@ -69,72 +68,57 @@ function multiple(pool: readonly [bigint, bigint], yes: boolean): number | null 
 }
 
 /**
- * The betting board's one object: the split bar is both the odds picture and the bet target, so
- * there is no outlined button pretending the price lives somewhere else. An empty market is drawn
- * as empty — a full bar over a nothing pool would be a lie.
+ * One side of one market, as a cell in the price table. YES and NO are the same off-white mono and
+ * are told apart by which column they sit in; the only fill on the board is the amber on the side
+ * this address has money on.
  */
-function SplitBar({
+function PriceCell({
+  yes,
   pool,
+  staked,
   disabled,
   busy,
   blocked,
   onBet,
 }: {
+  yes: boolean;
   pool: [bigint, bigint];
+  staked: boolean;
   disabled?: boolean;
-  busy: string | null;
+  busy: boolean;
   blocked: string | null;
   onBet?: (yes: boolean) => void;
 }) {
   const p = impliedYes(pool);
-  const sides = [true, false].map((yes) => ({
-    yes,
-    share: p === null ? 0.5 : yes ? p : 1 - p,
-    mult: multiple(pool, yes),
-  }));
+  const share = p === null ? null : yes ? p : 1 - p;
+  const mult = multiple(pool, yes);
+  const inner = busy ? (
+    <span className="num text-[13px] text-bone">…</span>
+  ) : (
+    <>
+      <span className="money text-[16px] leading-none text-bone">
+        {share === null ? "—" : `${Math.round(share * 100)}%`}
+      </span>
+      <span className="num mt-1 text-[10px] leading-none text-dim">{mult === null ? "—" : `×${mult.toFixed(2)}`}</span>
+    </>
+  );
+  // Whole class strings, never assembled from pieces: Tailwind reads this file, not the DOM.
+  const shell = `flex flex-col items-center justify-center border-l border-line px-1 py-2 ${
+    staked ? "bg-amber/18" : ""
+  }`;
 
+  if (!onBet) return <div className={shell}>{inner}</div>;
   return (
-    <div
-      className="mt-2 flex h-12 overflow-hidden border border-line bg-black"
-      role="group"
-      aria-label={`Implied yes ${p === null ? "unknown, no bets yet" : `${Math.round(p * 100)} percent`}`}
+    <button
+      type="button"
+      className={`${shell} cursor-pointer transition-colors hover:bg-bone/10 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent`}
+      disabled={disabled}
+      title={blocked ?? undefined}
+      aria-label={`Bet ${yes ? "yes" : "no"}`}
+      onClick={() => onBet(yes)}
     >
-      {sides.map(({ yes, share, mult }) => {
-        // Whole class strings, never assembled from pieces: Tailwind reads this file, not the DOM.
-        const tone = yes ? "text-yes" : "text-no";
-        const fill = p === null ? "" : yes ? "bg-yes/12" : "bg-no/12";
-        const hover = p === null ? "hover:bg-bone/8" : yes ? "hover:bg-yes/25" : "hover:bg-no/25";
-        const label = `${yes ? "YES" : "NO"}${p === null ? "" : ` ${Math.round(share * 100)}%`}`;
-        const shell = `flex min-w-[86px] basis-0 flex-col items-center justify-center ${fill} ${
-          yes ? "" : "border-l border-line"
-        }`;
-        const inner = (
-          <>
-            <span className={`text-[13px] leading-none font-medium tracking-[0.14em] ${tone}`}>{label}</span>
-            <span className="num mt-1 text-[11px] leading-none text-dim">
-              {mult === null ? "—" : `×${mult.toFixed(2)}`}
-            </span>
-          </>
-        );
-        return onBet ? (
-          <button
-            key={String(yes)}
-            type="button"
-            style={{ flexGrow: share }}
-            className={`${shell} ${hover} cursor-pointer transition-colors disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent`}
-            disabled={disabled}
-            title={blocked ?? undefined}
-            onClick={() => onBet(yes)}
-          >
-            {busy === String(yes) ? <span className="num text-[13px] text-bone">…</span> : inner}
-          </button>
-        ) : (
-          <div key={String(yes)} style={{ flexGrow: share }} className={shell}>
-            {inner}
-          </div>
-        );
-      })}
-    </div>
+      {inner}
+    </button>
   );
 }
 
@@ -246,6 +230,15 @@ export function Markets({
         </span>
       </div>
 
+      {/* A price table, not a stack of cards: one row per market, fixed columns, so every market of
+          an event is on screen at once and the board reads down the YES and NO columns. */}
+      <div className="grid grid-cols-[1fr_62px_62px_72px] border-b border-line">
+        <span className="tag px-2 py-1">market</span>
+        <span className="tag border-l border-line px-1 py-1 text-center">yes</span>
+        <span className="tag border-l border-line px-1 py-1 text-center">no</span>
+        <span className="tag border-l border-line px-2 py-1 text-right">pool</span>
+      </div>
+
       <ul>
         {event.outcomes.map((label, i) => {
           const m = markets?.[i] ?? { pool: ZERO, stake: ZERO };
@@ -253,57 +246,49 @@ export function Markets({
           const resolved = event.outcome !== null;
           const total = m.pool[0] + m.pool[1];
           return (
-            <li key={i} className={`border-b border-line px-2 py-2 ${resolved && won ? "bg-bone/5" : ""}`}>
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <span className="tag">market {String(i + 1).padStart(2, "0")}</span>
-                  <h3 className="mt-0.5 text-[15px] leading-tight normal-case tracking-normal text-bone">{label}</h3>
-                </div>
-                <div className="shrink-0 text-right">
-                  <span className="tag block">pool</span>
-                  <span className={`num block text-[22px] leading-none ${total === 0n ? "text-dim" : "text-bone"}`}>
-                    {usdc(total)}
-                  </span>
-                </div>
+            <li
+              key={i}
+              className={`grid grid-cols-[1fr_62px_62px_72px] border-b border-line ${
+                resolved && won ? "bg-bone/5" : ""
+              }`}
+            >
+              <div className="min-w-0 px-2 py-2">
+                <p className="text-[13px] leading-[1.35] text-bone">{label}</p>
+                {resolved ? (
+                  <p className="num mt-0.5 text-[11px] text-dim">
+                    {won ? "resolved yes" : "resolved no"}
+                    {m.stake[0] > 0n || m.stake[1] > 0n ? (
+                      <> · payout {usdc(marketPayout(m.stake, m.pool, won))}</>
+                    ) : null}
+                  </p>
+                ) : m.stake[0] > 0n || m.stake[1] > 0n ? (
+                  <p className="num mt-0.5 text-[11px] text-amber">
+                    you {usdc(m.stake[1])} yes · {usdc(m.stake[0])} no
+                  </p>
+                ) : parsed && !blocked ? (
+                  <p className="num mt-0.5 text-[11px] text-dim">
+                    {usdc(parsed)} returns {usdc(previewPayout(parsed, true, m.pool))} / {" "}
+                    {usdc(previewPayout(parsed, false, m.pool))}
+                  </p>
+                ) : null}
               </div>
 
-              <SplitBar
-                pool={m.pool}
-                disabled={!!blocked || busy !== null}
-                blocked={blocked}
-                busy={busy?.startsWith(`${i}-`) ? busy.slice(`${i}-`.length) : null}
-                onBet={resolved ? undefined : (yes) => bet(i, yes)}
-              />
+              {[true, false].map((yes) => (
+                <PriceCell
+                  key={String(yes)}
+                  yes={yes}
+                  pool={m.pool}
+                  staked={(yes ? m.stake[1] : m.stake[0]) > 0n}
+                  disabled={!!blocked || busy !== null}
+                  blocked={blocked}
+                  busy={busy === `${i}-${yes}`}
+                  onBet={resolved ? undefined : (side) => bet(i, side)}
+                />
+              ))}
 
-              {total === 0n && !resolved ? (
-                <p className="mt-1 text-[11px] tracking-[0.1em] text-dim uppercase">no bets yet</p>
-              ) : null}
-
-              {resolved ? (
-                <p className="mt-1 text-[11px] tracking-[0.1em] uppercase">
-                  <span className={won ? "text-bone" : "text-dim"}>{won ? "resolved yes" : "resolved no"}</span>
-                </p>
-              ) : null}
-
-              {m.stake[0] > 0n || m.stake[1] > 0n ? (
-                <p className="mt-1 num text-[11px] text-dim">
-                  you: <span className="text-yes">{usdc(m.stake[1])} yes</span> ·{" "}
-                  <span className="text-no">{usdc(m.stake[0])} no</span>
-                  {resolved ? (
-                    <>
-                      {" "}
-                      · payout <span className="text-amber">{usdc(marketPayout(m.stake, m.pool, won))}</span>
-                    </>
-                  ) : null}
-                </p>
-              ) : null}
-
-              {parsed && !blocked ? (
-                <p className="mt-1 num text-[11px] text-dim">
-                  {usdc(parsed)} on yes returns <span className="text-yes">{usdc(previewPayout(parsed, true, m.pool))}</span>
-                  {" · "}on no <span className="text-no">{usdc(previewPayout(parsed, false, m.pool))}</span>
-                </p>
-              ) : null}
+              <div className="flex items-center justify-end border-l border-line px-2">
+                <span className={`money text-[16px] ${total === 0n ? "text-dim" : "text-bone"}`}>{usdc(total)}</span>
+              </div>
             </li>
           );
         })}
@@ -311,23 +296,11 @@ export function Markets({
 
       <div aria-live="polite" className="border-t border-line px-2 py-2">
         {open ? (
-          <p className="text-[11px] tracking-[0.1em] text-dim uppercase">
-            the price is the pool: the first stake on a side sets it, every later stake moves it
+          <p className="text-[13px] leading-[1.5] text-dim">
+            The price is the pool: the first stake on a side sets it, every later stake moves it.
           </p>
         ) : null}
-        {blocked ? (
-          <p className="num text-[11px] text-dim">
-            {blocked}
-            {blocked === "Verify to bet" ? (
-              <>
-                {" — "}
-                <Link href="/verify" className="text-amber underline underline-offset-2">
-                  verify and take the faucet
-                </Link>
-              </>
-            ) : null}
-          </p>
-        ) : null}
+        {blocked ? <p className="num mt-1 text-[11px] text-dim">{blocked}</p> : null}
         {status ? <p className="num text-[11px] text-bone">{status}</p> : null}
         {error ? <p className="num text-[11px] text-flare">{error}</p> : null}
       </div>

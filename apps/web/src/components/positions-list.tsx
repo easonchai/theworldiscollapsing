@@ -94,8 +94,8 @@ export function PositionsList() {
                 {positions.map((p) => (
                   <li key={p.id}>
                     {event.outcomes[p.market.outcomeIdx] ?? `outcome ${p.market.outcomeIdx}`}:{" "}
-                    <span className="text-yes">{usdc(BigInt(p.yesStake))} yes</span> ·{" "}
-                    <span className="text-no">{usdc(BigInt(p.noStake))} no</span>
+                    <span className="text-bone">{usdc(BigInt(p.yesStake))} yes</span> ·{" "}
+                    <span className="text-bone">{usdc(BigInt(p.noStake))} no</span>
                     {p.claimed ? " · claimed" : ""}
                   </li>
                 ))}

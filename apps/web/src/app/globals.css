@@ -1,24 +1,20 @@
 @import "tailwindcss";
 
 @theme {
-  /* Late-night transmission: green-black vacuum, sodium amber, phosphor green, signal red.
-     One colour, one job — a hue that means two things means neither. */
+  /* Late-night transmission: green-black vacuum, sodium amber, one accent. The picture is the only
+     place hue is allowed to be loud, and even there it is held at phosphor-off luminance. */
   --color-vac: #070a08;
   --color-panel: #0d110e;
   --color-panel2: #131916;
   --color-line: #232c25;
   --color-bone: #ece7da;
   --color-dim: #8b9489;
-  --color-amber: #f2a93b; /* countdown and urgency */
-  --color-phos: #64e39b; /* live, and nothing else */
+  --color-amber: #f2a93b; /* live, urgent, and the brightest thing on any screen */
   --color-flare: #ff4d33; /* fault, and nothing else */
-  --color-yes: #2fd2e8; /* the YES side of a market */
-  --color-no: #ff5fbf; /* the NO side of a market */
 
-  /* Two voices: condensed grotesk for display, mono for everything else. The serif exists for
-     exactly one line per page — the on-air title — and is never used for body copy. */
-  --font-display: var(--font-antonio), "Arial Narrow", sans-serif;
-  --font-body: var(--font-newsreader), Georgia, serif;
+  /* Two faces, no third voice. Archivo (grotesk, tabular figures) carries headlines, money and the
+     clock; Roboto Mono carries every label, every readout, every line of prose. */
+  --font-display: var(--font-archivo), "Helvetica Neue", Arial, sans-serif;
   --font-mono: var(--font-roboto-mono), ui-monospace, monospace;
 
   /* Everything sits on a 7px rhythm: p-1 = 7px, p-2 = 14px, p-4 = 28px. */
@@ -44,14 +40,14 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  /* Station furniture is set in the condensed face; data is always monospaced. */
+  /* Station furniture is set in the grotesk; data is always monospaced. */
   h1,
   h2,
   h3 {
     font-family: var(--font-display);
-    font-weight: 500;
-    letter-spacing: 0.01em;
-    line-height: 0.92;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    line-height: 0.94;
     text-transform: uppercase;
   }
 
@@ -90,17 +86,18 @@
   }
 
   /* A video frame treated as a signal rather than a rectangle: interlace, phosphor bloom, tube
-     vignette. It covers the footage only — every caption layer sits above it. */
+     vignette. It covers the footage only — every caption layer sits above it. The picture itself is
+     dimmed by a brightness filter on the wrapper, so bars never outshine the type over them. */
   .signal {
     position: absolute;
     inset: 0;
     z-index: 1;
     pointer-events: none;
     background:
-      repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.38) 0 1px, transparent 1px 3px),
-      radial-gradient(ellipse at 50% 45%, rgba(100, 227, 155, 0.08) 0%, transparent 55%),
-      radial-gradient(ellipse at 50% 50%, transparent 28%, rgba(0, 0, 0, 0.78) 100%),
-      linear-gradient(rgba(7, 10, 8, 0.3), rgba(7, 10, 8, 0.3));
+      repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.42) 0 1px, transparent 1px 3px),
+      radial-gradient(ellipse at 50% 45%, rgba(242, 169, 59, 0.05) 0%, transparent 55%),
+      radial-gradient(ellipse at 50% 50%, transparent 26%, rgba(0, 0, 0, 0.8) 100%),
+      linear-gradient(rgba(7, 10, 8, 0.34), rgba(7, 10, 8, 0.34));
   }
 
   .panel {
@@ -113,6 +110,15 @@
     font-family: var(--font-mono);
     font-size: 11px;
     letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-dim);
+  }
+
+  /* The label above a number big enough to read across the room. */
+  .tag-lg {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: 0.22em;
     text-transform: uppercase;
     color: var(--color-dim);
   }
@@ -135,6 +141,22 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* Money and clocks: the display face, always tabular, so a countdown never shifts its own width. */
+  .money {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    letter-spacing: -0.02em;
+  }
+
+  /* A keyed lower-third: the picture fades into the type instead of being guillotined by a black
+     box, and one amber hairline keys the band to the signal above it. */
+  .slate {
+    border-top: 1px solid var(--color-amber);
+    background: linear-gradient(to top, rgba(4, 6, 5, 0.95) 0%, rgba(4, 6, 5, 0.88) 58%, rgba(4, 6, 5, 0) 100%);
+  }
+
   /* One chyron for the whole station: fixed to the foot of the viewport, full bleed, so it reads
      as a broadcast crawl and not as a caption on one video. */
   .chyron {
@@ -143,10 +165,28 @@
     bottom: 0;
     z-index: 45;
     display: flex;
-    height: 28px;
-    align-items: center;
+    height: 32px;
+    align-items: stretch;
     border-top: 1px solid var(--color-line);
     background: #000;
+  }
+
+  /* Fixed cell so the label never clips and the crawl is masked behind it. */
+  .chyron-label {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    width: 96px;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    border-right: 1px solid var(--color-line);
+    background: #000;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--color-amber);
   }
 
   .btn {
@@ -188,6 +228,13 @@
     border-color: var(--color-bone);
   }
 
+  /* A dead action never wears the accent: a disabled primary drops back to an outline. */
+  .btn-primary:disabled {
+    background: transparent;
+    border-color: var(--color-line);
+    color: var(--color-dim);
+  }
+
   .field {
     width: 100%;
     border: 1px solid var(--color-line);
@@ -212,7 +259,8 @@
     animation: marquee 34s linear infinite;
   }
 
-  /* One slow beam crossing the wall, the only ambient motion in the product. */
+  /* One slow beam, crossing the hero screen only: a rare deliberate event, not a sticker printed
+     on every tile of the wall. */
   .beam::before {
     content: "";
     position: absolute;
@@ -221,7 +269,7 @@
     pointer-events: none;
     background: linear-gradient(105deg, transparent 42%, rgba(242, 169, 59, 0.07) 50%, transparent 58%);
     background-size: 260% 100%;
-    animation: beam 11s linear infinite;
+    animation: beam 17s linear infinite;
   }
 }
 

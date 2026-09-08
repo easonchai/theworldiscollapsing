@@ -49,9 +49,9 @@ export function VerifyBadge({ event }: { event: EventPublic }) {
   const short = (s: string) => `${s.slice(0, 10)}…${s.slice(-6)}`;
 
   return (
-    <div className={`panel p-2 ${ok ? "border-phos/50" : check || error ? "border-flare/60" : ""}`}>
+    <div className={`panel p-2 ${ok ? "border-amber/50" : check || error ? "border-flare/60" : ""}`}>
       <div className="flex items-center gap-2">
-        <span aria-hidden className={`text-[18px] leading-none ${ok ? "text-phos" : check || error ? "text-flare" : "text-dim"}`}>
+        <span aria-hidden className={`text-[18px] leading-none ${ok ? "text-amber" : check || error ? "text-flare" : "text-dim"}`}>
           {ok ? "✓" : check || error ? "✗" : "…"}
         </span>
         <span className="tag">
@@ -70,9 +70,9 @@ export function VerifyBadge({ event }: { event: EventPublic }) {
         <dt>stored sig</dt>
         <dd className="text-bone">{short(signature)}</dd>
         <dt>drand sig</dt>
-        <dd className={check?.sigMatch ? "text-phos" : "text-flare"}>{check ? short(check.fetched) : error ?? "…"}</dd>
+        <dd className={check?.sigMatch ? "text-bone" : "text-flare"}>{check ? short(check.fetched) : error ?? "…"}</dd>
         <dt>keccak mod {event.outcomes.length}</dt>
-        <dd className={check?.outcomeMatch ? "text-phos" : "text-flare"}>
+        <dd className={check?.outcomeMatch ? "text-bone" : "text-flare"}>
           {check ? `${check.derived} — ${event.outcomes[check.derived]}` : "…"}
         </dd>
         <dt>on chain</dt>

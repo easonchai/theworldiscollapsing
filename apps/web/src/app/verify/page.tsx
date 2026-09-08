@@ -20,9 +20,9 @@ export default async function VerifyPage() {
   return (
     <div>
       <header className="border-b border-line px-3 py-3">
-        <p className="tag">before you can bet</p>
+        <p className="text-[13px] leading-[1.5] text-dim">Before you can bet.</p>
         <h1 className="mt-1 text-[clamp(34px,5vw,66px)] leading-none text-bone">Get on the floor</h1>
-        <p className="mt-2 max-w-[70ch] font-body text-[17px] text-dim italic">
+        <p className="mt-2 max-w-[70ch] text-[13px] leading-[1.5] text-dim">
           The faucet and every bet are gated on chain by a verified flag. Three steps, once.
         </p>
       </header>

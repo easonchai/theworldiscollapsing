@@ -98,9 +98,9 @@ export function MarketsList() {
                 <span className="hidden sm:block">
                   <span className="tag block">yes / no</span>
                   <span className="num text-[13px]">
-                    <span className="text-yes">{p === null ? "—" : `${Math.round(p * 100)}%`}</span>
+                    <span className="text-bone">{p === null ? "—" : `${Math.round(p * 100)}%`}</span>
                     <span className="text-dim"> / </span>
-                    <span className="text-no">{p === null ? "—" : `${Math.round((1 - p) * 100)}%`}</span>
+                    <span className="text-bone">{p === null ? "—" : `${Math.round((1 - p) * 100)}%`}</span>
                   </span>
                 </span>
                 <span className="hidden sm:block">

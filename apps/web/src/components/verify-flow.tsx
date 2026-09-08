@@ -104,7 +104,7 @@ export function VerifyFlow() {
           Bets, the faucet and the verified flag are all keyed to an address.
         </p>
         {address ? (
-          <p className="mt-2 num text-[12px] text-phos">connected {address}</p>
+          <p className="mt-2 num text-[12px] text-dim">connected {address}</p>
         ) : (
           <button type="button" className="btn btn-primary mt-2 w-full" onClick={login}>
             Sign in
@@ -133,7 +133,7 @@ export function VerifyFlow() {
 
         <div className="mt-3">
           {gate?.verified ? (
-            <p className="num text-[13px] text-phos">✓ this address is verified</p>
+            <p className="num text-[13px] text-amber">✓ this address is verified</p>
           ) : GATE_MODE === "world" ? (
             WORLD_APP_ID ? (
               <WorldVerifyGate attest={attest} address={address} sign={sign} post={post} setError={setError} />
@@ -173,7 +173,7 @@ export function VerifyFlow() {
       </section>
 
       <div aria-live="polite" className="bg-vac px-3 py-2 lg:col-span-3">
-        {status ? <p className="num text-[12px] text-phos">{status}</p> : null}
+        {status ? <p className="num text-[12px] text-bone">{status}</p> : null}
         {error ? <p className="num text-[12px] text-flare">{error}</p> : null}
       </div>
     </div>
