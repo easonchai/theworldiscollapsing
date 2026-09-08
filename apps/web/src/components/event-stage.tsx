@@ -7,7 +7,7 @@ import { identOf } from "@/lib/channels";
 import { roundTime } from "@/lib/chain";
 import type { EventPublic } from "@/lib/public";
 import { tickerLines } from "@/lib/ticker";
-import { Chyron, Countdown, Umd, clock, useNow, usdc } from "./bits";
+import { Chyron, Countdown, Digits, Umd, clock, useNow, usdc } from "./bits";
 import { ClaimButton, Markets, claimableOf, useMarkets, type MarketState } from "./markets";
 import { Player } from "./player";
 import { VerifyBadge } from "./verify-badge";
@@ -55,34 +55,34 @@ const useMounted = () =>
   );
 
 /**
- * The monitor: the picture at full brightness under one interlace, with the station's UMD label —
- * channel, name, tally — hard against the frame's top-left so the one cue that has to read from
- * across the room does. Every number lives in the strip below, so no fact is stated twice.
+ * The monitor: the picture at broadcast amplitude (the source is a 100% signal, bars go to air at
+ * 75%) under one rolling hum bar, with the station's UMD label — channel, name, tally — flush in
+ * the frame's top-left corner so the one cue that has to read from across the room does. Every
+ * number lives in the strip below, so no fact is stated twice.
  */
 function Screen({ event, now, mounted }: { event: EventPublic; now: number; mounted: boolean }) {
-  const ident = identOf(event.channelId);
   const locked = event.state === "LOCKED" || event.state === "RESOLVE";
 
   return (
-    <div className="relative border-b border-line bg-black">
-      {/* Hue is the channel's identity; nothing here is dimmed. 38dvh, so the strip and the two
-          prose blocks under it clear the chyron on a laptop. */}
-      <div style={{ filter: `hue-rotate(${ident.hue}deg)` }}>
+    <div className="relative overflow-hidden border-b border-line bg-black">
+      {/* 38dvh, so the strip and the rules under it clear the chyron on a laptop. */}
+      <div className="feed">
         <Player event={event} className="aspect-video max-h-[38dvh] w-full" />
       </div>
-      <span className="signal" aria-hidden />
+      <span className="hum" aria-hidden />
 
-      <div className="absolute top-2 left-2 z-10">
+      {/* The station's one statement of which channel this is, and the way back to it. */}
+      <Link href={`/c/${event.channelId}`} className="absolute top-0 left-0 z-10">
         <Umd channelId={event.channelId} name={event.channelId} state={event.state} />
-      </div>
+      </Link>
 
       {locked ? (
-        <div className="absolute inset-0 z-20 grid place-items-center bg-vac/75">
+        <div className="absolute inset-0 z-20 grid place-items-center bg-vac/80">
           <div className="px-2 text-center">
-            <p className="font-display text-[clamp(26px,3.4vw,44px)] leading-none font-bold text-amber uppercase">
+            <p className="display text-[clamp(26px,3.4vw,44px)] leading-none text-bone">
               Locked
             </p>
-            <p className="prose mt-2 text-dim">The ending does not exist yet.</p>
+            <p className="copy mt-2 text-dim">The ending does not exist yet.</p>
           </div>
         </div>
       ) : null}
@@ -93,8 +93,8 @@ function Screen({ event, now, mounted }: { event: EventPublic; now: number; moun
 }
 
 /**
- * What this address has riding on the event, in the sidebar where a bettor looks next. An empty
- * state is a state: the panel says so rather than leaving the column dead black.
+ * What this address has riding on the event, between the board and the ticket. An empty book is a
+ * state, and a terminal states it in three words, not in a sentence about what will happen later.
  */
 function YourPosition({ event, markets }: { event: EventPublic; markets: MarketState[] | null }) {
   const rows = (markets ?? []).flatMap((m, i) =>
@@ -103,7 +103,7 @@ function YourPosition({ event, markets }: { event: EventPublic; markets: MarketS
       .map((side) => ({ key: `${i}-${side}`, label: event.outcomes[i], side: side ? "yes" : "no", amount: m.stake[side] })),
   );
   return (
-    <section className="flex-1 border-t border-line px-2 py-2">
+    <section className="border-t border-line px-2 py-2">
       <p className="tag">your position</p>
       {rows.length ? (
         <ul className="mt-2">
@@ -117,9 +117,7 @@ function YourPosition({ event, markets }: { event: EventPublic; markets: MarketS
           ))}
         </ul>
       ) : (
-        <p className="prose mt-1 text-dim">
-          Nothing staked on this event yet. Every bet you place shows up here the moment it confirms.
-        </p>
+        <p className="num mt-1 text-[12px] tracking-[0.14em] text-dim uppercase">— no positions —</p>
       )}
     </section>
   );
@@ -166,105 +164,93 @@ export function EventStage({
         <div className="min-w-0 bg-vac">
           {showHeader ? (
             <header className="border-b border-line px-2 py-2">
-              <div className="flex flex-wrap items-center gap-2">
-                {/* Channel identity is a hue only on the wall, where four channels sit side by side.
-                    On one channel's own page it buys nothing, so the chrome stays bone. */}
-                <Link href={`/c/${event.channelId}`} className="chip hover:bg-bone hover:text-black">
-                  CH {ident.num} {event.channelId}
-                </Link>
-                <span className="tag">event {String(event.seq).padStart(3, "0")}</span>
-              </div>
-              {/* One line at label-adjacent scale: the countdown below is the page's display moment. */}
-              <h1 className="mt-2 truncate text-[clamp(22px,2.4vw,32px)] text-bone">{event.title}</h1>
-              {/* The premise is prose, so it is set as prose: the grotesk at 14/20, never the mono. */}
-              <p className="prose mt-2 max-w-[70ch] text-dim">{event.premise}</p>
+              {/* The channel is named once, on the picture below, where the UMD carries it and
+                  links back. Up here the only fact left is which event this is. */}
+              <p className="tag">event {String(event.seq).padStart(3, "0")}</p>
+              {/* Condensed caps, two lines at most: the countdown below is the page's display moment. */}
+              <h1 className="mt-2 line-clamp-2 text-[clamp(22px,2.4vw,32px)] text-bone">{event.title}</h1>
+              {/* One family for copy as well as for readouts: the mono at 13/1.6. */}
+              <p className="copy mt-2 max-w-[86ch] text-dim">{event.premise}</p>
             </header>
           ) : null}
 
           <Screen event={event} now={now} mounted={mounted} />
 
-          {/* The strip carries every number on the page exactly once, and its first cell is the
-              single hero fact: whatever clock this event is currently running against. */}
-          <div className="grid grid-cols-2 gap-px border-b border-line bg-line sm:grid-cols-[1.5fr_1fr_1fr_1.3fr]">
-            <div className="bg-vac px-2 py-2">
-              {event.state === "BETTING" ? (
-                <>
-                  <p className="tag">betting closes in</p>
-                  <Countdown
-                    to={event.lockTime}
-                    className="money mt-1 block text-[clamp(64px,9vw,120px)] leading-[0.82] text-amber"
-                  />
-                </>
-              ) : event.state === "LOCKED" || event.state === "RESOLVE" ? (
-                <>
-                  <p className="tag">round lands in</p>
-                  <p className="money mt-1 text-[clamp(64px,9vw,120px)] leading-[0.82] text-amber" suppressHydrationWarning>
-                    {landsIn === null || !mounted ? "—" : clock(landsIn)}
-                  </p>
-                </>
-              ) : resolved ? (
-                <>
-                  <p className="tag">result</p>
-                  <p className="mt-1 font-display text-[clamp(22px,2.4vw,34px)] leading-[0.95] font-bold text-bone uppercase">
-                    {event.outcomes[event.outcome!]}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p className="tag">status</p>
-                  <p className="money mt-1 text-[34px] leading-none text-dim">{event.state.toLowerCase()}</p>
-                </>
-              )}
-            </div>
-            <Cell label="drand round">{event.drandRound ?? "—"}</Cell>
-            <Cell label="round publishes">
-              <span suppressHydrationWarning>
-                {event.drandRound ? new Date(roundAtMs(event.drandRound)).toLocaleTimeString() : "—"}
-              </span>
-            </Cell>
-            {/* The one CTA fills its cell edge to edge, on one line, like every other cell. */}
-            <Link href="/verify" className="btn btn-primary h-full border-0">
-              Verify · claim faucet
-            </Link>
+          {/* One clock, full width, on the page's one margin: whatever this event is running
+              against, at the only display size on the page. */}
+          <div className="border-b border-line px-2 py-2">
+            {event.state === "BETTING" ? (
+              <>
+                <p className="tag">betting closes in</p>
+                <Countdown
+                  to={event.lockTime}
+                  className="money mt-1 block text-[clamp(64px,9vw,120px)] leading-[0.82] text-amber"
+                />
+              </>
+            ) : event.state === "LOCKED" || event.state === "RESOLVE" ? (
+              <>
+                <p className="tag">round lands in</p>
+                <p className="money mt-1 text-[clamp(64px,9vw,120px)] leading-[0.82] text-amber" suppressHydrationWarning>
+                  {landsIn === null || !mounted ? "--:--" : <Digits text={clock(landsIn)} />}
+                </p>
+              </>
+            ) : resolved ? (
+              <>
+                <p className="tag">result</p>
+                <p className="display mt-1 text-[clamp(22px,2.4vw,34px)] leading-[0.95] text-bone">
+                  {event.outcomes[event.outcome!]}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="tag">status</p>
+                <p className="money mt-1 text-[34px] leading-none text-dim">{event.state.toLowerCase()}</p>
+              </>
+            )}
           </div>
 
-          {/* The two things a bettor has to read before staking, on the same grid as the numbers
-              above them. */}
-          <div className="grid gap-px border-b border-line bg-line sm:grid-cols-2">
-            <section className="bg-vac px-2 py-2">
-              <p className="tag">house rules</p>
-              <ul className="prose mt-1 space-y-1 break-words text-dim">
-                <li>
-                  Winners split the pool of the market they were right about, less a{" "}
-                  <span className="text-bone">2%</span> fee. There is no house position.
-                </li>
-                <li>
-                  The result is <span className="num text-bone">keccak256(signature ‖ eventId) mod n</span> over the
-                  drand round above, fixed on chain before betting opens and non-existent until it publishes.
-                </li>
-                <li>A market nobody won refunds every stake in full.</li>
-              </ul>
-            </section>
-            <section className="bg-vac px-2 py-2">
-              <p className="tag">verify to bet</p>
-              <p className="prose mt-1 text-dim">
-                The faucet and the bet button are gated on chain: one verification per address, then play USDC and
-                every market of every event.
-              </p>
-            </section>
+          {/* Both facts about the randomness on one line under the clock they belong to. */}
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 border-b border-line px-2 py-2">
+            <span className="tag">drand round</span>
+            <span className="num text-[13px] text-bone">{event.drandRound ?? "—"}</span>
+            <span className="mx-1 h-3 w-px self-center bg-line" aria-hidden />
+            <span className="tag">publishes</span>
+            <span className="num text-[13px] text-bone" suppressHydrationWarning>
+              {event.drandRound ? new Date(roundAtMs(event.drandRound)).toLocaleTimeString() : "—"}
+            </span>
           </div>
+
+          {/* The house, as three lines of a terminal, not as three paragraphs. */}
+          <dl className="grid grid-cols-[74px_1fr] gap-x-2 gap-y-1 border-b border-line px-2 py-2">
+            <dt className="tag">payout</dt>
+            <dd className="num text-[12px] leading-[1.5] break-words text-dim">
+              Winners split their market&rsquo;s pool, less a <span className="text-bone">2%</span> fee. No house
+              position.
+            </dd>
+            <dt className="tag">result</dt>
+            <dd className="num text-[12px] leading-[1.5] break-words text-dim">
+              <span className="text-bone">keccak256(signature ‖ eventId) mod n</span>, over the round above — fixed
+              before betting opens, non-existent until it publishes.
+            </dd>
+            <dt className="tag">refund</dt>
+            <dd className="num text-[12px] leading-[1.5] break-words text-dim">
+              A market nobody won returns every stake in full.
+            </dd>
+          </dl>
         </div>
 
-        <aside className="flex min-w-0 flex-col border-t border-line bg-vac lg:sticky lg:top-[46px] lg:max-h-[calc(100dvh-78px)] lg:self-start lg:overflow-y-auto lg:border-t-0 lg:border-l">
-          <Markets event={event} markets={markets} refresh={refresh} />
-
-          <YourPosition event={event} markets={markets} />
+        <aside className="flex min-w-0 flex-col border-t border-line bg-vac lg:sticky lg:top-[46px] lg:h-[calc(100dvh-78px)] lg:self-start lg:overflow-y-auto lg:border-t-0 lg:border-l">
+          <Markets event={event} markets={markets} refresh={refresh}>
+            <YourPosition event={event} markets={markets} />
+          </Markets>
 
           {resolved ? (
             <div className="flex flex-col gap-2 border-t border-line bg-vac p-2">
               <div className="panel border-amber/40 p-2">
                 <p className="tag">your claim</p>
-                <p className="money mt-1 text-[26px] leading-none text-amber">{usdc(claimable)} USDC</p>
+                <p className={`money mt-1 text-[26px] leading-none ${claimable > 0n ? "text-amber" : "text-dim"}`}>
+                  {usdc(claimable)} USDC
+                </p>
                 <div className="mt-2">
                   <ClaimButton event={event} claimable={claimable} onClaimed={refresh} />
                 </div>
@@ -281,14 +267,5 @@ export function EventStage({
         empty="standby"
       />
     </>
-  );
-}
-
-function Cell({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="bg-vac px-2 py-2">
-      <p className="tag">{label}</p>
-      <p className="num mt-1 text-[14px] text-bone">{children}</p>
-    </div>
   );
 }

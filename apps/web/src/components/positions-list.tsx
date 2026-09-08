@@ -75,14 +75,14 @@ export function PositionsList() {
   }, [address]);
 
   if (!subgraphConfigured) return <SubgraphNotConfigured what="Your positions list" />;
-  if (!address) return <p className="px-3 py-6 text-[12px] text-dim">Sign in to see your positions.</p>;
+  if (!address) return <p className="px-2 py-6 text-[12px] text-dim">Sign in to see your positions.</p>;
 
   return (
     <div>
-      {error ? <p className="px-3 py-2 num text-[12px] text-flare">subgraph: {error}</p> : null}
+      {error ? <p className="px-2 py-2 num text-[12px] text-flare">subgraph: {error}</p> : null}
       <ul className="divide-y divide-line">
         {(rows ?? []).map(({ event, positions, claimable }) => (
-          <li key={event.id} className="grid gap-2 px-3 py-3 lg:grid-cols-[1fr_260px]">
+          <li key={event.id} className="grid gap-2 px-2 py-2 lg:grid-cols-[1fr_260px]">
             <div>
               <Link href={`/e/${event.id}`} className="text-[15px] text-bone hover:text-amber">
                 {event.title}
@@ -112,7 +112,7 @@ export function PositionsList() {
         ))}
       </ul>
       {rows && !rows.length ? (
-        <p className="px-3 py-6 text-[12px] text-dim">No positions indexed for this address yet.</p>
+        <p className="px-2 py-6 text-[12px] text-dim">No positions indexed for this address yet.</p>
       ) : null}
     </div>
   );

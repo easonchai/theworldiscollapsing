@@ -19,11 +19,10 @@ export function StationBar() {
 
   return (
     <header className="fixed inset-x-0 top-0 z-50 flex h-[46px] items-stretch overflow-x-auto border-b border-line bg-vac/95 backdrop-blur-[2px]">
-      {/* One weight, one colour, and a bone mark: the brand never wears the live accent. Padding is
-          the station's 14px, so the wordmark starts on the same edge as every tile caption. */}
-      <Link href="/" className="flex items-center gap-2 border-r border-line px-2 hover:bg-panel2">
-        <span className="size-[7px] bg-bone" aria-hidden />
-        <span className="font-display text-[19px] leading-none font-bold tracking-[-0.02em] text-bone uppercase">
+      {/* One weight, one colour, no mark: padding is the station's 14px, so the wordmark's own left
+          edge is the same 14px as every tile caption, chyron label and panel on the site. */}
+      <Link href="/" className="flex items-center border-r border-line px-2 hover:bg-panel2">
+        <span className="display text-[19px] leading-none text-bone">
           theworldiscollapsing
         </span>
       </Link>

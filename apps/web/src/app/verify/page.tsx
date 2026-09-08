@@ -19,7 +19,7 @@ export default async function VerifyPage() {
 
   return (
     <div>
-      <header className="border-b border-line px-3 py-3">
+      <header className="border-b border-line px-2 py-2">
         <p className="text-[13px] leading-[1.5] text-dim">Before you can bet.</p>
         <h1 className="mt-1 text-[clamp(34px,5vw,66px)] leading-none text-bone">Get on the floor</h1>
         <p className="mt-2 max-w-[70ch] text-[13px] leading-[1.5] text-dim">
@@ -30,7 +30,7 @@ export default async function VerifyPage() {
       <VerifyFlow />
 
       <section className="grid gap-px border-t border-line bg-line lg:grid-cols-2">
-        <div className="bg-vac p-3">
+        <div className="bg-vac p-2">
           <p className="tag">what this proves</p>
           <ul className="mt-2 max-w-[60ch] space-y-2 text-[14px] text-bone">
             <li>Betting closes on chain before the deciding drand round exists.</li>
@@ -39,7 +39,7 @@ export default async function VerifyPage() {
             {trust.proves ? <li>{trust.proves}</li> : null}
           </ul>
         </div>
-        <div className="bg-vac p-3">
+        <div className="bg-vac p-2">
           <p className="tag">what it does not</p>
           <ul className="mt-2 max-w-[60ch] space-y-2 text-[14px] text-dim">
             <li>Verification is liveness, not age. 18+ is your own word.</li>

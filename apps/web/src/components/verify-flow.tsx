@@ -97,7 +97,7 @@ export function VerifyFlow() {
 
   return (
     <div className="grid gap-px bg-line lg:grid-cols-3">
-      <section className="bg-vac p-3">
+      <section className="bg-vac p-2">
         <p className="tag">step one</p>
         <h2 className="mt-1 text-[24px] text-bone">Wallet</h2>
         <p className="mt-2 text-[14px] text-dim">
@@ -112,7 +112,7 @@ export function VerifyFlow() {
         )}
       </section>
 
-      <section className="bg-vac p-3">
+      <section className="bg-vac p-2">
         <p className="tag">step two</p>
         <h2 className="mt-1 text-[24px] text-bone">Verify</h2>
         <p className="mt-2 text-[14px] text-dim">
@@ -155,7 +155,7 @@ export function VerifyFlow() {
         </div>
       </section>
 
-      <section className="bg-vac p-3">
+      <section className="bg-vac p-2">
         <p className="tag">step three</p>
         <h2 className="mt-1 text-[24px] text-bone">Faucet</h2>
         <p className="mt-2 text-[14px] text-dim">
@@ -172,7 +172,7 @@ export function VerifyFlow() {
         </button>
       </section>
 
-      <div aria-live="polite" className="bg-vac px-3 py-2 lg:col-span-3">
+      <div aria-live="polite" className="bg-vac px-2 py-2 lg:col-span-3">
         {status ? <p className="num text-[12px] text-bone">{status}</p> : null}
         {error ? <p className="num text-[12px] text-flare">{error}</p> : null}
       </div>

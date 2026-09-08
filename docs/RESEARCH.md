@@ -372,3 +372,16 @@ Byzantium-era and present on every EVM chain, but that is reasoning, not a measu
 Consequence: every client write goes through `confirmed()` (`apps/web/src/lib/tx.ts`), which throws on
 a non-`success` receipt. `apps/web/src/lib/tx.test.ts` also fails if any component ever calls
 `waitForTransactionReceipt` directly again.
+
+
+## next/font variable axes — verified 2026-09-09 (web design pass)
+
+| Fact | Value | Source |
+|---|---|---|
+| Archivo is a two-axis variable font | `wdth` 62–125 (default 100) and `wght` 100–900 (default 400) | installed `next@16.3.4/dist/compiled/@next/font/dist/google/font-data.json`, key `"Archivo"` |
+| Requesting a non-weight axis | `axes: ['wdth']` on a `next/font/google` loader; only valid on a variable font, and `weight` must be left off (or `'variable'`) | `next@16.3.4/dist/docs/01-app/03-api-reference/02-components/font.md` §`axes`, §`weight` |
+| What ships after `next build` | one `@font-face` per unicode subset with `font-weight:100 900;font-stretch:62% 125%`, i.e. the axis really is in the woff2 | `apps/web/.next/static/css/*.css` after `pnpm --filter web build` |
+
+Consequence: `apps/web` loads one display family and sets it condensed with
+`font-variation-settings: "wdth" 78` (`h1..h3`, `.display`, `.money` in `globals.css`), so broadcast
+caps headlines and the lock countdown fit on one line without a second font family.

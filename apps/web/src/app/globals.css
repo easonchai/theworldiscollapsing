@@ -1,8 +1,9 @@
 @import "tailwindcss";
 
 @theme {
-  /* Late-night transmission: green-black vacuum, sodium amber, one accent. The picture is the only
-     place hue is allowed to be loud, and there it runs at full brightness — the signal is the star. */
+  /* Late-night transmission: green-black vacuum, sodium amber, one accent. The generated picture
+     already carries every hue there is, so the station around it spends none: bone, dim, one amber,
+     one red. */
   --color-vac: #070a08;
   --color-panel: #0d110e;
   --color-panel2: #131916;
@@ -12,13 +13,14 @@
   --color-amber: #f2a93b; /* time or money is live: the countdown and the one CTA. Nothing else. */
   --color-flare: #e0261a; /* one red: the UMD tally block (on air) and a fault message. Nothing else. */
 
-  /* Two faces, no third voice. Archivo (grotesk, tabular figures) carries headlines, prose, money
-     and the clock; Roboto Mono carries every label and every readout. */
-  --font-display: var(--font-archivo), "Helvetica Neue", Arial, sans-serif;
+  /* Two faces, no third voice. Archivo is loaded with its width axis, so headlines and clocks run
+     condensed (78%) — caps fit on one line at broadcast size — while Roboto Mono carries every
+     label, every readout and every line of copy. */
+  --font-display: var(--font-archivo), "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
   --font-mono: var(--font-roboto-mono), ui-monospace, monospace;
 
-  /* Everything sits on a 7px rhythm: p-1 = 7px, p-2 = 14px, p-4 = 28px. Every left edge in the
-     station — wordmark, tile furniture, chyron label, panel padding — starts at 14px. */
+  /* Everything sits on a 7px rhythm: p-1 = 7px, p-2 = 14px, p-4 = 28px. One margin in the whole
+     station — wordmark, tile furniture, chyron label, panel padding — every left edge is 14px. */
   --spacing: 0.4375rem;
 
   --radius-xs: 1px;
@@ -41,15 +43,17 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  /* Station furniture is set in the grotesk; data is always monospaced. */
+  /* Station furniture is set in the condensed grotesk; data is always monospaced. */
   h1,
   h2,
   h3 {
     font-family: var(--font-display);
+    font-variation-settings: "wdth" 78;
     font-weight: 700;
-    letter-spacing: -0.015em;
+    letter-spacing: -0.005em;
     line-height: 0.94;
     text-transform: uppercase;
+    text-wrap: balance;
   }
 
   a {
@@ -75,14 +79,29 @@
 }
 
 @layer components {
-  /* One honest treatment on the picture: interlace, nothing else. No vignette, no bloom, no wash —
-     a tile is either a full-brightness signal or a hard-black standby slate. */
-  .signal {
+  /* Amplitude, not decoration. The source is a 100% test signal; broadcast bars are specified at
+     75%, so that is what the station transmits — and a feed that is not the switched one drops to
+     40% luminance. Full saturation is left to the two things that must win: the tally and the clock. */
+  .feed {
+    filter: saturate(0.68) brightness(0.72);
+  }
+
+  .feed-dim {
+    filter: saturate(0.4) brightness(0.4);
+  }
+
+  /* One treatment on the picture, and only on the switched monitor: a single band of scanlines
+     rolling down the frame the way mains hum rolls through an unterminated feed. No full-field
+     interlace — over saturated fills it only makes moire. */
+  .hum {
     position: absolute;
-    inset: 0;
+    inset-inline: 0;
+    top: 0;
     z-index: 1;
+    height: 14%;
     pointer-events: none;
-    background: repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.34) 0 1px, transparent 1px 3px);
+    background: repeating-linear-gradient(to bottom, rgba(255, 255, 255, 0.07) 0 1px, transparent 1px 3px);
+    animation: hum 9s linear infinite;
   }
 
   .panel {
@@ -102,13 +121,24 @@
     color: var(--color-dim);
   }
 
-  /* Prose is the grotesk at 14/20 — the mono is for labels and numbers only, never paragraphs. */
-  .prose {
+  /* Station furniture that is not a heading — the wordmark, a slate's one word — set in the same
+     condensed grotesk as the headings, so the display face is never mixed with a wider cut. */
+  .display {
     font-family: var(--font-display);
-    font-weight: 400;
-    font-size: 14px;
-    line-height: 20px;
-    letter-spacing: 0;
+    font-variation-settings: "wdth" 78;
+    font-weight: 700;
+    letter-spacing: -0.005em;
+    line-height: 0.94;
+    text-transform: uppercase;
+  }
+
+  /* Copy is the mono at 13/1.6 — there is no third family in the station, so a premise and a rule
+     are set in the same face as the readouts they sit beside. */
+  .copy {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    letter-spacing: 0.01em;
     text-transform: none;
   }
 
@@ -146,14 +176,21 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Money and clocks: the headline grotesk, always tabular, so the countdown is the same face as
-     the headline above it and never shifts its own width. */
+  /* Money and clocks: the condensed headline grotesk, always tabular, so the countdown is the same
+     face as the headline above it and never shifts its own width. */
   .money {
     font-family: var(--font-display);
+    font-variation-settings: "wdth" 78;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     font-feature-settings: "tnum" 1;
-    letter-spacing: -0.02em;
+    letter-spacing: -0.01em;
+  }
+
+  /* A field of the clock that is not counting yet is dead furniture: it holds the width so the
+     digits never move, at 30% so it never competes with the field that is. */
+  .dead {
+    opacity: 0.3;
   }
 
   /* The lower-third plate: solid black, punched through the picture under one hairline. */
@@ -196,15 +233,16 @@
     color: var(--color-bone);
   }
 
-  /* 48px of black falling off the label cell, so the crawl fades in instead of being sliced. */
+  /* A hard 24px of black off the label cell, then a fade: the crawl is cut off at an edge, never
+     sliced mid-word half-legible. */
   .chyron-mask {
     position: absolute;
     inset-block: 0;
     left: 0;
     z-index: 1;
-    width: 48px;
+    width: 110px;
     pointer-events: none;
-    background: linear-gradient(to right, #000 0%, rgba(0, 0, 0, 0) 100%);
+    background: linear-gradient(to right, #000 0 78px, rgba(0, 0, 0, 0) 100%);
   }
 
   .btn {
@@ -272,10 +310,12 @@
     animation: marquee 34s linear infinite;
   }
 
-  /* The implied-odds bar on a wall market row: a rule that fills, not a chart. */
+  /* The implied-odds bar on a wall market row: a filled track, not an empty one. Before the first
+     stake the fill is the flat prior over the event's outcomes, and it is dim so it never passes
+     for a price somebody paid. */
   .odds-bar {
     position: relative;
-    height: 3px;
+    height: 5px;
     background: var(--color-line);
   }
 
@@ -284,6 +324,17 @@
     inset-block: 0;
     left: 0;
     background: var(--color-bone);
+  }
+
+  /* A terminal waiting for input, which is what an empty book is. */
+  .caret {
+    display: inline-block;
+    width: 7px;
+    height: 11px;
+    margin-left: 4px;
+    vertical-align: -1px;
+    background: var(--color-dim);
+    animation: caret 1.1s steps(1) infinite;
   }
 }
 
@@ -296,8 +347,29 @@
   }
 }
 
+@keyframes hum {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(714%);
+  }
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .marquee {
+  .marquee,
+  .hum,
+  .caret {
     animation: none;
+  }
+
+  .hum {
+    transform: translateY(420%);
   }
 }

@@ -46,10 +46,15 @@ export function Player({
     };
   }, [src, t0]);
 
+  // A source that has not been cut to air yet is a standby slate, the way a station holds a dead
+  // input: black, one mono line, a caret waiting for it.
   if (!src) {
     return (
       <div className={`grid place-items-center bg-black ${className}`}>
-        <p className="tag animate-pulse">no signal — rendering</p>
+        <p className="tag">
+          standby · rendering
+          <span className="caret" aria-hidden />
+        </p>
       </div>
     );
   }

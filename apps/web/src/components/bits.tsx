@@ -4,6 +4,9 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { formatUnits } from "viem";
 import { USDC_DECIMALS } from "@/lib/chain";
 import { identOf } from "@/lib/channels";
+import { clock, splitClock } from "@/lib/clock";
+
+export { clock };
 
 export const usdc = (v: bigint, dp = 2) => {
   const n = Number(formatUnits(v, USDC_DECIMALS));
@@ -34,13 +37,24 @@ export function StateBadge({ state, className = "" }: { state: string; className
  * tally — on a black plate with one neutral hairline. A viewer reads the same three things whether
  * the source is the hero of the wall or the only picture on an event page.
  */
-export function Umd({ channelId, name, state }: { channelId: string; name: string; state?: string }) {
+export function Umd({
+  channelId,
+  name,
+  state,
+  accent = false,
+}: {
+  channelId: string;
+  name: string;
+  state?: string;
+  /** Only the wall sets this: four channels at once is the only place a hue earns its keep. */
+  accent?: boolean;
+}) {
   const ident = identOf(channelId);
   return (
-    <div className="z-10 flex items-center gap-1 border border-line bg-black px-2 py-1 whitespace-nowrap">
+    <div className="z-10 flex items-center gap-1 border-r border-b border-line bg-black px-2 py-1 whitespace-nowrap">
       <span
         className="num text-[11px] leading-none text-[color:var(--ch)]"
-        style={{ "--ch": ident.accent } as CSSProperties}
+        style={{ "--ch": accent ? ident.accent : "var(--color-bone)" } as CSSProperties}
       >
         CH {ident.num}
       </span>
@@ -60,13 +74,16 @@ export function useNow(intervalMs = 1000) {
   return now;
 }
 
-/** Broadcast clock: always two digits per field, so 00:11 never re-flows into 0:11. */
-export const clock = (ms: number) => {
-  const s = Math.max(0, Math.ceil(ms / 1000));
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const h = Math.floor(s / 3600);
-  return h ? `${h}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}` : `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
-};
+/** The clock as the station prints it: dead leading fields dimmed, the live one at full strength. */
+export function Digits({ text }: { text: string }) {
+  const [dead, live] = splitClock(text);
+  return (
+    <>
+      {dead ? <span className="dead">{dead}</span> : null}
+      {live}
+    </>
+  );
+}
 
 export function Countdown({ to, className = "" }: { to: string | null; className?: string }) {
   const now = useNow();
@@ -75,7 +92,7 @@ export function Countdown({ to, className = "" }: { to: string | null; className
   return (
     // Server and client render this a tick apart; the interval corrects it on mount.
     <time dateTime={to} suppressHydrationWarning className={`tabular-nums ${className}`}>
-      {clock(Date.parse(to) - now)}
+      <Digits text={clock(Date.parse(to) - now)} />
     </time>
   );
 }
@@ -94,14 +111,17 @@ export function Chyron({
   lines: { cat: string; text: string }[];
   empty: string;
 }) {
+  // A crawl that says the same thing twice reads as filler rather than as a wire feed. Two channels
+  // can land on the same canon line, so the feed is de-duplicated by text before it goes to air.
+  const feed = lines.filter((line, i) => lines.findIndex((o) => o.text === line.text) === i);
   return (
     <div className="chyron">
       {/* A fixed, opaque cell: the label can never clip, and the crawl fades in behind it. */}
       <span className="chyron-label">{label}</span>
       <div className="relative flex min-w-0 flex-1 items-center overflow-hidden pl-2">
-        {lines.length ? (
+        {feed.length ? (
           <div className="marquee text-[12px] tracking-[0.08em] text-dim uppercase">
-            {[...lines, ...lines].map((line, i) => (
+            {[...feed, ...feed].map((line, i) => (
               <span key={i}>
                 <span className="mr-2 font-bold text-bone">{line.cat}</span>
                 {line.text}

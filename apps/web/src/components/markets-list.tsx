@@ -53,7 +53,7 @@ export function MarketsList() {
 
   return (
     <div>
-      <div className="sticky top-[46px] z-20 flex flex-wrap items-center gap-2 border-b border-line bg-vac/95 px-3 py-2 backdrop-blur-[2px]">
+      <div className="sticky top-[46px] z-20 flex flex-wrap items-center gap-2 border-b border-line bg-vac/95 px-2 py-2 backdrop-blur-[2px]">
         <span className="tag">filter</span>
         <select className="field w-auto py-1" value={channel} onChange={(e) => setChannel(e.target.value)} aria-label="Channel">
           <option value="all">all channels</option>
@@ -74,7 +74,7 @@ export function MarketsList() {
         </span>
       </div>
 
-      {error ? <p className="px-3 py-2 num text-[12px] text-flare">subgraph: {error}</p> : null}
+      {error ? <p className="px-2 py-2 num text-[12px] text-flare">subgraph: {error}</p> : null}
 
       <ul className="divide-y divide-line">
         {rows.map(({ market, indexed: ie, event, volume }) => {
@@ -85,7 +85,7 @@ export function MarketsList() {
             <li key={market.id}>
               <Link
                 href={`/e/${event.id}`}
-                className="grid grid-cols-[1fr_auto] items-center gap-3 px-3 py-2 hover:bg-panel2 sm:grid-cols-[1fr_120px_120px_120px]"
+                className="grid grid-cols-[1fr_auto] items-center gap-2 px-2 py-2 hover:bg-panel2 sm:grid-cols-[1fr_120px_120px_120px]"
               >
                 <span className="min-w-0">
                   <span className="block truncate text-[14px] text-bone">
@@ -123,7 +123,7 @@ export function MarketsList() {
       </ul>
 
       {indexed && !rows.length ? (
-        <p className="px-3 py-6 text-[12px] text-dim">The index has no markets matching this filter.</p>
+        <p className="px-2 py-6 text-[12px] text-dim">The index has no markets matching this filter.</p>
       ) : null}
     </div>
   );

@@ -18,63 +18,53 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
 
   return (
     <div>
-      <header className="flex flex-wrap items-end justify-between gap-2 border-b border-line px-3 py-3">
-        <div className="border-l-4 pl-2" style={{ borderColor: ident.accent }}>
-          <p className="tag">channel</p>
-          <h1 className="mt-1 flex items-baseline gap-2 text-[clamp(34px,5vw,66px)] leading-none text-bone">
-            <span className="num text-[0.28em] tracking-[0.2em]" style={{ color: ident.accent }}>
-              CH {ident.num}
-            </span>
-            {info.name}
-          </h1>
-        </div>
-        {current ? (
-          <div className="text-right">
-            <p className="tag">now on air</p>
-            <p className="mt-1 max-w-[46ch] text-[13px] leading-[1.5] text-dim">{current.title}</p>
-          </div>
-        ) : null}
+      {/* One lockup on the station's one left edge: the channel number over its name, nothing
+          floating between them. The event's own title is on the monitor below, so it is not
+          repeated here. */}
+      <header className="border-b border-line px-2 py-2">
+        <p className="tag">ch {ident.num}</p>
+        <h1 className="mt-1 text-[clamp(34px,5vw,66px)] leading-[0.9] text-bone">{info.name}</h1>
       </header>
 
       {current ? (
         <EventStage key={current.id} initial={current} showHeader={false} />
       ) : (
-        <p className="px-3 py-6 text-[13px] text-dim">This channel has not gone on air yet.</p>
+        <p className="copy px-2 py-4 text-dim">This channel has not gone on air yet.</p>
       )}
 
       <div className="grid gap-px border-t border-line bg-line lg:grid-cols-3">
-        <section className="min-w-0 bg-vac p-3">
+        <section className="min-w-0 bg-vac px-2 py-2">
           <h2 className="text-[20px] text-bone">Canon</h2>
-          <p className="mt-1 text-[13px] leading-[1.5] text-dim">What the world now believes.</p>
+          <p className="copy mt-1 text-dim">What the world now believes.</p>
           <ol className="mt-2 space-y-2">
             {info.canon.length ? (
               info.canon.map((line, i) => (
-                <li key={i} className="border-l-2 border-line pl-2 text-[13px] text-bone">
+                <li key={i} className="copy border-l-2 border-line pl-2 text-bone">
                   {line}
                 </li>
               ))
             ) : (
-              <li className="text-[12px] text-dim">Nothing has happened here yet.</li>
+              <li className="tag">nothing has happened here yet</li>
             )}
           </ol>
         </section>
 
-        <section className="min-w-0 bg-vac p-3">
+        <section className="min-w-0 bg-vac px-2 py-2">
           <h2 className="text-[20px] text-bone">Newsroom</h2>
-          <p className="mt-1 text-[13px] leading-[1.5] text-dim">How this event was thought up.</p>
+          <p className="copy mt-1 text-dim">How this event was thought up.</p>
           <details className="mt-2 panel p-2">
-            <summary className="cursor-pointer text-[12px] tracking-[0.14em] text-amber uppercase">
+            <summary className="cursor-pointer text-[12px] tracking-[0.14em] text-bone uppercase">
               Reasoning trace
             </summary>
-            <p className="mt-2 max-h-64 overflow-y-auto text-[12px] leading-relaxed break-words whitespace-pre-wrap text-dim">
+            <p className="copy mt-2 max-h-64 overflow-y-auto break-words whitespace-pre-wrap text-dim">
               {current?.reasoning ?? "No trace recorded for this event."}
             </p>
           </details>
         </section>
 
-        <section className="min-w-0 bg-vac p-3">
+        <section className="min-w-0 bg-vac px-2 py-2">
           <h2 className="text-[20px] text-bone">Recent events</h2>
-          <p className="mt-1 text-[13px] leading-[1.5] text-dim">This channel&rsquo;s history.</p>
+          <p className="copy mt-1 text-dim">This channel&rsquo;s history.</p>
           <ul className="mt-2 divide-y divide-line">
             {history.length ? (
               history.map((e) => (

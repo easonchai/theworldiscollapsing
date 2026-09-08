@@ -68,56 +68,65 @@ function multiple(pool: readonly [bigint, bigint], yes: boolean): number | null 
 }
 
 /**
- * One side of one market, as a cell in the price table. YES and NO are the same off-white mono and
- * are told apart by which column they sit in; the only fill on the board is the amber on the side
- * this address has money on.
+ * One side of one market: an outlined tile you pick, not a data cell. It shows the price if the
+ * market has one and OPEN if it does not — never an em-dash, which reads as missing data. Picking
+ * fills it amber; the ticket at the foot of the rail is where the money is committed.
  */
 function PriceCell({
   yes,
+  label,
   pool,
   staked,
+  selected,
   disabled,
   busy,
   blocked,
-  onBet,
+  onPick,
 }: {
   yes: boolean;
+  label: string;
   pool: [bigint, bigint];
   staked: boolean;
+  selected: boolean;
   disabled?: boolean;
   busy: boolean;
   blocked: string | null;
-  onBet?: (yes: boolean) => void;
+  onPick?: (yes: boolean) => void;
 }) {
   const p = impliedYes(pool);
   const share = p === null ? null : yes ? p : 1 - p;
   const mult = multiple(pool, yes);
-  // An unpriced market shows one dim dash, never a dash stacked on a dash: there is no second
-  // number until there is a first stake, and the row's hint says so in words.
   const inner = busy ? (
-    <span className="num text-[13px] text-bone">…</span>
+    <span className="num text-[13px]">…</span>
   ) : share === null ? (
-    <span className="money text-[16px] leading-none text-dim">—</span>
+    <span className="num text-[12px] tracking-[0.14em]">open</span>
   ) : (
     <>
-      <span className="money text-[16px] leading-none text-bone">{Math.round(share * 100)}%</span>
-      <span className="num mt-1 text-[10px] leading-none text-dim">{mult === null ? "—" : `×${mult.toFixed(2)}`}</span>
+      <span className="money text-[17px] leading-none">{Math.round(share * 100)}%</span>
+      <span className="num mt-1 text-[10px] leading-none opacity-70">
+        {mult === null ? "—" : `×${mult.toFixed(2)}`}
+      </span>
     </>
   );
   // Whole class strings, never assembled from pieces: Tailwind reads this file, not the DOM.
-  const shell = `flex flex-col items-center justify-center border-l border-line px-1 py-2 ${
-    staked ? "bg-amber/18" : ""
+  const shell = `flex h-full min-h-[52px] flex-col items-center justify-center border uppercase ${
+    selected
+      ? "border-amber bg-amber text-black"
+      : staked
+        ? "border-amber/60 text-bone"
+        : "border-line text-bone"
   }`;
 
-  if (!onBet) return <div className={shell}>{inner}</div>;
+  if (!onPick) return <div className={`${shell} ${share === null ? "text-dim" : ""}`}>{inner}</div>;
   return (
     <button
       type="button"
-      className={`${shell} cursor-pointer transition-colors hover:bg-bone/10 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent`}
+      className={`${shell} cursor-pointer transition-colors hover:border-bone disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:border-line`}
       disabled={disabled}
       title={blocked ?? undefined}
-      aria-label={`Bet ${yes ? "yes" : "no"}`}
-      onClick={() => onBet(yes)}
+      aria-pressed={selected}
+      aria-label={`${yes ? "Yes" : "No"} on ${label}`}
+      onClick={() => onPick(yes)}
     >
       {inner}
     </button>
@@ -128,14 +137,18 @@ export function Markets({
   event,
   markets,
   refresh,
+  children,
 }: {
   event: EventPublic;
   markets: MarketState[] | null;
   refresh: () => void;
+  /** What sits between the board and the ticket at the foot of the rail. */
+  children?: React.ReactNode;
 }) {
   const { address, walletClient } = useWallet();
   const { gate, refresh: refreshGate } = useGate();
   const [amount, setAmount] = useState("25");
+  const [pick, setPick] = useState<{ i: number; yes: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -197,6 +210,7 @@ export function Markets({
       });
       const receipt = await confirmed(tx, () => betRevertMessage(event.lockTime, Date.now()));
       setStatus(`Bet confirmed in block ${receipt.blockNumber}`);
+      setPick(null);
       refresh();
       refreshGate();
     } catch (e) {
@@ -207,8 +221,24 @@ export function Markets({
     }
   }
 
+  const resolved = event.outcome !== null;
+  const empty = markets !== null && markets.every((m) => m.pool[0] + m.pool[1] === 0n);
+  const picked = pick ? { ...pick, label: event.outcomes[pick.i], pool: markets?.[pick.i]?.pool ?? ZERO } : null;
+  // One button, and it says exactly why it will not fire.
+  const cta = !address
+    ? "Sign in to bet"
+    : !gate?.verified
+      ? "Verify to unlock"
+      : !open
+        ? "Betting closed"
+        : !picked
+          ? "Pick a side"
+          : !parsed
+            ? "Enter an amount"
+            : `Place ${usdc(parsed)} on ${picked.yes ? "yes" : "no"}`;
+
   return (
-    <section aria-label="Markets" className="flex flex-col">
+    <section aria-label="Markets" className="flex flex-1 flex-col">
       {/* 46px so this header sits on the same baseline as the station bar and the channel bug. */}
       <div className="flex h-[46px] items-center justify-between border-b border-line px-2">
         {/* Every panel title in the station is the same tracked mono cap. */}
@@ -216,46 +246,27 @@ export function Markets({
         <span className="tag">parimutuel · 2% fee</span>
       </div>
 
-      <div className="flex items-center gap-2 border-b border-line bg-panel px-2 py-2">
-        <label htmlFor="stake" className="tag">
-          stake
-        </label>
-        <input
-          id="stake"
-          className="field w-24 py-1 text-right"
-          inputMode="decimal"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
-          aria-describedby="stake-hint"
-        />
-        <span id="stake-hint" className="num shrink-0 text-[11px] whitespace-nowrap text-dim">
-          USDC · bal {gate ? gate.balanceText : "—"}
-        </span>
-      </div>
-
       {/* A price table, not a stack of cards: one row per market, fixed columns, so every market of
           an event is on screen at once and the board reads down the YES and NO columns. */}
-      <div className="grid grid-cols-[1fr_56px_56px_68px] border-b border-line">
-        <span className="tag px-2 py-1">market</span>
-        <span className="tag border-l border-line px-1 py-1 text-center">yes</span>
-        <span className="tag border-l border-line px-1 py-1 text-center">no</span>
-        <span className="tag border-l border-line px-2 py-1 text-right">pool</span>
+      <div className="grid grid-cols-[1fr_96px_96px] border-b border-line px-2 py-1">
+        <span className="tag">market</span>
+        <span className="tag text-center">yes</span>
+        <span className="tag text-center">no</span>
       </div>
 
       <ul>
         {event.outcomes.map((label, i) => {
           const m = markets?.[i] ?? { pool: ZERO, stake: ZERO };
           const won = event.outcome === i;
-          const resolved = event.outcome !== null;
           const total = m.pool[0] + m.pool[1];
           return (
             <li
               key={i}
-              className={`grid grid-cols-[1fr_56px_56px_68px] border-b border-line ${
+              className={`grid grid-cols-[1fr_96px_96px] items-stretch gap-1 border-b border-line px-2 py-1 ${
                 resolved && won ? "bg-bone/5" : ""
               }`}
             >
-              <div className="min-w-0 px-2 py-2">
+              <div className="min-w-0 self-center py-1 pr-2">
                 <p className="text-[13px] leading-[1.35] text-bone">{label}</p>
                 {resolved ? (
                   <p className="num mt-0.5 text-[11px] text-dim">
@@ -268,46 +279,83 @@ export function Markets({
                   <p className="num mt-0.5 text-[11px] text-amber">
                     you {usdc(m.stake[1])} yes · {usdc(m.stake[0])} no
                   </p>
-                ) : parsed && !blocked ? (
-                  <p className="num mt-0.5 text-[11px] text-dim">
-                    {usdc(parsed)} returns {usdc(previewPayout(parsed, true, m.pool))} / {" "}
-                    {usdc(previewPayout(parsed, false, m.pool))}
-                  </p>
-                ) : total === 0n ? (
-                  <p className="num mt-0.5 text-[11px] text-dim">first stake sets price</p>
-                ) : null}
+                ) : (
+                  <p className="num mt-0.5 text-[11px] text-dim">pool {usdc(total)}</p>
+                )}
               </div>
 
               {[true, false].map((yes) => (
                 <PriceCell
                   key={String(yes)}
                   yes={yes}
+                  label={label}
                   pool={m.pool}
                   staked={(yes ? m.stake[1] : m.stake[0]) > 0n}
-                  disabled={!!blocked || busy !== null}
+                  selected={pick?.i === i && pick.yes === yes}
+                  disabled={busy !== null}
                   blocked={blocked}
                   busy={busy === `${i}-${yes}`}
-                  onBet={resolved ? undefined : (side) => bet(i, side)}
+                  onPick={resolved ? undefined : (side) => setPick({ i, yes: side })}
                 />
               ))}
-
-              <div className="flex items-center justify-end border-l border-line px-2">
-                <span className={`money text-[16px] ${total === 0n ? "text-dim" : "text-bone"}`}>{usdc(total)}</span>
-              </div>
             </li>
           );
         })}
       </ul>
 
-      <div aria-live="polite" className="border-t border-line px-2 py-2">
-        {open ? (
-          <p className="prose text-dim">
-            The price is the pool: the first stake on a side sets it, every later stake moves it.
-          </p>
-        ) : null}
-        {blocked ? <p className="num mt-1 text-[11px] text-dim">{blocked}</p> : null}
-        {status ? <p className="num text-[11px] text-bone">{status}</p> : null}
-        {error ? <p className="num text-[11px] text-flare">{error}</p> : null}
+      {open && empty ? (
+        <p className="tag border-b border-line px-2 py-2">
+          awaiting first stake
+          <span className="caret" aria-hidden />
+        </p>
+      ) : null}
+
+      {children}
+
+      {/* The ticket: the one place a bet is committed — pick a side above, set the stake, hit it.
+          It sits at the foot of the rail, on the chyron's line, and exists only while the book is
+          open: a dead ticket is worse than no ticket. */}
+      <div aria-live="polite" hidden={!open} className="mt-auto border-t border-line bg-panel px-2 py-2">
+        <div className="flex items-center gap-2">
+          <label htmlFor="stake" className="tag">
+            stake
+          </label>
+          <input
+            id="stake"
+            className="field w-24 py-1 text-right"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))}
+            aria-describedby="stake-hint"
+          />
+          <span id="stake-hint" className="num shrink-0 text-[11px] whitespace-nowrap text-dim">
+            USDC · bal {gate ? gate.balanceText : "—"}
+          </span>
+        </div>
+
+        <p className="num mt-2 truncate text-[11px] tracking-[0.14em] text-dim uppercase">
+          {picked && parsed
+            ? `${picked.label} · ${picked.yes ? "yes" : "no"} · returns ${usdc(previewPayout(parsed, picked.yes, picked.pool))}`
+            : "— no side picked —"}
+        </p>
+
+        {!gate?.verified && address ? (
+          <a href="/verify" className="btn btn-primary mt-2 w-full">
+            Verify to unlock
+          </a>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-primary mt-2 w-full"
+            disabled={!!blocked || !picked || busy !== null}
+            onClick={() => picked && bet(picked.i, picked.yes)}
+          >
+            {busy !== null ? "Confirming…" : cta}
+          </button>
+        )}
+
+        {status ? <p className="num mt-1 text-[11px] text-bone">{status}</p> : null}
+        {error ? <p className="num mt-1 text-[11px] text-flare">{error}</p> : null}
       </div>
     </section>
   );

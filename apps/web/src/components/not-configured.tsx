@@ -1,6 +1,6 @@
 export function SubgraphNotConfigured({ what }: { what: string }) {
   return (
-    <div className="panel m-3 max-w-[70ch] border-amber/40 p-3">
+    <div className="panel m-2 max-w-[70ch] border-amber/40 p-2">
       <p className="tag text-amber">subgraph not configured</p>
       <p className="mt-2 text-[14px] text-bone">
         {what} is read from the subgraph, not from our database, so this page stays empty until{" "}
