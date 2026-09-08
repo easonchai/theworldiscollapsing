@@ -1,0 +1,69 @@
+type Event @entity(immutable: false) {
+  id: Bytes!
+  nOutcomes: Int!
+  lockTime: BigInt!
+  drandRound: BigInt!
+  resolved: Boolean!
+  outcome: Int
+  signature: Bytes
+  createdAt: BigInt!
+  createdTx: Bytes!
+  totalPool: BigInt!
+  betCount: Int!
+  markets: [Market!]! @derivedFrom(field: "event")
+}
+
+type Market @entity(immutable: false) {
+  id: Bytes!
+  event: Event!
+  outcomeIdx: Int!
+  yesPool: BigInt!
+  noPool: BigInt!
+  positions: [Position!]! @derivedFrom(field: "market")
+}
+
+type Position @entity(immutable: false) {
+  id: Bytes!
+  market: Market!
+  event: Event!
+  bettor: Bytes!
+  yesStake: BigInt!
+  noStake: BigInt!
+  claimed: Boolean!
+}
+
+type Bet @entity(immutable: true) {
+  id: Bytes!
+  event: Event!
+  market: Market!
+  bettor: Bytes!
+  yes: Boolean!
+  amount: BigInt!
+  timestamp: BigInt!
+  tx: Bytes!
+}
+
+type Claim @entity(immutable: true) {
+  id: Bytes!
+  event: Event!
+  bettor: Bytes!
+  payout: BigInt!
+  fee: BigInt!
+  timestamp: BigInt!
+  tx: Bytes!
+}
+
+type Bettor @entity(immutable: false) {
+  id: Bytes!
+  betCount: Int!
+  totalStaked: BigInt!
+  totalClaimed: BigInt!
+}
+
+type Protocol @entity(immutable: false) {
+  id: String!
+  eventCount: Int!
+  betCount: Int!
+  totalVolume: BigInt!
+  totalFees: BigInt!
+}

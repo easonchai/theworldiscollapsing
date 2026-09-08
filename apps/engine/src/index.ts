@@ -8,6 +8,7 @@ import { makeAuthor } from "./author.js";
 import { makeMediaStore, startMediaServer } from "./media.js";
 import { makeOpenRouter } from "./openrouter.js";
 import { makeRender } from "./render.js";
+import { parseRoot, revealBranch, sealingStore } from "./seal.js";
 import { makeStore } from "./store.js";
 import { stubAuthor, stubRender } from "./stubs.js";
 
@@ -31,15 +32,43 @@ const log = (msg: string, extra?: Record<string, unknown>) =>
 
 const mediaDir = env("MEDIA_DIR", "./media");
 const mediaStoreKind = env("MEDIA_STORE", "local") === "blob" ? "blob" : "local";
-const media = makeMediaStore({
+const plainMedia = makeMediaStore({
   store: mediaStoreKind,
   dir: mediaDir,
   baseUrl: env("MEDIA_BASE_URL", "http://localhost:4000"),
   token: process.env.BLOB_READ_WRITE_TOKEN,
 });
+
+// BRANCH_SEAL=1: branch videos are published as AES-256-GCM ciphertext and only the Chainlink CRE
+// confidential workflow can release the winning key. Local media store only — reveal decrypts the
+// ciphertext in place on this box. Default off, so nothing else changes.
+const sealRoot = process.env.BRANCH_SEAL === "1" ? parseRoot(env("BRANCH_SEAL_ROOT")) : null;
+if (sealRoot && mediaStoreKind !== "local") throw new Error("BRANCH_SEAL=1 needs MEDIA_STORE=local");
+const media = sealRoot ? sealingStore(plainMedia, sealRoot) : plainMedia;
+
 const mediaServer =
-  mediaStoreKind === "local" ? startMediaServer({ dir: mediaDir, port: Number(env("MEDIA_PORT", "4000")) }) : null;
-if (mediaServer) log("media server", { dir: mediaDir, port: Number(env("MEDIA_PORT", "4000")) });
+  mediaStoreKind === "local"
+    ? startMediaServer({
+        dir: mediaDir,
+        port: Number(env("MEDIA_PORT", "4000")),
+        reveal: sealRoot
+          ? {
+              secret: env("REVEAL_SECRET"),
+              async handle({ eventId, outcome, key }) {
+                const local = await revealBranch(mediaDir, eventId, outcome, key);
+                const url = await plainMedia.storeFile(eventId, `branch-${outcome}.mp4`, local);
+                const row = await prisma.event.findUniqueOrThrow({ where: { id: eventId } });
+                const urls = [...((row.branchUrls as string[] | null) ?? [])];
+                urls[outcome] = url;
+                await prisma.event.update({ where: { id: eventId }, data: { branchUrls: urls } });
+                log("branch key released", { eventId, outcome, url });
+                return { url };
+              },
+            }
+          : undefined,
+      })
+    : null;
+if (mediaServer) log("media server", { dir: mediaDir, port: Number(env("MEDIA_PORT", "4000")), sealed: !!sealRoot });
 
 // Stubs are the default only when OpenRouter is not configured at all.
 const stubMode =

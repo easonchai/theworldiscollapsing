@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
 import http from "node:http";
@@ -9,7 +10,8 @@ export interface MediaStore {
   storeFile(eventId: string, name: string, localPath: string): Promise<string>;
 }
 
-const contentType = (name: string) => (name.endsWith(".png") ? "image/png" : "video/mp4");
+const contentType = (name: string) =>
+  name.endsWith(".png") ? "image/png" : name.endsWith(".enc") ? "application/octet-stream" : "video/mp4";
 
 export function makeMediaStore(cfg: {
   store: "local" | "blob";
@@ -44,14 +46,44 @@ export function makeMediaStore(cfg: {
   };
 }
 
+/** Body of `POST /internal/reveal-key`, sent by the Chainlink CRE confidential workflow. */
+export type RevealKey = { eventId: string; outcome: number; key: string };
+
+/** Constant-time compare of two secrets of any length. */
+const sameSecret = (a: string, b: string) =>
+  timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
+
 /** Static server for MEDIA_DIR: Range requests (seeking), CORS, no directory listing. */
-export function startMediaServer(cfg: { dir: string; port: number }): http.Server {
+export function startMediaServer(cfg: {
+  dir: string;
+  port: number;
+  /** BRANCH_SEAL=1 only: internal endpoint that accepts the released winning-branch key. */
+  reveal?: { secret: string; handle(body: RevealKey): Promise<{ url: string }> };
+}): http.Server {
   const root = path.resolve(cfg.dir);
   const server = http.createServer(async (req, res) => {
     res.setHeader("access-control-allow-origin", "*");
     res.setHeader("access-control-allow-headers", "range");
     res.setHeader("access-control-expose-headers", "content-range, accept-ranges, content-length");
     if (req.method === "OPTIONS") return res.writeHead(204).end();
+
+    if (cfg.reveal && req.method === "POST" && req.url === "/internal/reveal-key") {
+      const auth = (req.headers.authorization ?? "").replace(/^Bearer /, "");
+      if (!sameSecret(auth, cfg.reveal.secret)) return res.writeHead(401).end();
+      const chunks: Buffer[] = [];
+      for await (const c of req) chunks.push(c as Buffer);
+      try {
+        const body = JSON.parse(Buffer.concat(chunks).toString()) as RevealKey;
+        if (typeof body.eventId !== "string" || typeof body.outcome !== "number" || typeof body.key !== "string") {
+          throw new Error("expected { eventId, outcome, key }");
+        }
+        const out = await cfg.reveal.handle(body);
+        return res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(out));
+      } catch (e) {
+        return res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: String(e) }));
+      }
+    }
+
     if (req.method !== "GET" && req.method !== "HEAD") return res.writeHead(405).end();
 
     const rel = decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname);

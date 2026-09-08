@@ -1,0 +1,16 @@
+# Targets must match project.yaml.
+local-settings:
+  user-workflow:
+    workflow-name: "twic-reveal-key-local"
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: "./config.local.json"
+    secrets-path: "../secrets.yaml"
+
+staging-settings:
+  user-workflow:
+    workflow-name: "twic-reveal-key-staging"
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: "./config.staging.json"
+    secrets-path: "../secrets.yaml"

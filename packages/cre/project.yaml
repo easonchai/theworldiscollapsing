@@ -1,0 +1,14 @@
+# CRE project settings. Targets must exist here AND in reveal-key/workflow.yaml.
+# Chain names come from the chain-selectors registry the SDK bundles:
+#   anvil-devnet                    chainId 31337  selector 7759470850252068959
+#   ethereum-testnet-sepolia-base-1 chainId 84532  selector 10344971235874465080
+
+local-settings:
+  rpcs:
+    - chain-name: anvil-devnet
+      url: http://127.0.0.1:8547
+
+staging-settings:
+  rpcs:
+    - chain-name: ethereum-testnet-sepolia-base-1
+      url: https://base-sepolia-rpc.publicnode.com

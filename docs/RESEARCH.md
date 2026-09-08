@@ -152,3 +152,143 @@ This confirms the plan's cost model exactly: **480p $0.05/s, 768p $0.08/s**, cli
 | ⚠ Image price | `pricing_skus` is null on the image models list; per-endpoint pricing lives at `/api/v1/images/models/{id}/endpoints`, not fetched. One still per event, so it is noise against $6–9 of video. | same |
 
 Cost accounting in the engine therefore counts video seconds only: `sum(firstHalf seconds) * 0.05 + sum(all branch seconds) * 0.08` → `Event.costUsd`.
+
+## The Graph tooling — verified 2026-09-09 (day 5)
+
+| Fact | Value | Source |
+|---|---|---|
+| graph-cli latest | `0.98.1` (`dist-tags.latest`; 0.99.0 exists only as `alpha`) | `GET https://registry.npmjs.org/@graphprotocol/graph-cli` |
+| graph-ts latest | `0.38.2` | `GET https://registry.npmjs.org/@graphprotocol/graph-ts` |
+| matchstick-as latest | `0.6.0` | `GET https://registry.npmjs.org/matchstick-as` |
+| Install | `npm install -g @graphprotocol/graph-cli@latest` (we pin it as a package devDependency instead) | thegraph.com/docs/en/subgraphs/quick-start/ |
+| Core commands | `graph init`, `graph codegen && graph build`, `graph deploy <SUBGRAPH_SLUG>`, `graph publish` | same |
+| Studio flow | create subgraph in Subgraph Studio (wallet connect) → copy deploy key → `graph auth <DEPLOY_KEY>` → `graph deploy <SUBGRAPH_SLUG>` → CLI prompts for a version label (semver recommended) | thegraph.com/docs/en/subgraphs/developing/deploying-publishing/using-subgraph-studio/ |
+| Studio limits | "The development query URL is limited to 3,000 queries per day"; "Each account is limited to 3 deployed (unpublished) Subgraphs." | same |
+| Local deploy flags (from the installed CLI's `--help`, 0.98.1) | `graph create --node <url> <name>`; `graph deploy --node <url> --ipfs <url> --version-label <l> <name>`; `--ipfs` defaults to `https://api.thegraph.com/ipfs/api/v0` | `graph create --help`, `graph deploy --help` |
+| matchstick | `graph test [options] <datasource>`; flags `-c` coverage, `-d` docker, `-f` force, `-r` recompile, `-v <tag>` binary version. `matchstick.yaml` keys: `testsFolder`, `libsFolder`, `manifestPath`. Imports come from `matchstick-as/assembly/index`. | thegraph.com/docs/en/subgraphs/tooling/unit-testing-framework/ |
+| matchstick binary | downloaded on first `graph test` from `github.com/LimeChain/matchstick/releases/download/0.6.0/binary-macos-12-m1` (native arm64, ran fine) | observed |
+| matchstick lib resolution | `Compiler::new(lib)` sets `exec = <libsFolder>/assemblyscript/bin/asc` and `global = <libsFolder>/@graphprotocol/graph-ts/global/global.ts` — both must sit under one folder | github.com/LimeChain/matchstick `src/compiler/mod.rs` |
+| Local graph-node stack | `graphprotocol/graph-node` + `ipfs/kubo:v0.17.0` + postgres; `ethereum: '<network-name>:<rpc>'`, `extra_hosts: host.docker.internal:host-gateway` | github.com/graphprotocol/graph-node `docker/docker-compose.yml` |
+
+### Subgraph MCP
+
+| Fact | Value | Source |
+|---|---|---|
+| What it is | "an open-source implementation of Anthropic's Model Context Protocol" bridging AI agents to subgraph data | thegraph.com/docs/en/subgraphs/tooling/subgraph-mcp/introduction/ |
+| Endpoint | `https://subgraphs.mcp.thegraph.com/sse` | thegraph.com/docs/en/subgraphs/tooling/subgraph-mcp/claude/ |
+| Client config | `npx mcp-remote --header Authorization:${AUTH_HEADER} https://subgraphs.mcp.thegraph.com/sse`, `AUTH_HEADER = "Bearer GATEWAY_API_KEY"` (key from Subgraph Studio) | same |
+| Capabilities | schemas for any subgraph on the network; run GraphQL on any deployment; discover top deployments by keyword or contract address; 30-day query volumes; NL questions over subgraph data | introduction page |
+| ⚠ Tool names | The docs list capabilities, not tool names — `/subgraph-mcp/tools/` 404s. Only `introduction`, `claude`, `cline`, `cursor` pages exist. | crawled the introduction page's links |
+| ⚠ Local reachability | Never exercised: no gateway API key, nothing published. The server addresses deployments on The Graph Network, so a `localhost:8000` graph-node is not reachable from it. | — |
+
+## Chainlink CRE — verified 2026-09-09 (day 7 stretch)
+
+Fetched from the `.md` mirrors of docs.chain.link (the rendered pages are client-side; `llms.txt`
+lists the mirrors), from `GET https://api.github.com/repos/smartcontractkit/cre-cli/releases`, and
+by running the CLI locally.
+
+### Toolchain
+
+| Fact | Value | Source |
+|---|---|---|
+| CLI latest | `v1.32.0` (2026-09-03). Public GitHub release, SHA-256 in `checksums.txt` — verified `cre_darwin_arm64.zip` = `c42bc173…f8027` | github.com/smartcontractkit/cre-cli/releases |
+| Install | `curl -sSL https://app.chain.link/cre/install.sh \| bash` → `$HOME/.cre`, or download the archive | docs.chain.link/cre/getting-started/cli-installation/macos-linux |
+| TS SDK latest | `@chainlink/cre-sdk` **1.19.1**; direct deps include `viem ^2.54.2`, `zod 3.25.76`, `@noble/hashes 2.2.0`, `@bufbuild/protobuf` | `npm view @chainlink/cre-sdk` + its package.json |
+| Runtime requirements | Bun ≥ 1.2.21, TypeScript ≥ 5.9, `viem ^2.34.0`, `zod ^3.25.76` | docs.chain.link/cre/reference/sdk/overview-ts |
+| Compilation | TS → JS → **Javy + QuickJS → WASM**. **`node:crypto` is not available** (the SDK ships `restricted-node-modules.d.ts` typing `crypto`, `fs`, `http`, `os`, … as `never`). Docs point at Noble for crypto. | docs.chain.link/cre/concepts/typescript-wasm-runtime |
+| Project layout | `project.yaml` (targets → rpcs) + per-workflow dir with `workflow.yaml`, `package.json`, `main.ts`, `config.<target>.json`; optional project-level `secrets.yaml`; ABIs as plain viem `.ts` under `contracts/abi/` (no codegen for EVM TS) | docs.chain.link/cre/reference/project-configuration-ts |
+| Templates | `smartcontractkit/cre-templates` (public). `hello-confidential-workflows-ts` and `event-reactor-ts` are the two we modelled on. `cre templates list` works logged out; **`cre init` does not** | the repo + local CLI run |
+
+### Gating — what actually needs an account
+
+| Command | Needs login? | Observed |
+|---|---|---|
+| `cre version`, `cre templates list` | no | works |
+| **`cre workflow build`** | **no** | ✅ compiled our workflow to `binary.wasm`, hash `44a2a5ef…38885` |
+| `cre init` | **yes** | `✗ authentication required: no credentials found` |
+| **`cre workflow simulate`** | **yes** | `✗ Authentication required: not logged in and no CRE_API_KEY set` — docs confirm: "Running this command requires you to be logged in" |
+| `cre workflow supported-chains` | yes | tenant-scoped |
+| `cre workflow deploy` | yes + **deploy access approval** | `cre account access` |
+| `handlerInTee` on a real DON | **invite-only private beta**, separate from deploy access | docs.chain.link/cre/account/confidential-workflows-access |
+
+⚠ The docs say "you don't need to wait for early access — simulate confidential workflows in
+minutes", but the simulator itself is behind `cre login` (browser OAuth) / `CRE_API_KEY`. With no
+CRE account this stops at `cre workflow build`.
+
+### Confidential Workflows API (TypeScript)
+
+| Fact | Value | Source |
+|---|---|---|
+| Register | `cre.handlerInTee(trigger, fn, teeConstraint, hooks?)` instead of `cre.handler` | docs.chain.link/cre/reference/sdk/confidential-workflows-client-ts |
+| `TeeConstraint` | `{}` = any TEE/region; `{ regions: [...] }`; `[{ tee: 'nitro', regions: ['us-west-2'] }]`. **Nitro / us-west-2 is currently the only registered TEE type and region** | same |
+| Runtime | `TeeRuntime<C> extends BaseRuntime<C>, SecretsProvider` — `config`, `now()`, `log()`, `emitMetric()`, `getSecret()`, `getSecrets()`, `reportFromDon()`, `usingTheDons()` | same |
+| Secrets | fetched **dynamically inside the enclave**: `runtime.getSecrets([{id}]).result()` → `Record<id, Secret>`; nothing declared upfront | same |
+| Capability calls in-enclave | `new HTTPClient().sendRequest(teeRuntime, req)` has a `TeeRuntime` overload. `ConfidentialHTTPClient` **does not** and must not be used from a TEE handler | same |
+| **Never in the enclave** | "Workflow triggers, chain reads, and chain writes … always execute on Workflow DON nodes" — so an EVM read must go through `usingTheDons()` | docs.chain.link/cre/concepts/confidential-workflows |
+| Also not protected | the workflow's source and compiled binary ("Support for confidential logic … is planned as a future enhancement, not part of the current beta"), reports/calldata/outputs, anything logged | same |
+| Isolation caveat | multiple confidential workflows may share one enclave, isolated only by Wasmtime; side-channel/speculative attacks may leak | same |
+
+### Triggers, EVM read, HTTP
+
+| Fact | Value | Source |
+|---|---|---|
+| Trigger types | Cron, HTTP, **EVM Log** | docs.chain.link/cre/capabilities/triggers |
+| EVM log trigger | `evmClient.logTrigger({ addresses: [hexToBase64(addr)], topics: [{ values: [hexToBase64(topic0)] }], confidence? })`; `confidence` ∈ `CONFIDENCE_LEVEL_SAFE` (default) / `LATEST` / `FINALIZED`; topics 1-3 must be `padHex(…, {size:32})` before base64 | docs.chain.link/cre/guides/workflow/using-triggers/evm-log-trigger-ts + the SDK protobuf types |
+| Log payload | `EVMLog { address, topics[], txHash, blockHash, data, eventSig, blockNumber }`, all `Uint8Array` — decode with viem after `bytesToHex` | `client_pb.d.ts` in the SDK |
+| EVM read | `evmClient.callContract(runtime, { call: encodeCallMsg({from,to,data}), blockNumber })`; `LATEST_BLOCK_NUMBER` / `LAST_FINALIZED_BLOCK_NUMBER` / `blockNumber(n)`; result `.data` is `Uint8Array` | docs.chain.link/cre/reference/sdk/evm-client-ts |
+| HTTP | `sendRequest({ url, method?, multiHeaders?, body?, timeout?, cacheSettings? })`; **`body` must be base64**. In simulation requests leave your machine with single-node consensus | docs.chain.link/cre/reference/sdk/http-client-ts, /cre/capabilities/http |
+| Secrets in simulation | `secrets.yaml` maps secret id → env var name; values come from `.env` or the shell | docs.chain.link/cre/guides/workflow/secrets/using-secrets-simulation-ts |
+| Simulation trigger selection | `--non-interactive --trigger-index N` plus `--evm-tx-hash` / `--evm-event-index` for a log trigger; `--listen` re-runs on each matching event; writes are dry-run unless `--broadcast` | docs.chain.link/cre/reference/cli/workflow |
+| Test utilities | `@chainlink/cre-sdk/test` exports `newTestRuntime`, `registerTestCapability`, `addContractMock`, `TestRuntime`, `test`. ⚠ **No public TEE runtime factory** — `newTestRuntime` returns a DON `Runtime`; Chainlink's own confidential template hand-rolls the `TeeRuntime` slice it needs, and so do we | the SDK's `dist/sdk/test/index.d.ts` + cre-templates `hello-confidential-workflows-ts/my-workflow/workflow.test.ts` |
+
+### Chains
+
+| Fact | Value | Source |
+|---|---|---|
+| Base Sepolia | supported since CLI v1.0.0 / TS SDK v1.0.1; chain name `ethereum-testnet-sepolia-base-1`, selector `10344971235874465080`, forwarder `0xF8344CFd5c43616a4366C34E3EEE75af79a74482` | docs.chain.link/cre/supported-networks-ts + forwarder-directory-ts |
+| Local anvil | **is a registered chain**: `anvil-devnet`, chainId 31337, selector `7759470850252068959` | `@chainlink/cre-sdk/dist/generated/chain-selectors/testnet/evm/anvil-devnet.js` |
+| Localhost RPC | allowed; `--allow-insecure-rpc` is only needed for **non**-localhost cleartext RPC | docs.chain.link/cre/reference/cli |
+
+## Web vendor facts — verified 2026-09-09 (days 4–6)
+
+### Privy `@privy-io/react-auth` 3.40
+
+| Fact | Value | Source |
+|---|---|---|
+| Provider | `<PrivyProvider appId config={...}>`, client component | docs.privy.io/basics/react/setup.md |
+| Login methods | `config.loginMethods: Array<'wallet'\|'email'\|'sms'\|…>` | installed `dist/dts/types-*.d.ts` (`PrivyClientConfig`) |
+| Embedded wallet | `config.embeddedWallets.ethereum.createOnLogin: 'users-without-wallets' \| 'all-users' \| 'off'` | same + docs.privy.io/basics/react/setup.md |
+| Chains | `config.defaultChain: Chain`, `config.supportedChains: Chain[]` (viem chain objects); provider throws if `defaultChain` is not in `supportedChains` | docs.privy.io/basics/react/advanced/configuring-evm-networks.md |
+| Wallets | `useWallets(): { wallets: ConnectedWallet[]; ready }`; `getEmbeddedConnectedWallet(wallets)` picks the embedded one | installed `dist/dts/index.d.ts` |
+| viem client | `await wallet.switchChain(chain.id)`; `const provider = await wallet.getEthereumProvider()` (EIP-1193) → `createWalletClient({ account, chain, transport: custom(provider) })` | docs.privy.io/wallets/connectors/ethereum/integrations/viem.md |
+| Session | `usePrivy(): { ready, authenticated, user, login(), logout(), … }` | installed `dist/dts/index.d.ts` |
+
+⚠ The Privy path is written against the docs and the installed types but was **never run**: no `NEXT_PUBLIC_PRIVY_APP_ID` exists, so all browser QA used the dev-wallet path.
+
+### World ID / Selfie Check (`@worldcoin/idkit` 4.2.3)
+
+| Fact | Value | Source |
+|---|---|---|
+| Selfie Check | Liveness + facial similarity, "medium-assurance", credential id 11, 90-day validity, **access-gated beta** ("request access so the feature flag can be enabled for your app") | docs.world.org/world-id/credentials/11.md |
+| React API | `IDKitRequestWidget` / `useIDKitRequest`; props `app_id` (`app_${string}`), `action`, `rp_context`, `allow_legacy_proofs` (**required boolean**), `preset`, `open`, `onOpenChange`, `onSuccess`, `handleVerify?` | installed `@worldcoin/idkit/dist/index.d.ts` + docs.world.org/world-id/idkit/react.md |
+| Preset | `selfieCheckLegacy({ signal })` from `@worldcoin/idkit` | same |
+| `rp_context` | `{ rp_id, nonce, created_at, expires_at, signature }` — "should be generated and signed by your backend"; `signRequest({ signingKeyHex, action, ttl? })` from `@worldcoin/idkit/signing` returns `{ sig, nonce, createdAt, expiresAt }` | installed `@worldcoin/idkit-core/dist/index.d.ts`, `@worldcoin/idkit-server` |
+| Verify endpoint | `POST https://developer.world.org/api/v4/verify/{rp_id}` (an `app_...` id is accepted for backward compatibility), `content-type: application/json`, **no auth header documented** | docs.world.org/api-reference/developer-portal/verify.md |
+| Verify body | The complete IDKit result, forwarded verbatim: `{ protocol_version, nonce, action, responses[{ identifier, proof[5], nullifier, issuer_schema_id, expires_at_min, signal_hash? }], environment, user_presence_completed? }` — the docs say to "forward the complete IDKit result without remapping response identifiers" | same |
+| Verify response | 200 `{ success: true, results[], nullifier, action, … }`; failure `{ success: false, code, detail, results }` | same |
+| Domain move | `developer.worldcoin.org` 308-redirects to `developer.world.org`; docs live at `docs.world.org` | observed on fetch |
+
+⚠ Nothing in the World path was ever executed: no app id, no RP id, no RP signing key. `WORLD_API_KEY` is kept in the env list but the v4 verify docs describe no authenticated header.
+
+### Next.js 16.3.4
+
+| Fact | Value | Source |
+|---|---|---|
+| Dynamic params | `params` / `searchParams` are Promises in pages and route handlers; `PageProps<'/e/[id]'>` and `RouteContext<'/api/events/[id]'>` are global helpers generated by `next dev`/`next build`/`next typegen` | `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/{page,route}.md` |
+| Segment config | `dynamic = 'force-dynamic'` still available while Cache Components is off (it is removed only when `cacheComponents` is enabled); `runtime = 'nodejs'` is the default | `.../02-route-segment-config/index.md`, `02-guides/caching-without-cache-components.md` |
+| `experimental.extensionAlias` | Webpack only — Turbopack lists it as unsupported (`dist/lib/turbopack-warning.js`), and it is wired into `resolve.extensionAlias` in `dist/build/webpack-config.js` | installed source |
+| Turbopack resolveAlias | Applies to the exact specifier string, so it cannot repair a whole generated tree of `.js`-suffixed relative imports (tried, then dropped for `--webpack`) | observed |
+
+### drand (client side)
+
+`GET https://api.drand.sh/v2/beacons/quicknet/rounds/{round}` → `{ round, randomness, signature }` with a 96-hex-char signature; the badge compares `0x${signature}` with `Arena.events(eventId).signature` and recomputes `keccak256(sig ‖ eventId) mod n` with viem. Confirmed against live rounds during browser QA (e.g. round 32028612 → outcome 1 of 3).

@@ -1,0 +1,5 @@
+{
+  "chainSelectorName": "ethereum-testnet-sepolia-base-1",
+  "arenaAddress": "0x0000000000000000000000000000000000000000",
+  "revealUrl": "https://engine.example.invalid/internal/reveal-key"
+}

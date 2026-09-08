@@ -1,0 +1,4 @@
+# matchstick resolves both `assemblyscript/bin/asc` and `@graphprotocol/graph-ts` under one
+# libsFolder. pnpm's isolated node_modules has no assemblyscript here, but its hoisted store
+# dir has every package in the graph, so point matchstick at that.
+libsFolder: ../../node_modules/.pnpm/node_modules

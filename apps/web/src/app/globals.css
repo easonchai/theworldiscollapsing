@@ -1,1 +1,235 @@
 @import "tailwindcss";
+
+@theme {
+  /* Late-night transmission: green-black vacuum, sodium amber, phosphor green, signal red. */
+  --color-vac: #070a08;
+  --color-panel: #0d110e;
+  --color-panel2: #131916;
+  --color-line: #232c25;
+  --color-bone: #ece7da;
+  --color-dim: #8b9489;
+  --color-amber: #f2a93b;
+  --color-phos: #64e39b;
+  --color-flare: #ff4d33;
+
+  --font-display: var(--font-antonio), "Arial Narrow", sans-serif;
+  --font-body: var(--font-newsreader), Georgia, serif;
+  --font-mono: var(--font-dm-mono), ui-monospace, monospace;
+
+  /* Everything sits on a 7px rhythm: p-1 = 7px, p-2 = 14px, p-4 = 28px. */
+  --spacing: 0.4375rem;
+
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 2px;
+  --radius-lg: 2px;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--color-vac);
+    color: var(--color-bone);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Station furniture is set in the condensed face; data is always monospaced. */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    line-height: 0.92;
+    text-transform: uppercase;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-amber);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-amber);
+    color: #000;
+  }
+
+  input,
+  button,
+  select {
+    font: inherit;
+  }
+}
+
+@layer components {
+  /* CRT scanlines + vignette, painted over the whole viewport, never interactive. */
+  .crt::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(to bottom, rgba(0, 0, 0, 0.28) 0 1px, transparent 1px 3px),
+      radial-gradient(ellipse at 50% 40%, transparent 45%, rgba(0, 0, 0, 0.55) 100%);
+    mix-blend-mode: multiply;
+  }
+
+  .panel {
+    border: 1px solid var(--color-line);
+    background: var(--color-panel);
+  }
+
+  /* Small uppercase mono label used on every piece of station furniture. */
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--color-dim);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: calc(var(--spacing) * 0.75);
+    border: 1px solid var(--color-line);
+    padding: calc(var(--spacing) * 0.5) var(--spacing);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-bone);
+  }
+
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing);
+    border: 1px solid var(--color-line);
+    background: var(--color-panel2);
+    color: var(--color-bone);
+    padding: var(--spacing) calc(var(--spacing) * 2);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 120ms linear, color 120ms linear, border-color 120ms linear;
+  }
+
+  .btn:hover:not(:disabled) {
+    background: var(--color-amber);
+    border-color: var(--color-amber);
+    color: #000;
+  }
+
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .btn-primary {
+    background: var(--color-amber);
+    border-color: var(--color-amber);
+    color: #000;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: var(--color-bone);
+    border-color: var(--color-bone);
+  }
+
+  .field {
+    width: 100%;
+    border: 1px solid var(--color-line);
+    background: #000;
+    color: var(--color-bone);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    padding: var(--spacing);
+  }
+
+  /* The live dot on air. */
+  .pulse {
+    animation: pulse 1.6s steps(2, end) infinite;
+  }
+
+  /* Broadcast ticker: the content is rendered twice so the loop has no seam. */
+  .marquee {
+    display: flex;
+    width: max-content;
+    gap: calc(var(--spacing) * 4);
+    white-space: nowrap;
+    animation: marquee 34s linear infinite;
+  }
+
+  /* One slow beam crossing the wall, the only ambient motion in the product. */
+  .beam::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(105deg, transparent 42%, rgba(242, 169, 59, 0.09) 50%, transparent 58%);
+    background-size: 260% 100%;
+    animation: beam 11s linear infinite;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes beam {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -130% 0;
+  }
+}
+
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pulse,
+  .marquee,
+  .beam::before {
+    animation: none;
+  }
+
+  .crt::after {
+    background: radial-gradient(ellipse at 50% 40%, transparent 55%, rgba(0, 0, 0, 0.5) 100%);
+  }
+}

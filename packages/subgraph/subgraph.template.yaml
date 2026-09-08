@@ -1,0 +1,36 @@
+specVersion: 1.0.0
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum
+    name: Arena
+    network: {{network}}
+    source:
+      address: "{{address}}"
+      abi: Arena
+      startBlock: {{startBlock}}
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.9
+      language: wasm/assemblyscript
+      file: ./src/mapping.ts
+      entities:
+        - Event
+        - Market
+        - Position
+        - Bet
+        - Claim
+        - Bettor
+        - Protocol
+      abis:
+        - name: Arena
+          file: ./abis/Arena.json
+      eventHandlers:
+        - event: EventCreated(indexed bytes32,uint8,uint64,uint64)
+          handler: handleEventCreated
+        - event: Bet(indexed bytes32,indexed address,uint8,bool,uint256)
+          handler: handleBet
+        - event: Resolved(indexed bytes32,uint8,bytes)
+          handler: handleResolved
+        - event: Claimed(indexed bytes32,indexed address,uint256,uint256)
+          handler: handleClaimed

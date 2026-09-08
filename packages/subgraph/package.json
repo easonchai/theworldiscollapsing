@@ -1,0 +1,19 @@
+{
+  "name": "subgraph",
+  "private": true,
+  "scripts": {
+    "prepare:local": "node scripts/prepare.mjs localhost",
+    "prepare:base-sepolia": "node scripts/prepare.mjs base-sepolia",
+    "codegen": "graph codegen",
+    "build": "graph build",
+    "test": "graph test",
+    "create-local": "graph create --node http://localhost:8020/ twic/arena",
+    "deploy-local": "graph deploy --node http://localhost:8020/ --ipfs http://localhost:5001 --version-label v0.0.1 twic/arena",
+    "deploy:studio": "graph deploy twic-arena"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "0.98.1",
+    "@graphprotocol/graph-ts": "0.38.2",
+    "matchstick-as": "0.6.0"
+  }
+}

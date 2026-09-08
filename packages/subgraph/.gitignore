@@ -1,0 +1,7 @@
+generated/
+build/
+tests/.bin/
+tests/.latest.json
+# rendered by scripts/prepare.mjs
+subgraph.yaml
+abis/Arena.json
