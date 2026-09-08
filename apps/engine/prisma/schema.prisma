@@ -1,0 +1,61 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Channel {
+  id      String  @id // sports | politics | culture | region
+  name    String
+  nextSeq Int     @default(1)
+  events  Event[]
+}
+
+model Event {
+  id             String    @id // bytes32 hex = keccak256("<channel>:<seq>"), same as on-chain eventId
+  channelId      String
+  channel        Channel   @relation(fields: [channelId], references: [id])
+  seq            Int
+  state          String // RENDER READY BETTING LOCKED RESOLVE REVEAL CANON PAUSE DONE SKIPPED
+  title          String
+  premise        String
+  outcomes       Json // string[] labels, index = outcome index
+  script         Json // full authored object: shot lists, ticker, canon updates
+  reasoning      String?
+  firstHalfUrl   String?
+  branchUrls     Json? // string[] by outcome index. NEVER serve before state >= REVEAL.
+  lockTime       DateTime?
+  drandRound     BigInt?
+  startTime      DateTime? // first-half playback t0 (createEvent block time)
+  revealTime     DateTime? // second-half playback t0
+  outcome        Int?
+  signature      String?
+  createTx       String?
+  resolveTx      String?
+  renderAttempts Int       @default(0)
+  error          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([channelId, seq])
+  @@index([channelId, state])
+}
+
+model Canon {
+  id        Int      @id @default(autoincrement())
+  channelId String
+  eventId   String
+  text      String
+  createdAt DateTime @default(now())
+
+  @@index([channelId, createdAt])
+}
+
+model World {
+  id         Int       @id @default(1)
+  doc        Json
+  lastSeenAt DateTime? // viewer presence heartbeat; gates generation
+}
