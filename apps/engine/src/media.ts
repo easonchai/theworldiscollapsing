@@ -118,7 +118,14 @@ export function startMediaServer(cfg: {
 
     if (req.method !== "GET" && req.method !== "HEAD") return res.writeHead(405).end();
 
-    const rel = decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname);
+    // A malformed percent-escape (`/%E0%A4%A`) makes decodeURIComponent throw. Unhandled inside an
+    // async request handler that is a crashed engine, not a bad request: answer 400 and keep serving.
+    let rel: string;
+    try {
+      rel = decodeURIComponent(new URL(req.url ?? "/", "http://x").pathname);
+    } catch {
+      return res.writeHead(400).end();
+    }
     const file = path.resolve(root, `.${rel}`);
     if (file !== root && !file.startsWith(root + path.sep)) return res.writeHead(403).end();
 
@@ -133,6 +140,23 @@ export function startMediaServer(cfg: {
 
     res.setHeader("accept-ranges", "bytes");
     res.setHeader("content-type", contentType(file));
+
+    /**
+     * A file that passed `stat` can still fail to open (permissions, deleted mid-flight, disk
+     * error), and an unhandled `error` on the stream or the response takes the whole engine down.
+     * Headers go out only once the fd is open — `writeHead` flushes immediately — so a failure can
+     * still answer 500 instead of a truncated 200.
+     */
+    const sendFile = (status: number, headers: http.OutgoingHttpHeaders, opts?: { start: number; end: number }) => {
+      const stream = createReadStream(file, opts);
+      stream.on("error", () => (res.headersSent ? res.destroy() : res.writeHead(500).end()));
+      res.on("error", () => stream.destroy());
+      stream.once("open", () => {
+        res.writeHead(status, headers);
+        stream.pipe(res);
+      });
+    };
+
     const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? "");
     if (range) {
       let start = range[1] === "" ? size - Number(range[2]) : Number(range[1]);
@@ -143,13 +167,15 @@ export function startMediaServer(cfg: {
         res.setHeader("content-range", `bytes */${size}`);
         return res.writeHead(416).end();
       }
-      res.writeHead(206, { "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1 });
-      if (req.method === "HEAD") return res.end();
-      return void createReadStream(file, { start, end }).pipe(res);
+      if (req.method === "HEAD") {
+        return res
+          .writeHead(206, { "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1 })
+          .end();
+      }
+      return sendFile(206, { "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1 }, { start, end });
     }
-    res.writeHead(200, { "content-length": size });
-    if (req.method === "HEAD") return res.end();
-    createReadStream(file).pipe(res);
+    if (req.method === "HEAD") return res.writeHead(200, { "content-length": size }).end();
+    sendFile(200, { "content-length": size });
   });
   server.listen(cfg.port);
   return server;

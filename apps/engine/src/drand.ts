@@ -22,8 +22,13 @@ export const outcomeFor = (signature: Hex, eventId: Hex, nOutcomes: number): num
 
 export type Beacon = { round: bigint; signature: Hex };
 
-export async function fetchRound(round: bigint, fetchImpl: typeof fetch = fetch): Promise<Beacon> {
-  const res = await fetchImpl(`${DRAND_URL}/${round}`);
+/**
+ * `timeoutMs` bounds the request: money is already locked on chain when the machine starts asking
+ * for a beacon, and it retries forever. Without a per-request abort one hung socket parks the whole
+ * channel — the retry loop only gets its cadence back if a stuck request fails.
+ */
+export async function fetchRound(round: bigint, fetchImpl: typeof fetch = fetch, timeoutMs = 10_000): Promise<Beacon> {
+  const res = await fetchImpl(`${DRAND_URL}/${round}`, { signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`drand round ${round}: HTTP ${res.status}`);
   const body = (await res.json()) as { round?: unknown; signature?: unknown };
   if (body.round !== Number(round)) throw new Error(`drand: expected round ${round}, got ${body.round}`);

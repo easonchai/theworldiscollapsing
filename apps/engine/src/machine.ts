@@ -182,7 +182,7 @@ export async function runChannel(channelId: string, d: Deps, signal: AbortSignal
       await d.sleep(d.timing.idlePollMs);
       continue;
     }
-    if (live.state === "DONE") live = null;
+    if (live.state === "DONE" || live.state === "SKIPPED") live = null;
   }
 }
 
@@ -291,6 +291,14 @@ async function step(ev: EventRow, d: Deps, onBetting: () => Promise<void>): Prom
       const on = await d.chain.getEvent(ev.id);
       let lock: bigint, round: bigint, tx: Hex | null = null, startTime: Date;
       if (on.exists) {
+        // Event ids are keccak(channel:seq), so a database reset against a live Arena hands this
+        // row an on-chain twin from an older run whose lock has long passed. Adopting it would put
+        // the event on air with a zero-second betting window; skip it and let the channel move on.
+        if (Number(on.lockTime) * 1000 <= d.now()) {
+          const error = "stale on-chain event (database reset against a live Arena?)";
+          d.log(error, { channelId: ev.channelId, seq: ev.seq, id: ev.id, lockTime: Number(on.lockTime) });
+          return d.store.update(ev.id, { state: "SKIPPED", error });
+        }
         // restart after the tx landed but before we recorded it
         ({ lockTime: lock, round } = on);
         startTime = new Date(d.now());

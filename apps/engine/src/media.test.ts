@@ -1,5 +1,5 @@
 import { once } from "node:events";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -48,6 +48,31 @@ describe("media server", () => {
     expect(whole.status).toBe(200);
     expect(whole.headers.get("accept-ranges")).toBe("bytes");
     expect(await whole.text()).toBe(BODY);
+  });
+
+  it("answers 400 on a malformed percent-escape and keeps serving", async () => {
+    const bad = await fetch(`${base}/%E0%A4%A`);
+    expect(bad.status).toBe(400);
+    const good = await fetch(`${base}/first.mp4`);
+    expect(good.status).toBe(200);
+    expect(await good.text()).toBe(BODY);
+  });
+
+  it("answers 500 when a file stats but cannot be opened, and keeps serving", async () => {
+    if (process.getuid?.() === 0) return; // root reads a 000 file anyway
+    const locked = path.join(dir, "0xevent", "locked.mp4");
+    await writeFile(locked, BODY);
+    await chmod(locked, 0o000);
+    try {
+      const res = await fetch(`${base}/locked.mp4`);
+      expect(res.status).toBe(500);
+    } finally {
+      await chmod(locked, 0o644);
+      await rm(locked, { force: true });
+    }
+    const after = await fetch(`${base}/first.mp4`);
+    expect(after.status).toBe(200);
+    expect(await after.text()).toBe(BODY);
   });
 
   it("rejects path traversal and does not list directories", async () => {
