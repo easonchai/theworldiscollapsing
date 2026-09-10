@@ -46,6 +46,7 @@ export interface Store {
   openEvents(channelId: string): Promise<EventRow[]>;
   nextSeq(channelId: string): Promise<number>;
   insert(row: EventRow): Promise<EventRow>;
+  get(id: Hex): Promise<EventRow | null>;
   update(id: Hex, patch: Partial<EventRow>): Promise<EventRow>;
   canon(channelId: string, limit: number): Promise<string[]>;
   appendCanon(channelId: string, eventId: Hex, lines: string[]): Promise<void>;
@@ -341,7 +342,11 @@ async function step(ev: EventRow, d: Deps, onBetting: () => Promise<void>): Prom
       let branchUrls = ev.branchUrls;
       if (!branchUrls) {
         try {
-          branchUrls = (await ensureBranches(ev, d)).branchUrls;
+          // The row in hand predates the background render: wait for it if it is still running,
+          // otherwise read what it stored, and only render again if nothing was stored (it failed).
+          // Starting a second render here re-buys every branch clip and, when it fails, nulls the URLs.
+          const stored = inflightBranches.get(ev.id) ?? d.store.get(ev.id);
+          branchUrls = (await stored)?.branchUrls ?? (await ensureBranches(ev, d)).branchUrls;
         } catch (e) {
           d.log("branches unavailable at reveal", { seq: ev.seq, error: String(e) });
         }
@@ -362,7 +367,7 @@ async function step(ev: EventRow, d: Deps, onBetting: () => Promise<void>): Prom
         signature,
         resolveTx: tx,
         revealTime: new Date(d.now()),
-        branchUrls,
+        ...(branchUrls ? { branchUrls } : {}), // never null out URLs another path already stored
       });
     }
     case "REVEAL": {

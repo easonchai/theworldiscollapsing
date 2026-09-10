@@ -1,4 +1,4 @@
-import { createPublicClient, createWalletClient, http, type Address, type Hex } from "viem";
+import { BlockNotFoundError, createPublicClient, createWalletClient, http, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { anvil, baseSepolia } from "viem/chains";
 import { arenaAbi } from "contracts/abi/Arena";
@@ -24,8 +24,18 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; privateKey: He
     const hash = await wallet.writeContract({ ...base, functionName: fn, args } as never);
     const receipt = await pub.waitForTransactionReceipt({ hash });
     if (receipt.status !== "success") throw new Error(`${fn} reverted: ${hash}`);
-    const block = await pub.getBlock({ blockNumber: receipt.blockNumber });
-    return { tx: hash, blockTime: new Date(Number(block.timestamp) * 1000) };
+    // Public RPCs load-balance across nodes at different heights, so the node asked for the block
+    // can lag the one that served the receipt. Throwing here would drop a hash we already own and
+    // make the step resume from chain state with tx = null; wait for the block instead.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const block = await pub.getBlock({ blockNumber: receipt.blockNumber });
+        return { tx: hash, blockTime: new Date(Number(block.timestamp) * 1000) };
+      } catch (e) {
+        if (!(e instanceof BlockNotFoundError) || attempt >= 10) throw e;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    }
   }
 
   return {

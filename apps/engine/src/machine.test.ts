@@ -44,6 +44,10 @@ function fakeStore(): FakeStore {
       rows.set(row.id, { ...row });
       return { ...row };
     },
+    async get(id) {
+      const row = rows.get(id);
+      return row ? { ...row } : null;
+    },
     async update(id, patch) {
       const row = { ...rows.get(id)!, ...patch };
       rows.set(id, row);
@@ -276,6 +280,40 @@ describe("channel lifecycle", () => {
     expect(ev.state).toBe("DONE");
     expect(ev.branchUrls).toBeNull();
     expect(h.fc.calls.filter((c) => c.startsWith("resolve:")).length).toBe(1);
+  });
+
+  it("reveals branches that finished in the background without rendering or paying twice", async () => {
+    // Seen on Base Sepolia: the LOCKED→RESOLVE row is read while the branch render is still running,
+    // the render lands during the resolve tx, and the row's stale null `branchUrls` then started a
+    // second (paid) render that failed and persisted null over the URLs already stored.
+    const clock = fakeClock();
+    const fc = fakeChain(clock);
+    const resolveNow = fc.chain.resolve;
+    fc.chain.resolve = async (id, sig) => {
+      await new Promise((r) => setImmediate(r)); // a real tx takes a while
+      return resolveNow(id, sig);
+    };
+    const renders = new Map<Hex, number>();
+    const h = harness({
+      fc,
+      ...clock,
+      render: {
+        firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
+        branches: async (ev) => {
+          renders.set(ev.id, (renders.get(ev.id) ?? 0) + 1);
+          while (h.store.rows.get(ev.id)?.state !== "RESOLVE") {
+            if (h.ac.signal.aborted) throw new Error("aborted"); // the prefetched next event never resolves
+            await new Promise((r) => setImmediate(r));
+          }
+          return { urls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`), costUsd: 2 };
+        },
+      },
+    });
+    const store = await h.run((s) => doneCount(s) >= 1);
+    const ev = rows(store)[0];
+    expect(ev.branchUrls).toEqual(ev.outcomes.map((_, i) => `branch:1:${i}`));
+    expect(ev.costUsd).toBe(3);
+    expect(renders.get(ev.id)).toBe(1);
   });
 
   it("stays idle without viewers when not always-on", async () => {

@@ -65,6 +65,10 @@ export function makeStore(
     async insert(row) {
       return toRow(await prisma.event.create({ data: data(row) }));
     },
+    async get(id) {
+      const row = await prisma.event.findUnique({ where: { id } });
+      return row ? toRow(row) : null;
+    },
     async update(id, patch) {
       return toRow(await prisma.event.update({ where: { id }, data: data(patch) }));
     },
