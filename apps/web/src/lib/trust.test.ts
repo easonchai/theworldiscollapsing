@@ -14,6 +14,14 @@ describe("trustCopy", () => {
     expect(copy.doesNot).toMatch(/setVerifier/);
   });
 
+  it("names bail instead of claiming a stalled event never refunds", () => {
+    // The bug: the page kept saying "there is no timeout refund" long after Arena.bail shipped.
+    for (const copy of [trustCopy(VERIFIER), trustCopy(ZERO), trustCopy(null)]) {
+      expect(copy.doesNot).not.toMatch(/no timeout refund/);
+      expect(copy.doesNot).toMatch(/bail/);
+    }
+  });
+
   it("falls back to trusted mode when the verifier is unset", () => {
     const copy = trustCopy(ZERO);
     expect(copy.proves).toBeNull();

@@ -11,18 +11,17 @@ import {IDrandVerifier} from "./DrandVerifier.sol";
 /// @notice An event has n outcomes. Each outcome index is an implicit binary YES/NO market.
 ///         One drand evmnet round, fixed at creation, resolves every market of the event:
 ///         outcome = keccak256(signature ‖ eventId) mod n. Winners split the market's pool
-///         pro rata, less FEE_BPS to the treasury. Markets with an empty winning pool refund.
+///         pro rata, less FEE_BPS to the treasury. A market whose winning side holds less than
+///         its `1/nOutcomes` share of the pool is void and refunds both sides (see `claim`).
 contract Arena is Ownable {
     using SafeERC20 for IERC20;
 
     uint256 public constant FEE_BPS = 200;
     uint8 public constant NO = 0;
     uint8 public constant YES = 1;
-    /// @notice Smallest bet, in USDC's 6 decimals: 1 USDC. `claim` refunds a market whose winning
-    ///         side is empty and pays winner-take-all when it holds anything at all, so without a
-    ///         floor that switch is one micro-USDC wide: dust on the winning side of every outcome
-    ///         costs nOutcomes micro-USDC and takes the losing pool of whichever outcome lands.
-    ///         A stake worth taking that pool has to be worth losing too.
+    /// @notice Smallest bet, in USDC's 6 decimals: 1 USDC. A floor in dollars — what stops a
+    ///         floor-sized stake from taking a pool orders of magnitude larger is the void rule
+    ///         in `claim`, not this.
     uint256 public constant MIN_BET = 1e6;
 
     // drand evmnet: round r is published at DRAND_GENESIS + (r - 1) * DRAND_PERIOD.
@@ -193,6 +192,16 @@ contract Arena is Ownable {
 
     /// @notice Pay out every market of the event the caller won (or is refunded on). On a bailed
     ///         event every stake comes back in full instead, no fee.
+    /// @dev    A market pays winner-take-all only while the winning side holds at least its
+    ///         `1/nOutcomes` share of the pool. The outcome is `keccak % nOutcomes`, so that share
+    ///         is the true probability of a market's YES: more than `nOutcomes ×` a stake is over
+    ///         true odds. Below the share the market is void — both sides take their own stake
+    ///         back, no fee — which covers an empty winning side (the old `p[win] == 0` case) and
+    ///         every ratio between it and a fair book. `MIN_BET` alone left that switch one
+    ///         micro-USDC wide in *ratio*: the winning side of every outcome cost `nOutcomes` USDC
+    ///         and took the whole pool of whichever one landed, however large. Capped at
+    ///         `nOutcomes ×`, that sweep — the one play guaranteed to win a market — always costs
+    ///         more than it can pay back.
     function claim(bytes32 eventId) external {
         EventData storage e = events[eventId];
         bool refund = bailed[eventId];
@@ -206,10 +215,11 @@ contract Arena is Ownable {
             } else {
                 uint8 win = i == e.outcome ? YES : NO;
                 uint256[2] storage p = pools[eventId][i];
-                if (p[win] == 0) {
-                    payout += s[1 - win]; // nobody to pay the losers' money to: refund in full
-                } else {
-                    uint256 gross = s[win] * (p[NO] + p[YES]) / p[win];
+                uint256 total = p[NO] + p[YES];
+                if (p[win] * e.nOutcomes < total) {
+                    payout += s[NO] + s[YES]; // void market: everyone takes their own money back
+                } else if (s[win] > 0) {
+                    uint256 gross = s[win] * total / p[win];
                     uint256 f = gross * FEE_BPS / 10_000;
                     payout += gross - f;
                     fee += f;

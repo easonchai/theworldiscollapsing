@@ -63,4 +63,28 @@ for (const addr of playable) {
   );
 }
 
+// 5. the story count reconciles. The PRD is GitHub issue #1: 65 numbered user stories, 1..65, no
+// gaps — the README claimed "63 of 77", a denominator nothing in this project counts to.
+const PRD_STORIES = 65;
+const total = Number(readme.match(/is (\d+) user stories/)?.[1]);
+const verified = Number(readme.match(/(\d+) of them are built and verified/)?.[1]);
+const pending = readme.match(/The other (\d+) — stories ([\d, ]+) —/);
+assert.equal(total, PRD_STORIES, `README counts ${total} PRD user stories; issue #1 lists ${PRD_STORIES}`);
+assert.ok(pending, "README no longer names which PRD stories are not verified locally");
+const gated = pending[2].split(",").map((n) => Number(n.trim()));
+assert.equal(gated.length, Number(pending[1]), "README's pending story count does not match the list it prints");
+assert.equal(new Set(gated).size, gated.length, "README lists a pending story twice");
+assert.ok(
+  gated.every((n) => n >= 1 && n <= PRD_STORIES),
+  `README lists a pending story outside 1..${PRD_STORIES}`,
+);
+assert.equal(verified + gated.length, PRD_STORIES, `${verified} verified + ${gated.length} pending ≠ ${PRD_STORIES}`);
+
+// 6. /verify tells the same liveness story as the README. `Arena.bail` shipped; the page went on
+// telling bettors "there is no timeout refund".
+const trust = read("apps/web/src/lib/trust.ts");
+assert.ok(readme.includes("`bail(eventId)`"), "README no longer documents bail, the answer to a stalled resolver");
+assert.ok(!/no timeout refund/.test(trust), "the /verify trust copy still says there is no timeout refund, but bail is one");
+assert.ok(/bail/.test(trust), "the /verify trust copy no longer mentions bail, which the README says is the escape hatch");
+
 console.log("README ok");

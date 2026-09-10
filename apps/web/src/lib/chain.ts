@@ -39,21 +39,40 @@ export const USDC_DECIMALS = 6;
 /** `Arena.MIN_BET` — 1 USDC. Below it `bet` reverts `BelowMinBet`. */
 export const MIN_BET = 1_000_000n;
 
+/**
+ * `Arena.claim`'s void rule: a market pays winner-take-all only while the winning side holds at
+ * least its `1/nOutcomes` share of the pool. Under that it is void — both sides take their own
+ * stake back, no fee — so no market ever returns more than `nOutcomes ×` a stake.
+ */
+const voided = (pool: readonly [bigint, bigint], win: 0 | 1, nOutcomes: number): boolean =>
+  pool[win] * BigInt(nOutcomes) < pool[0] + pool[1];
+
 /** Payout for one market, given the caller's stakes and the market's pools. */
-export function marketPayout(stake: readonly [bigint, bigint], pool: readonly [bigint, bigint], won: boolean): bigint {
+export function marketPayout(
+  stake: readonly [bigint, bigint],
+  pool: readonly [bigint, bigint],
+  won: boolean,
+  nOutcomes: number,
+): bigint {
   const win = won ? 1 : 0;
-  if (pool[win] === 0n) return stake[1 - win]; // nobody to pay the losers' money to: full refund
+  if (voided(pool, win, nOutcomes)) return stake[0] + stake[1];
   if (stake[win] === 0n) return 0n;
   const gross = (stake[win] * (pool[0] + pool[1])) / pool[win];
   return gross - (gross * FEE_BPS) / 10_000n;
 }
 
 /** What `amount` on this side would pay if that side wins, at the pools it would create. */
-export function previewPayout(amount: bigint, yes: boolean, pool: readonly [bigint, bigint]): bigint {
+export function previewPayout(
+  amount: bigint,
+  yes: boolean,
+  pool: readonly [bigint, bigint],
+  nOutcomes: number,
+): bigint {
   if (amount === 0n) return 0n;
   const side = yes ? 1 : 0;
   const after: [bigint, bigint] = [pool[0], pool[1]];
   after[side] += amount;
+  if (voided(after, side, nOutcomes)) return amount; // the market would be void: the stake back
   const gross = (amount * (after[0] + after[1])) / after[side];
   return gross - (gross * FEE_BPS) / 10_000n;
 }

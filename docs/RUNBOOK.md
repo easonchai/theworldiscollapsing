@@ -56,6 +56,10 @@ Production `.env` values that differ from the README's local block:
 | `MEDIA_STORE`, `BLOB_READ_WRITE_TOKEN` | `blob` and the token. `MEDIA_KEEP` only applies to the local store |
 | `SUBGRAPH_URL` | the Studio query URL, once step 5 is done |
 
+Stopping it: `pm2 stop twic-engine`, or Ctrl-C / `kill <pid>` for a foreground `pnpm --filter engine start`. The engine answers SIGINT/SIGTERM with a `shutting down` line and exits within 3 s (a second signal exits immediately) — in-flight steps are idempotent, so the next start resumes them.
+
+**Never `kill -9` the `pnpm` or `tsx` wrapper.** `pnpm start` is three processes deep (pnpm → tsx → node); SIGKILL on the outer two reparents the node grandchild to PID 1, where it keeps authoring, rendering, resolving on chain and charging the OpenRouter key with nothing on screen. Kill the whole thing instead: `pkill -f 'src/index.ts'`. The engine keeps its pid in `$MEDIA_DIR/engine.pid`, so if a copy is already loose the next start refuses to run beside it — `engine already running as pid N` — instead of a bare `EADDRINUSE` (and with `MEDIA_STORE=blob` there is no media port to collide at all).
+
 Restarts are safe by construction: the loop reads chain state before sending `createEvent` or `resolve`, so a bounce never duplicates an event. Every production failure backs off exponentially, so a dead vendor cannot burn credits in a loop. Watch `Event.costUsd` in the database and the OpenRouter dashboard; the engine has no hard spend ceiling yet (review item ENG-3).
 
 ## 4. Web on Vercel ⚠

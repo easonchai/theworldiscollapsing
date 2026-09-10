@@ -65,9 +65,11 @@ const ONE = 10n ** BigInt(USDC_DECIMALS);
  * What one USDC on this side would come back as, if that side wins at today's pools. An empty book
  * still has an answer — you would be the only staker, so you get your own stake back less the fee —
  * and printing that 0.98 is the difference between a market with no money in it and a dead button.
+ * A dollar that would leave the side under its `1/nOutcomes` share prices at 1.00: that market is
+ * void at settlement and hands the stake back, and quoting the winner-take-all number would be a lie.
  */
-const multiple = (pool: readonly [bigint, bigint], yes: boolean): number =>
-  Number(previewPayout(ONE, yes, pool)) / Number(ONE);
+const multiple = (pool: readonly [bigint, bigint], yes: boolean, nOutcomes: number): number =>
+  Number(previewPayout(ONE, yes, pool, nOutcomes)) / Number(ONE);
 
 /**
  * One side of one market: an outlined tile you pick, and the number a bettor is actually buying —
@@ -79,6 +81,7 @@ function PriceCell({
   yes,
   label,
   pool,
+  nOutcomes,
   staked,
   selected,
   disabled,
@@ -90,6 +93,7 @@ function PriceCell({
   yes: boolean;
   label: string;
   pool: [bigint, bigint];
+  nOutcomes: number;
   staked: boolean;
   selected: boolean;
   disabled?: boolean;
@@ -101,7 +105,7 @@ function PriceCell({
 }) {
   const p = impliedYes(pool);
   const share = p === null ? null : yes ? p : 1 - p;
-  const mult = multiple(pool, yes);
+  const mult = multiple(pool, yes, nOutcomes);
   const inner = busy ? (
     <span className="num text-[13px]">…</span>
   ) : settled !== null ? (
@@ -297,7 +301,7 @@ export function Markets({
                   <p className="tag mt-1">
                     {won ? "resolved yes" : "resolved no"}
                     {m.stake[0] > 0n || m.stake[1] > 0n ? (
-                      <> · payout {usdc(marketPayout(m.stake, m.pool, won))}</>
+                      <> · payout {usdc(marketPayout(m.stake, m.pool, won, event.outcomes.length))}</>
                     ) : null}
                   </p>
                 ) : m.stake[0] > 0n || m.stake[1] > 0n ? (
@@ -315,6 +319,7 @@ export function Markets({
                   yes={yes}
                   label={label}
                   pool={m.pool}
+                  nOutcomes={event.outcomes.length}
                   staked={(yes ? m.stake[1] : m.stake[0]) > 0n}
                   selected={pick?.i === i && pick.yes === yes}
                   disabled={busy !== null}
@@ -361,7 +366,7 @@ export function Markets({
 
         <p className="data mt-2 truncate text-dim">
           {picked && parsed
-            ? `${picked.label} · ${picked.yes ? "YES" : "NO"} · returns ${usdc(previewPayout(parsed, picked.yes, picked.pool))}`
+            ? `${picked.label} · ${picked.yes ? "YES" : "NO"} · returns ${usdc(previewPayout(parsed, picked.yes, picked.pool, event.outcomes.length))}`
             : "— no side picked —"}
         </p>
 
@@ -394,7 +399,10 @@ export function Markets({
 /** Everything the caller can take out of this event, computed the way Arena.claim computes it. */
 export function claimableOf(event: EventPublic, markets: MarketState[] | null): bigint {
   if (!markets || event.outcome === null) return 0n;
-  return markets.reduce((sum, m, i) => sum + marketPayout(m.stake, m.pool, i === event.outcome), 0n);
+  return markets.reduce(
+    (sum, m, i) => sum + marketPayout(m.stake, m.pool, i === event.outcome, event.outcomes.length),
+    0n,
+  );
 }
 
 export function ClaimButton({

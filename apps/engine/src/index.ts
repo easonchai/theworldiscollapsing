@@ -9,6 +9,7 @@ import { makePrisma } from "db";
 import { makeAuthor } from "./author.js";
 import { makeMediaStore, pruneEventMedia, startMediaServer } from "./media.js";
 import { makeOpenRouter } from "./openrouter.js";
+import { claimPidFile } from "./pidfile.js";
 import { makeRender } from "./render.js";
 import { branchKey, parseRoot, revealBranch, sealingStore } from "./seal.js";
 import { makeStore } from "./store.js";
@@ -30,6 +31,11 @@ const log = (msg: string, extra?: Record<string, unknown>) =>
   console.log(new Date().toISOString(), msg, extra ? JSON.stringify(extra) : "");
 
 const mediaDir = env("MEDIA_DIR", "./media");
+// One engine per MEDIA_DIR, claimed before anything is authored: a copy that outlived its
+// pnpm/tsx parents is otherwise invisible until the media port refuses to bind (and with
+// MEDIA_STORE=blob, not even then), while it keeps spending.
+const releasePid = claimPidFile(path.join(mediaDir, "engine.pid"));
+process.on("exit", releasePid);
 const mediaStoreKind = env("MEDIA_STORE", "local") === "blob" ? "blob" : "local";
 // Events older than the newest MEDIA_KEEP per channel have their published media deleted; the wall
 // only ever replays the newest DONE event and the channel page lists recent history.
@@ -180,7 +186,23 @@ const deps: Deps = {
 };
 
 const ac = new AbortController();
-for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => ac.abort());
+/**
+ * A channel sees the abort only between steps, and a step can be mid-sleep for a 60 s half or a
+ * 15-minute render poll. Waiting that long with nothing on stdout reads as a hung engine and invites
+ * `kill -9`, which orphans the node grandchild pnpm/tsx spawned — still driving the chain, the
+ * database and the spend counter. So: say it, then leave. Every step is idempotent against chain
+ * state, so the next start resumes where this one stopped.
+ */
+const SHUTDOWN_GRACE_MS = 3_000;
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    if (ac.signal.aborted) process.exit(1); // second signal: stop waiting for the channels
+    log("shutting down", { signal: sig, graceMs: SHUTDOWN_GRACE_MS });
+    ac.abort();
+    mediaServer?.close();
+    setTimeout(() => process.exit(0), SHUTDOWN_GRACE_MS).unref();
+  });
+}
 
 const channels = env("CHANNELS", "sports,politics,culture,region").split(",");
 deps.log("engine start", {

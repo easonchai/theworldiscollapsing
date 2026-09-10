@@ -93,6 +93,7 @@ Fake server `apps/engine/src/fake/openrouter.ts` (stdlib `node:http`, no deps): 
 - `Authored.outcomes` is **3 to 5** labels (PRD: "three to five binary markets"); `Arena` accepts 2–8, the schema is the tighter of the two. Enforced in `apps/engine/src/authored.ts`, asked for in the authoring prompt, and matched by the fake and the stub author.
 - **Studio cards** (PRD story 11): `Authored.cards` is 1 or 2 `{ afterShot: number; title: string; stats: [string, string] }`, the graphic the broadcast cuts to after first-half shot `afterShot` (an index into `Authored.firstHalf`). They are text, so web renders them as an overlay the way it renders the ticker — a left-aligned lower-third band inside the frame, not a full-frame card — timed off the shot boundaries in `Event.script`. `toPublic` turns `afterShot` into `EventPublic.cards[i].at` (seconds into the first half, summed from the shot durations — the shot list itself stays server-side) and `apps/web/src/components/event-stage.tsx` shows each card for `CARD_MS` (3.5 s, `apps/web/src/lib/playback.ts` → `cardAt`) from its cue while the event is `BETTING`.
 - Media store: `local` (engine serves `MEDIA_DIR` on `MEDIA_PORT` with Range support and CORS) or `blob` (`@vercel/blob` `put`, public access). `storeFile(eventId, name, localPath) → url`; intermediate clips live in `MEDIA_DIR/.work/<eventId>`, are never served, and the whole per-event directory is deleted once `branches()` has stored its outputs. The key-art still is passed to the video API as a URL from this store, so **image-to-video against the real OpenRouter needs `MEDIA_STORE=blob`** (a `localhost` media URL is not reachable from their side).
+- Single instance: the engine claims `MEDIA_DIR/engine.pid` at startup (both store kinds) and refuses to run beside a live pid — `engine already running as pid N`. It exits within 3 s of SIGINT/SIGTERM, saying `shutting down` first; a copy that outlived a SIGKILLed `pnpm`/`tsx` wrapper is stopped with `pkill -f 'src/index.ts'` (`docs/RUNBOOK.md` §3).
 - Retention (`local` store only): when an event reaches `DONE` the engine deletes `MEDIA_DIR/<eventId>` for every event of that channel outside the newest **`MEDIA_KEEP`** (default 20) — `pruneEventMedia` in `apps/engine/src/media.ts`, driven by `Deps.pruneMedia`. Without it the published tree grows ~11 MB per event forever (1.9 GB after 25 minutes of DEMO on four channels). Video of an event older than the window 404s; the wall only replays the newest `DONE` event per channel, so keep `MEDIA_KEEP` above whatever history the UI shows. Blob storage is not swept.
 
 ## Branch sealing + Chainlink CRE (engine + `packages/cre`, day 7 stretch)
@@ -156,11 +157,22 @@ global. `setVerifier` therefore only changes how *future* events resolve: an own
 event that is already taking bets into trusted mode, nor swap in a permissive verifier under it.
 
 **Minimum bet.** `Arena.MIN_BET` = `1e6` (1 USDC, 6 decimals); `bet` reverts `BelowMinBet` under it
-(`ZeroAmount` still answers a stake of 0). `claim` refunds a market whose winning side is empty and
-pays winner-take-all when it holds anything at all, so the floor is what keeps that switch from being
-one micro-USDC wide — dust on the winning side of every outcome would otherwise cost `nOutcomes`
-micro-USDC and take the losing pool of whichever outcome lands. `apps/web/src/lib/chain.ts` mirrors it
-as `MIN_BET` and the ticket refuses a smaller stake before it asks for an approval.
+(`ZeroAmount` still answers a stake of 0). It is a floor in dollars and nothing more.
+`apps/web/src/lib/chain.ts` mirrors it as `MIN_BET` and the ticket refuses a smaller stake before it
+asks for an approval.
+
+**Void markets.** `claim` pays a market winner-take-all only while its winning side holds at least
+`1/nOutcomes` of that market's pool. The outcome is `keccak % nOutcomes`, so that share is the true
+probability of a market's YES and `nOutcomes ×` a stake is the true-odds payout ceiling. Below the
+share
+(`p[win] * nOutcomes < p[NO] + p[YES]`, which subsumes the old empty-winning-side case) the market is
+**void**: both sides take their own stake back and no fee is charged. Two consequences to code
+against: no market ever returns more than `nOutcomes ×` a stake, and buying the winning side of all
+`nOutcomes` markets — the one sweep guaranteed to win a market — always costs more than it can pay,
+which is what closes the dust-capture cliff `MIN_BET` only repriced. `apps/web/src/lib/chain.ts`
+mirrors the rule and both helpers now take the outcome count:
+`marketPayout(stake, pool, won, nOutcomes)` and `previewPayout(amount, yes, pool, nOutcomes)`, so a
+price cell quotes `×1.00` for a stake that would leave its side under the share.
 
 **Bail.** `bail(bytes32 eventId)` is permissionless and callable once an event exists, is unresolved
 and `block.timestamp > lockTime + BAIL_DELAY` (3 days) — earlier reverts `BailTooEarly`, on a resolved

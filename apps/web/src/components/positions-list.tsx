@@ -53,7 +53,7 @@ export function PositionsList() {
           if (event.outcome !== null) {
             for (let i = 0; i < event.outcomes.length; i++) {
               const m = await readMarket(event.id, i, address);
-              claimable += marketPayout(m.stake, m.pool, i === event.outcome);
+              claimable += marketPayout(m.stake, m.pool, i === event.outcome, event.outcomes.length);
             }
           }
           out.push({ event, positions: group, claimable });

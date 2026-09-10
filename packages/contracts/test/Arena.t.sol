@@ -489,7 +489,8 @@ contract ArenaTest is Test {
 
     /// Dust on the winning side of every outcome used to cost 5 micro-USDC and take the losing
     /// pool of whichever outcome landed — 24.5 USDC of alice's stake, and the refund she was owed
-    /// on the market nobody else took. `MIN_BET` is what stands between those two payouts now.
+    /// on the market nobody else took. `MIN_BET` is what keeps those five bets off the book at all;
+    /// the sweep at the stake `MIN_BET` does allow is the test below this one.
     function test_DustOnEveryOutcomeCannotCaptureThePool() public {
         bytes32 id = keccak256("d1");
         uint8 w = win(id, 5);
@@ -507,6 +508,61 @@ contract ArenaTest is Test {
         assertEq(arena.pools(id, w, arena.YES()), 0);
         assertEq(claimAs(alice, id), 123e6);
         expectNoClaim(mallory, id);
+    }
+
+    /// `MIN_BET` is a floor in dollars; what it does not do is put a ceiling on the pool a floor-
+    /// sized stake can take. 1 USDC on the winning side of every outcome is five legal bets, and it
+    /// used to come back as the whole 26 USDC of whichever market landed — 4.1x on the stake, paid
+    /// by a crowd that would otherwise have been refunded. A winning side holding less than its
+    /// `1/nOutcomes` share now voids the market instead, so the sweep gets its own dollar back and
+    /// eats the four outcomes it missed.
+    function test_MinBetOnEveryOutcomeCannotCaptureThePool() public {
+        bytes32 id = keccak256("d3");
+        uint8 w = win(id, 5);
+        uint64 lock = open(id, 5);
+        address mallory = mk("mallory");
+        uint256 stake = arena.MIN_BET(); // exactly the floor: every one of these bets is accepted
+        for (uint8 i = 0; i < 5; i++) {
+            betAs(alice, id, i, false, 25e6);
+            betAs(mallory, id, i, true, stake);
+        }
+        lockAndResolve(id, lock);
+        assertEq(arena.pools(id, w, arena.YES()), stake);
+        assertEq(arena.pools(id, w, arena.NO()), 25e6);
+
+        // 1 of 26 USDC is under a fifth of the market, so the winning market is void: both sides
+        // take their own money back and nobody is paid out of the other side.
+        uint256 got = claimAs(mallory, id);
+        assertEq(got, stake);
+        assertLt(got, 5 * stake); // staked 5 USDC, got 1 back — the sweep is a loss, not a 4.1x
+
+        // Alice keeps her refund on the void market and is paid on the four she won.
+        assertEq(claimAs(alice, id), 25e6 + 4 * 25_480_000);
+        assertEq(usdc.balanceOf(treasury), 4 * 520_000);
+        assertEq(usdc.balanceOf(address(arena)), 0);
+    }
+
+    /// Where the void rule draws the line, in both directions: a winning side holding exactly its
+    /// `1/nOutcomes` share is paid `nOutcomes ×` less the fee — the most any market ever returns —
+    /// and four micro-USDC more on the losing side voids the same market.
+    function test_WinningSideIsPaidToItsUniformShareAndVoidedBelowIt() public {
+        bytes32 paid = keccak256("d4");
+        uint8 w = win(paid, 4);
+        uint64 lock = open(paid, 4);
+        betAs(alice, paid, w, true, 10e6);
+        betAs(carol, paid, w, false, 30e6); // yes holds 10 of 40 — exactly a quarter
+        lockAndResolve(paid, lock);
+        assertEq(claimAs(alice, paid), 39_200_000); // 4x the stake, less the 2% fee
+        expectNoClaim(carol, paid);
+
+        bytes32 voided = keccak256("d5");
+        uint8 w2 = win(voided, 4);
+        uint64 lock2 = open(voided, 4);
+        betAs(alice, voided, w2, true, 10e6);
+        betAs(carol, voided, w2, false, 30_000_004); // a hair under a quarter for the yes side
+        lockAndResolve(voided, lock2);
+        assertEq(claimAs(alice, voided), 10e6);
+        assertEq(claimAs(carol, voided), 30_000_004);
     }
 
     function test_BetBelowTheMinimumIsRejected() public {
