@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "World" ADD COLUMN     "spendUsd" DOUBLE PRECISION NOT NULL DEFAULT 0;

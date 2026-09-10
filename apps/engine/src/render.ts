@@ -6,6 +6,7 @@ import type { Shot } from "./authored.js";
 import type { EventRow, Render } from "./machine.js";
 import { branchFileName, type MediaStore } from "./media.js";
 import type { OpenRouter } from "./openrouter.js";
+import type { Budget } from "./budget.js";
 
 const run = promisify(execFile);
 
@@ -62,14 +63,22 @@ export function makeRender(cfg: {
   videoModel: string;
   pollIntervalMs: number;
   pollTimeoutMs: number;
+  budget: Budget;
+  /** Per-image estimate for the key-art still; OpenRouter does not publish the price (docs/RESEARCH.md). */
+  imageCostUsd: number;
   log: (msg: string, extra?: Record<string, unknown>) => void;
 }): Render {
+  const listCost = (shots: Shot[], res: Res) => shots.reduce((n, s) => n + s.seconds * RATE[res], 0);
   const work = (ev: EventRow, name: string) => path.join(cfg.workDir, ev.id, name);
 
   async function clip(ev: EventRow, shot: Shot, res: Res, frameUrl: string | null, name: string): Promise<string> {
     const out = work(ev, name);
+    const usd = shot.seconds * RATE[res];
     let last: unknown;
     for (let attempt = 1; attempt <= CLIP_ATTEMPTS; attempt++) {
+      // A submitted job may bill whether or not it succeeds, so every attempt is charged up front.
+      cfg.budget.assertAffordable(usd, name);
+      await cfg.budget.charge(usd, name);
       try {
         const job = await cfg.or.submitVideo({
           model: cfg.videoModel,
@@ -100,8 +109,10 @@ export function makeRender(cfg: {
   async function keyArt(ev: EventRow): Promise<{ url: string; costUsd: number; clip0: string | null }> {
     const png = work(ev, "key.png");
     try {
+      cfg.budget.assertAffordable(cfg.imageCostUsd, "key art");
+      await cfg.budget.charge(cfg.imageCostUsd, "key art");
       await writeFile(png, await cfg.or.generateImage(keyArtPrompt(ev)));
-      return { url: await cfg.store.storeFile(ev.id, "key.png", png), costUsd: 0, clip0: null };
+      return { url: await cfg.store.storeFile(ev.id, "key.png", png), costUsd: cfg.imageCostUsd, clip0: null };
     } catch (e) {
       cfg.log("image generation unavailable, seeding key art from the first shot", { seq: ev.seq, error: String(e).slice(0, 200) });
       const shot = ev.script.firstHalf[0]!;
@@ -125,6 +136,8 @@ export function makeRender(cfg: {
     async firstHalf(ev) {
       await mkdir(path.join(cfg.workDir, ev.id), { recursive: true });
       const shots = ev.script.firstHalf;
+      // Refuse before the first clip rather than leave a half-rendered list behind.
+      cfg.budget.assertAffordable(listCost(shots, "480p") + cfg.imageCostUsd, "first half");
       const ka = await keyArt(ev);
 
       let costUsd = ka.costUsd;
@@ -154,6 +167,7 @@ export function makeRender(cfg: {
 
       const lists = ev.script.branches;
       const flat = lists.flatMap((shots, b) => shots.map((s, i) => ({ s, b, i })));
+      cfg.budget.assertAffordable(listCost(flat.map((f) => f.s), "768p"), "branches");
       const paths = await pool(CONCURRENCY, flat, ({ s, b, i }) => clip(ev, s, "768p", seedUrl, `branch-${b}-${i}.mp4`));
 
       const urls: string[] = [];

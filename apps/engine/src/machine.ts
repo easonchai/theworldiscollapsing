@@ -1,3 +1,4 @@
+import { SpendCapError, type Budget } from "./budget.js";
 import { keccak256, toHex, type Hex } from "viem";
 import { outcomeFor, roundForLock, roundTime, type Beacon } from "./drand.js";
 import type { Authored } from "./authored.js";
@@ -116,6 +117,8 @@ export type Deps = {
   sleep: (ms: number) => Promise<void>;
   log: (msg: string, extra?: Record<string, unknown>) => void;
   alwaysOn: boolean;
+  /** Spend ceiling; absent in tests and stub mode. */
+  budget?: Budget;
   /**
    * BRANCH_SEAL=1 only: publish the plaintext of the winning branch at RESOLVE and return its URL
    * (null = leave `branchUrls` as they are). Without it a sealed reveal serves ciphertext.
@@ -128,6 +131,9 @@ export type Deps = {
    */
   pruneMedia?: (channelId: string) => Promise<number>;
 };
+
+// Authoring is charged at the real usage.cost afterwards; this only decides whether to start.
+const AUTHOR_ESTIMATE_USD = 1;
 
 export const eventIdFor = (channelId: string, seq: number): Hex => keccak256(toHex(`${channelId}:${seq}`));
 
@@ -190,6 +196,14 @@ async function present(d: Deps): Promise<boolean> {
 export async function produce(channelId: string, d: Deps, existing?: EventRow): Promise<EventRow | null> {
   let ev = existing ?? null;
   try {
+    if (!ev && d.budget) {
+      try {
+        d.budget.assertAffordable(AUTHOR_ESTIMATE_USD, "authoring");
+      } catch {
+        d.log("spend cap reached; not authoring", { channelId, spentUsd: d.budget.spent(), capUsd: d.budget.capUsd });
+        return null;
+      }
+    }
     if (!ev) {
       const seq = await d.store.nextSeq(channelId);
       const canon = await d.store.canon(channelId, 50);
@@ -236,6 +250,11 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
           error: null,
         });
       } catch (e) {
+        if (e instanceof SpendCapError) {
+          // Not a render failure: leave the row in RENDER so it resumes once the cap is raised.
+          d.log("spend cap reached; production paused", { channelId, seq: ev.seq, error: String(e) });
+          return null;
+        }
         ev = await d.store.update(ev.id, { renderAttempts: ev.renderAttempts + 1, error: String(e) });
         if (ev.renderAttempts >= d.timing.maxRenderAttempts) {
           ev = await d.store.update(ev.id, { state: "SKIPPED" });

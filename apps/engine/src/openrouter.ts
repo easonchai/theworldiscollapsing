@@ -49,6 +49,8 @@ export function makeOpenRouter(cfg: {
   apiKey: string;
   imageModel: string;
   fetchImpl?: typeof fetch;
+  /** Called with usage.cost (USD) after every chat completion that reports one. */
+  onUsage?: (usd: number, model: string) => Promise<void>;
 }) {
   const doFetch = cfg.fetchImpl ?? fetch;
   const base = cfg.baseUrl.replace(/\/$/, "");
@@ -75,8 +77,10 @@ export function makeOpenRouter(cfg: {
           json_schema: { name: schemaName, strict: true, schema: strictify(z.toJSONSchema(schema, { io: "input" })) },
         },
         provider: { require_parameters: true },
+        usage: { include: true }, // usage.cost in USD comes back with the response
         ...(opts.reasoning ? { reasoning: opts.reasoning } : {}),
       });
+      if (typeof json?.usage?.cost === "number") await cfg.onUsage?.(json.usage.cost, opts.model);
       const message = json?.choices?.[0]?.message;
       if (typeof message?.content !== "string") throw new SchemaError("no message content in chat completion");
       let parsed: unknown;

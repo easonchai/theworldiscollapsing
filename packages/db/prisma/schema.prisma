@@ -59,4 +59,5 @@ model World {
   id         Int       @id @default(1)
   doc        Json
   lastSeenAt DateTime? // viewer presence heartbeat; gates generation
+  spendUsd   Float     @default(0) // everything ever committed to OpenRouter, incl. failed jobs
 }

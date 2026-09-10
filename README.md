@@ -179,7 +179,7 @@ Open findings from the end-to-end validation and an adversarial review of the mo
 - critical, `Arena.sol`: the verifier is not pinned per event, so the owner can switch to trusted mode after bets land.
 - critical, `apps/engine/src/media.ts`: a malformed percent-escape in a request URL kills the engine process.
 - high, `media.ts`: no error handler on the response stream, so a file-open failure crashes the engine.
-- high, `machine.ts` / `render.ts`: `costUsd` omits failed and retried generations; there is no spend ceiling.
+- ~~high, `machine.ts` / `render.ts`: `costUsd` omits failed and retried generations; there is no spend ceiling.~~ Fixed: every clip attempt, key-art image and authoring call is charged against `MAX_SPEND_USD`, persisted in `World.spendUsd`.
 - high, `machine.ts` / `drand.ts`: beacon fetch retries forever with no timeout or abort.
 - medium, `machine.ts`: canon lines are appended twice if the CANON step re-runs.
 - medium, `machine.ts`: `lockTime` is computed before the tx is mined, so tx latency eats the betting window.

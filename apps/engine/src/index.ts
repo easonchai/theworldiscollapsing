@@ -1,3 +1,4 @@
+import { makeBudget } from "./budget.js";
 import path from "node:path";
 import type { Address, Hex } from "viem";
 import { fetchRound } from "./drand.js";
@@ -105,11 +106,24 @@ let render: Render = stubRender({
   secondHalfSec: timing.secondHalfMs / 1000,
 });
 
+// Hard ceiling on everything bought from OpenRouter, persisted in World.spendUsd across restarts.
+const capUsd = Number(env("MAX_SPEND_USD", "20"));
+const budget = makeBudget({
+  capUsd,
+  spentUsd: (await prisma.world.findUnique({ where: { id: 1 } }))?.spendUsd ?? 0,
+  persist: async (usd) => {
+    await prisma.world.update({ where: { id: 1 }, data: { spendUsd: { increment: usd } } });
+  },
+  log,
+});
+if (!stubMode) log("budget", { capUsd, spentUsd: budget.spent() });
+
 if (!stubMode) {
   const or = makeOpenRouter({
     baseUrl: env("OPENROUTER_BASE_URL", "https://openrouter.ai"),
     apiKey: env("OPENROUTER_API_KEY"),
     imageModel: env("IMAGE_MODEL", "google/gemini-3.1-flash-image"),
+    onUsage: (usd, model) => budget.charge(usd, model),
   });
   author = makeAuthor({
     or,
@@ -125,6 +139,8 @@ if (!stubMode) {
     videoModel: env("VIDEO_MODEL", "minimax/hailuo-3-max"),
     pollIntervalMs: 3_000,
     pollTimeoutMs: 15 * 60_000,
+    budget,
+    imageCostUsd: Number(env("IMAGE_COST_USD", "0.04")),
     log,
   });
 }
@@ -145,6 +161,7 @@ const deps: Deps = {
   sleep,
   log,
   alwaysOn: process.env.ALWAYS_ON === "1",
+  budget: stubMode ? undefined : budget,
   // The CRE workflow releases the winning key when it sees Arena.Resolved; give it a head start,
   // then reveal locally. The engine holds BRANCH_SEAL_ROOT anyway, so this costs no secrecy, and a
   // reveal that plays ciphertext is worse than no sealing at all.

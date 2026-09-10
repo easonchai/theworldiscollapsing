@@ -11,3 +11,4 @@ packages/contracts/out
 packages/contracts/broadcast/**/dry-run
 .DS_Store
 packages/contracts/broadcast/**/31337
+.vercel

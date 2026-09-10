@@ -12,6 +12,7 @@ import type { EventRow } from "./machine.js";
 import { makeMediaStore, startMediaServer } from "./media.js";
 import { makeOpenRouter } from "./openrouter.js";
 import { makeRender } from "./render.js";
+import { makeBudget, SpendCapError, unlimited } from "./budget.js";
 
 const run = promisify(execFile);
 
@@ -50,6 +51,8 @@ beforeAll(async () => {
     videoModel: "minimax/hailuo-3-max",
     pollIntervalMs: 200,
     pollTimeoutMs: 60_000,
+    budget: unlimited(),
+    imageCostUsd: 0,
     log: () => {},
   });
 
@@ -118,4 +121,25 @@ describe("render pipeline against the fake OpenRouter", () => {
     // the per-event work directory is swept once the branches are stored
     await expect(stat(path.join(dir, ".work", "0xrendertest"))).rejects.toThrow();
   }, 180_000);
+
+  it("refuses to start a render that would cross the spend cap, before any vendor call", async () => {
+    let persisted = 0;
+    const capped = makeRender({
+      or: makeOpenRouter({
+        baseUrl: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`,
+        apiKey: "fake",
+        imageModel: "google/gemini-3.1-flash-image",
+      }),
+      store: makeMediaStore({ store: "local", dir, baseUrl: `http://127.0.0.1:${mediaPort}` }),
+      workDir: path.join(dir, ".work-capped"),
+      videoModel: "minimax/hailuo-3-max",
+      pollIntervalMs: 200,
+      pollTimeoutMs: 60_000,
+      budget: makeBudget({ capUsd: 0.1, spentUsd: 0, persist: async (usd) => { persisted += usd; }, log: () => {} }),
+      imageCostUsd: 0.04,
+      log: () => {},
+    });
+    await expect(capped.firstHalf({ ...ev, id: `${ev.id.slice(0, -2)}ff` as EventRow["id"] })).rejects.toBeInstanceOf(SpendCapError);
+    expect(persisted).toBe(0); // rejected up front: nothing was charged, nothing was submitted
+  });
 });
