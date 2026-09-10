@@ -8,7 +8,9 @@ export function makeChain(cfg: { rpcUrl: string; chainId: number; privateKey: He
   const chain = cfg.chainId === baseSepolia.id ? baseSepolia : anvil;
   const transport = http(cfg.rpcUrl);
   const account = privateKeyToAccount(cfg.privateKey);
-  const pub = createPublicClient({ chain, transport });
+  // viem's default 4 s receipt poll is the entire cost of createEvent/resolve on a chain that mines
+  // instantly; a public RPC is not local, so keep the slow poll there.
+  const pub = createPublicClient({ chain, transport, pollingInterval: cfg.chainId === anvil.id ? 200 : 2000 });
   const wallet = createWalletClient({ account, chain, transport });
   const base = { abi: arenaAbi, address: cfg.arena } as const;
 

@@ -24,7 +24,7 @@ import { arenaAbi } from "contracts/abi/Arena";
 import { gateAbi } from "contracts/abi/Gate";
 import { mockusdcAbi } from "contracts/abi/MockUSDC";
 import { makePrisma } from "db";
-import { USDC, emptyCoverage, makeRng, planBet, revertReason, seedFor } from "../src/bettor-plan.js";
+import { USDC, emptyStakes, makeRng, planBet, revertReason, seedFor } from "../src/bettor-plan.js";
 
 try {
   process.loadEnvFile();
@@ -70,7 +70,11 @@ const MAX_UINT = (1n << 256n) - 1n;
 
 const chain = chainId === baseSepolia.id ? baseSepolia : anvil;
 const transport = http(rpcUrl);
-const pub = createPublicClient({ chain, transport });
+// viem polls for receipts at 4 s by default, which is the whole cost of a write on a chain that
+// mines instantly: at ~7 slots per 15 s betting window that alone caps coverage. Anvil is local, a
+// public RPC is not — don't hammer it.
+const POLL_MS = num("POLL_MS", chainId === anvil.id ? 200 : 2000);
+const pub = createPublicClient({ chain, transport, pollingInterval: POLL_MS });
 const owner = privateKeyToAccount(ownerKey);
 const bettors = keys.map((k) => privateKeyToAccount(k));
 
@@ -175,7 +179,7 @@ async function playEvent(row: { id: Hex; channelId: string; seq: number }) {
   const lockMs = Number(lockTime) * 1000;
   const rng = makeRng(seedFor(SEED, row.id));
   const yesBias = 0.25 + rng() * 0.5;
-  const covered = emptyCoverage(nOutcomes);
+  const stakes = emptyStakes(nOutcomes);
   const t: Tracked = { ...row, lockMs, stakers: new Set() };
   tracked.set(row.id, t);
   stats.events++;
@@ -185,7 +189,7 @@ async function playEvent(row: { id: Hex; channelId: string; seq: number }) {
     const p = planBet({
       rng,
       nOutcomes,
-      covered,
+      stakes,
       balances,
       nowMs: Date.now(),
       lockMs,
@@ -209,7 +213,7 @@ async function playEvent(row: { id: Hex; channelId: string; seq: number }) {
         args: [row.id, p.outcomeIdx, p.yes, p.amount],
       });
       const receipt = await write(b, request);
-      covered[p.outcomeIdx]![p.yes ? 1 : 0] = true;
+      stakes[p.outcomeIdx]![p.yes ? 1 : 0] += p.amount;
       balances[p.bettor]! -= p.amount;
       pnl[p.bettor]! -= p.amount;
       t.stakers.add(p.bettor);
@@ -290,11 +294,13 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
 
 const prisma = makePrisma(dbUrl);
 log(`bettor seed=${SEED} bettors=${bettors.length} funder=${short(owner.address)} events=${targetEvents} chain=${chain.name}`);
-await topUp();
 
 /** id -> the playEvent promise still running for it, so a retry cannot double-open an event. */
 const running = new Map<string, Promise<unknown>>();
 const timers = [setInterval(summary, 60_000), setInterval(kickSettle, 1000), setInterval(kickTopUp, 30_000)];
+// Do not block discovery on funding: a restart that waits for topUp is blind for its whole duration
+// and loses every event that locks meanwhile. The planner just sits an unfunded bettor out.
+kickTopUp();
 
 while (!stopping) {
   if (seen.size < targetEvents) {
