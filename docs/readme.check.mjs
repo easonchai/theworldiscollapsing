@@ -28,7 +28,7 @@ for (const cmd of ["docker compose up -d", "forge script script/Deploy.s.sol", "
   assert.ok(body.includes(cmd), `README no longer shows how to run \`${cmd}\``);
 }
 const dirs = { engine: "apps/engine", web: "apps/web", db: "packages/db", subgraph: "packages/subgraph", contracts: "packages/contracts" };
-for (const [, pkg, script] of body.matchAll(/pnpm --filter (\S+) (?:run )?([a-z:]+)/g)) {
+for (const [, pkg, script] of body.matchAll(/pnpm --filter (\S+) (?:run )?([a-z:-]+)/g)) {
   if (script === "exec" || script === "add") continue; // running a binary, not a script
   assert.ok(dirs[pkg], `README runs \`pnpm --filter ${pkg}\`, which is not a package`);
   const { scripts = {} } = JSON.parse(read(`${dirs[pkg]}/package.json`));
@@ -86,5 +86,14 @@ const trust = read("apps/web/src/lib/trust.ts");
 assert.ok(readme.includes("`bail(eventId)`"), "README no longer documents bail, the answer to a stalled resolver");
 assert.ok(!/no timeout refund/.test(trust), "the /verify trust copy still says there is no timeout refund, but bail is one");
 assert.ok(/bail/.test(trust), "the /verify trust copy no longer mentions bail, which the README says is the escape hatch");
+
+// 7. /markets and /positions read the subgraph, not the database, so on the README's local stack they
+// sit at "not configured" forever unless the README also says how to get one. It must keep pointing at
+// where pools *are* visible without it, and at the local graph-node deploy that turns those pages on.
+assert.ok(/wall tiles and the event page/.test(readme), "README no longer says where live pools show without a subgraph");
+assert.ok(
+  body.includes("pnpm --filter subgraph run deploy-local") && readme.includes("NEXT_PUBLIC_SUBGRAPH_URL"),
+  "README no longer shows how to point /markets at a local subgraph",
+);
 
 console.log("README ok");

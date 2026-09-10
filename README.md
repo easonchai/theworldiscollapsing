@@ -132,7 +132,17 @@ cast call 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 \
   --rpc-url http://127.0.0.1:8545
 ```
 
-The markets list and positions pages read from the subgraph and stay in a "not configured" state until you point `NEXT_PUBLIC_SUBGRAPH_URL` at one — that is a separate graph-node stack, see [`packages/subgraph/README.md`](packages/subgraph/README.md). Everything else works without it.
+Live pools are on the wall tiles and the event page, which read `Arena` directly — no extra stack. The markets list and positions pages read the **subgraph** instead, and stay in a "not configured" state until you point `NEXT_PUBLIC_SUBGRAPH_URL` at one. Locally that is graph-node in docker ([`packages/subgraph/README.md`](packages/subgraph/README.md)), with the anvil of step 2 already up:
+
+```bash
+docker compose -f packages/subgraph/docker-compose.yml up -d   # graph-node 8000/8020/8030, ipfs 5001, pg 5434
+ARENA_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0 pnpm --filter subgraph run prepare:local
+pnpm --filter subgraph run codegen && pnpm --filter subgraph run build
+pnpm --filter subgraph run create-local && pnpm --filter subgraph run deploy-local
+printf 'NEXT_PUBLIC_SUBGRAPH_URL=http://localhost:8000/subgraphs/name/twic/arena\n' >> apps/web/.env.local
+```
+
+Restart `pnpm --filter web dev` afterwards and `/markets` fills in as events index. Everything else works without it.
 
 ## Trust model
 
