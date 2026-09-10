@@ -8,6 +8,9 @@ import { WORLD_ACTION, WORLD_APP_ID } from "@/lib/chain";
 /**
  * World Selfie Check. IDKit 4.x needs an rp_context signed by the relying party, so the widget is
  * only usable once the server can mint one (WORLD_RP_ID + WORLD_RP_SIGNING_KEY).
+ *
+ * `signal` is the wallet address: the widget hashes it into every credential response as
+ * `signal_hash`, which is what binds the proof to one address (docs/RESEARCH.md, World section).
  */
 export function WorldVerify({ signal, onProof }: { signal: string; onProof: (proof: IDKitResult) => void }) {
   const [rpContext, setRpContext] = useState<RpContext | null>(null);

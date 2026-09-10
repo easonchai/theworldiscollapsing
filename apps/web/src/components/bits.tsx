@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState, type CSSProperties } from "react";
 import { formatUnits } from "viem";
 import { USDC_DECIMALS } from "@/lib/chain";
 import { identOf } from "@/lib/channels";
 import { clock, splitClock } from "@/lib/clock";
+import type { TxMessage } from "@/lib/tx";
 
 export { clock };
 
@@ -82,6 +84,27 @@ export function Digits({ text }: { text: string }) {
       {dead ? <span className="dead">{dead}</span> : null}
       {live}
     </>
+  );
+}
+
+/**
+ * Why a write did not go through, in red, with the way out of it when the contract named one — a
+ * `NotVerified` revert is the gate, and the gate has a page.
+ */
+export function TxError({ error, className = "data mt-1" }: { error: TxMessage | null; className?: string }) {
+  if (!error) return null;
+  return (
+    <p className={`${className} text-flare`}>
+      {error.text}
+      {error.href ? (
+        <>
+          {" "}
+          <Link href={error.href} className="underline">
+            Verify →
+          </Link>
+        </>
+      ) : null}
+    </p>
   );
 }
 

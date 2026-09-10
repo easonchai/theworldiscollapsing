@@ -2,12 +2,11 @@
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import { GATE_MODE, USDC, WORLD_APP_ID, chain, mockusdcAbi, publicClient } from "@/lib/chain";
+import { GATE_MODE, USDC, WORLD_APP_ID, mockusdcAbi, publicClient } from "@/lib/chain";
 import { buildVerifyMessage } from "@/lib/verify-message";
-import { confirmed } from "@/lib/tx";
+import { confirmed, txMessage, type TxMessage } from "@/lib/tx";
 import { useGate, usePoll } from "./chain-hooks";
-import { shortError } from "./markets";
-import { clock, useNow } from "./bits";
+import { TxError, clock, useNow } from "./bits";
 import { useWallet } from "./wallet";
 
 const WorldVerify = dynamic(() => import("./world-verify").then((m) => m.WorldVerify), { ssr: false });
@@ -20,7 +19,7 @@ export function VerifyFlow() {
   const [attest, setAttest] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<TxMessage | null>(null);
   const now = useNow();
 
   const { value: lastFaucet, refresh: refreshFaucet } = usePoll<bigint>(
@@ -64,7 +63,7 @@ export function VerifyFlow() {
       await post({ address, attest: true, message, signature });
     } catch (e) {
       setStatus(null);
-      setError(shortError(e));
+      setError(txMessage(e));
     } finally {
       setBusy(false);
     }
@@ -76,20 +75,22 @@ export function VerifyFlow() {
     setError(null);
     setStatus("Requesting play USDC…");
     try {
-      const tx = await walletClient.writeContract({
+      // Unverified addresses and a cooldown that has not passed both revert: simulating names
+      // which one it is before the wallet ever opens.
+      const sim = await publicClient.simulateContract({
         address: USDC,
         abi: mockusdcAbi,
         functionName: "faucet",
         account: address,
-        chain,
       });
+      const tx = await walletClient.writeContract(sim.request);
       await confirmed(tx, () => "The faucet reverted on chain — no USDC was sent.");
       setStatus("1,000 play USDC delivered.");
       refresh();
       refreshFaucet();
     } catch (e) {
       setStatus(null);
-      setError(shortError(e));
+      setError(txMessage(e));
     } finally {
       setBusy(false);
     }
@@ -174,7 +175,7 @@ export function VerifyFlow() {
 
       <div aria-live="polite" className="bg-vac px-2 py-2 lg:col-span-3">
         {status ? <p className="num text-[12px] text-bone">{status}</p> : null}
-        {error ? <p className="num text-[12px] text-flare">{error}</p> : null}
+        <TxError error={error} className="num text-[12px]" />
       </div>
     </div>
   );
@@ -191,12 +192,14 @@ function WorldVerifyGate({
   address: string | null;
   sign: () => Promise<{ message: string; signature: string }>;
   post: (body: Record<string, unknown>) => Promise<void>;
-  setError: (m: string) => void;
+  setError: (m: TxMessage) => void;
 }) {
   if (!address || !attest) {
     return <p className="num text-[12px] text-dim">Sign in and tick the box to start Selfie Check.</p>;
   }
   return (
+    // The signal is the address, and the address is what the server derives the expected
+    // `signal_hash` from — a proof made for one wallet cannot be spent on another.
     <WorldVerify
       signal={address}
       onProof={async (proof) => {
@@ -204,7 +207,7 @@ function WorldVerifyGate({
           const { message, signature } = await sign();
           await post({ address, attest: true, proof, message, signature });
         } catch (e) {
-          setError(shortError(e));
+          setError(txMessage(e));
         }
       }}
     />

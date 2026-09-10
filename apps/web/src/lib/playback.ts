@@ -1,5 +1,17 @@
-import type { EventPublic } from "./public";
+import type { EventPublic, StudioCard } from "./public";
 import { REVEALED } from "./public";
+
+/** How long a studio card stays on screen once its cue passes (PRD story 11). */
+export const CARD_MS = 3500;
+
+/**
+ * Which studio card the broadcast is on, `elapsedMs` into the first half. The cards are cued off
+ * the shot boundaries, and the player is locked to the chain clock, so every viewer sees the same
+ * card at the same moment. Nothing is on screen before the first cue or after the last one clears.
+ */
+export function cardAt(cards: readonly StudioCard[], elapsedMs: number): StudioCard | null {
+  return cards.find((c) => elapsedMs >= c.at * 1000 && elapsedMs < c.at * 1000 + CARD_MS) ?? null;
+}
 
 const ms = (iso: string | null): number | null => {
   const t = iso ? Date.parse(iso) : NaN;
