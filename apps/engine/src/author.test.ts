@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeAuthor } from "./author.js";
+import { CHANNEL_STYLE, makeAuthor } from "./author.js";
 import { makeOpenRouter, SchemaError } from "./openrouter.js";
 import { eventIdFor, type AuthorCtx } from "./machine.js";
 
@@ -69,6 +69,35 @@ describe("author", () => {
     expect(prompt).toContain("Give 3 to 5 outcomes");
     expect(prompt).toContain("cards: 1 or 2 studio cards");
     expect(f.calls[0]!.model).toBe("openai/gpt-6-astra");
+  });
+
+  it("gives every channel its house style and the never-cinematic rule", async () => {
+    for (const channelId of ["sports", "politics", "culture", "region"]) {
+      const f = chatFetch([good]);
+      await author(f).author({ ...CTX, channelId });
+      const sys: string = f.calls[0]!.messages[0]!.content;
+      expect(sys).toContain(CHANNEL_STYLE[channelId]!);
+      expect(sys).toContain("Never cinematic, never slow motion");
+      expect(sys).toMatch(/real footage as broadcast on television, in real time/);
+      // graphics are allowed in frame now, but nothing may depend on reading them
+      expect(sys).toMatch(/nothing may depend on them being read/);
+    }
+  });
+
+  it("tells politics to put charts on the screen, and sports to shoot an actual match", async () => {
+    const politics = chatFetch([good]);
+    await author(politics).author({ ...CTX, channelId: "politics" });
+    const sys: string = politics.calls[0]!.messages[0]!.content;
+    expect(sys).toMatch(/CHARTS, GRAPHS, MAPS or GAUGES/);
+    expect(sys).toMatch(/chart, graph, map or gauge in shot in most studio shots/);
+    expect(sys).toMatch(/global warming/i);
+
+    const sports = chatFetch([good]);
+    await author(sports).author({ ...CTX, channelId: "sports" });
+    const sportsSys: string = sports.calls[0]!.messages[0]!.content;
+    expect(sportsSys).toMatch(/an actual competition in progress/i);
+    expect(sportsSys).toMatch(/broadcast positions/i);
+    expect(sportsSys).toMatch(/real time/i);
   });
 
   it("rejects an event with only two markets, on every channel", async () => {

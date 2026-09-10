@@ -18,6 +18,30 @@ type Res = keyof typeof RATE;
 const CONCURRENCY = 8;
 const CLIP_ATTEMPTS = 3; // 1 try + 2 retries
 
+/** The footage type and camera of each channel, restated to the video model on every single clip. */
+export const CHANNEL_PREFIX: Record<string, string> = {
+  sports: "Live sports broadcast footage, broadcast camera, real-time speed:",
+  politics:
+    "Television news footage, handheld news camera or fixed studio camera, real-time, charts and graphs on the studio screen where the shot is in a studio:",
+  culture: "Live event television coverage, ENG press-pool camera, stage light as it is, real-time:",
+  region: "Local television news field footage, reporter's camera, natural light, real-time:",
+};
+const DEFAULT_PREFIX = "Live television broadcast footage, broadcast camera, real-time speed:";
+/** MiniMax has no negative-prompt field, so the constraints ride in the prompt as plain statements. */
+export const STYLE_SUFFIX = "Real-time speed. No slow motion. Not cinematic. No film look. Natural light as it is.";
+/** Prompts over ~2000 chars are risky on MiniMax and short ones follow better; this is the ceiling. */
+const MAX_PROMPT = 600;
+
+/**
+ * The prompt actually sent to the video model: channel house style, the authored shot, the universal
+ * constraints. Every clip goes through here — first half, branches and the key-art still.
+ */
+export function clipPrompt(channelId: string, prompt: string): string {
+  const prefix = CHANNEL_PREFIX[channelId] ?? DEFAULT_PREFIX;
+  const room = MAX_PROMPT - prefix.length - STYLE_SUFFIX.length - 2;
+  return `${prefix} ${prompt.trim().slice(0, room)} ${STYLE_SUFFIX}`;
+}
+
 /** Bounded-concurrency map that keeps input order. */
 async function pool<T, R>(n: number, items: T[], fn: (item: T, i: number) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(items.length);
@@ -82,7 +106,7 @@ export function makeRender(cfg: {
       try {
         const job = await cfg.or.submitVideo({
           model: cfg.videoModel,
-          prompt: shot.prompt,
+          prompt: clipPrompt(ev.channelId, shot.prompt),
           duration: shot.seconds,
           resolution: res,
           aspect_ratio: "16:9",
@@ -196,7 +220,6 @@ export function makeRender(cfg: {
 
 const round = (n: number) => Math.round(n * 100) / 100;
 
-const keyArtPrompt = (ev: EventRow) =>
-  `Establishing key art frame for a live television broadcast. Channel: ${ev.channelId}. ` +
-  `Event: ${ev.title}. ${ev.premise} ` +
-  `Wide cinematic 16:9 establishing shot, broadcast camera, no text, no captions, no logos, no on-screen graphics.`;
+/** The still that seeds every first-half clip, so it has to be in the same house style as they are. */
+export const keyArtPrompt = (ev: EventRow) =>
+  clipPrompt(ev.channelId, `A still frame from live coverage of: ${ev.title}. ${ev.premise} No captions, no logos.`);

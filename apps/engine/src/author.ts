@@ -2,24 +2,48 @@ import { Authored, type Shot } from "./authored.js";
 import { eventIdFor, type Author, type AuthorCtx } from "./machine.js";
 import { SchemaError, type OpenRouter, type Reasoning } from "./openrouter.js";
 
-const CHANNEL_BIBLE: Record<string, string> = {
-  sports: "Sports: leagues, fixtures, finals, transfers. Named clubs and players who recur week to week.",
-  politics: "Politics: elections, votes of no confidence, cabinet reshuffles, referenda. Named parties and figures.",
-  culture: "Culture: awards ceremonies, album releases, gallery openings, talent finals. Named artists and works.",
-  region: "Region: a coastal city state — council votes, harbour works, storms, festivals, local disputes.",
+/**
+ * The house style of each channel: what it is about, what the camera is, how fast it moves, what is
+ * on screen. This is the base prompt — the shot text the model writes on top of it is what reaches
+ * the video vendor, prefixed again in `render.ts` (`clipPrompt`) so the style survives model drift.
+ */
+export const CHANNEL_STYLE: Record<string, string> = {
+  sports: `Sports.
+Subject: an actual competition in progress — a football match, an MMA bout, a sprint final, a basketball game, a cycling stage, a tennis match. Named clubs, fighters and athletes who recur from event to event.
+Camera: broadcast positions — main side camera, tight follow, touchline, goal-line, cage-side, finish line.
+On screen: players in kit, officials, a full crowd, floodlights or daylight exactly as they are.
+Pacing: real time, at the speed the sport is actually played.`,
+  politics: `Politics.
+Subject: what is happening in the world right now, mirrored into this fictional world — global warming and climate, elections, inflation, migration, strikes, summits, wars, pandemics, tech regulation. Named parties, ministers and crises that recur.
+Camera: a fixed studio camera, or a handheld news camera in the field.
+On screen: a newsroom studio whose big screen behind the anchor carries CHARTS, GRAPHS, MAPS or GAUGES — bars rising, a line climbing, a map with red zones, a thermometer gauge — cut with field reportage: press conferences, the parliament floor, protests, flooded streets, wildfire lines. Data visuals are this channel's visual language: say what the chart shows in almost every studio shot. The numbers do not have to be legible.
+Pacing: real time, live news.`,
+  culture: `Culture.
+Subject: live coverage of an event as it happens — award stages, red carpets, concert stages, gallery openings, talent-show finals. Named artists, hosts and works that recur.
+Camera: an ENG press-pool camera — shoulder-held in the scrum, or a hard camera locked on the stage.
+On screen: the stage and its lighting exactly as it is, presenters, nominees, the audience, photographers.
+Pacing: real time, as it happens.`,
+  region: `Region: one coastal city state.
+Subject: local-news field reportage — the council chamber, harbour works, the seawall, the ferry, the market, storm damage, festivals, local disputes. The same landmarks, streets and councillors recur.
+Camera: a reporter's news camera in the field, natural light.
+On screen: the place itself, residents, workers, the weather as it is.
+Pacing: real time.`,
 };
 
 const system = (ctx: AuthorCtx) => `You are the showrunner of a fictional world broadcast as four live television channels: sports, politics, culture, region. The world is continuous: every event you write happens after everything in the canon log and must not contradict it.
 
-This channel: ${CHANNEL_BIBLE[ctx.channelId] ?? ctx.channelId}
+This channel: ${CHANNEL_STYLE[ctx.channelId] ?? ctx.channelId}
 
 You write one event as a single continuous broadcast in two parts.
+
+House style, every shot on every channel: this is real footage as broadcast on television, in real time. Never cinematic, never slow motion, no film look, no dramatic colour grading, no drone hero shots, no music-video camera moves. It looks like the thing actually happening, not like a film about it.
 
 Hard rules:
 - The first half MUST end level. No outcome may be foreshadowed, hinted at or made more likely by anything in it. A viewer who has seen the whole first half must still believe every outcome is possible.
 - Give 3 to 5 outcomes. They are mutually exclusive and exhaustive: exactly one happens. Label them plainly, so nobody can misread which one they are betting on.
 - One second-half shot list per outcome, in the same order as the outcomes. Each branch continues from the last frame of the first half.
-- Every shot is a video prompt of 5 to 15 seconds. Describe what the camera sees; no dialogue, no on-screen text, no captions or scoreboards (text cannot be rendered).
+- Every shot is a video prompt of 5 to 15 seconds. Write one or two plain sentences, no paragraphs: start with the camera position of this channel, then what it sees. Short prompts render closer to what you asked for.
+- No dialogue, no captions, no subtitles. On-screen graphics — scoreboards, tickers, charts, lower thirds — may be in frame as broadcast furniture, but nothing may depend on them being read: rendered text comes out as gibberish. On politics, put a chart, graph, map or gauge in shot in most studio shots and say what it shows.
 - The first-half shot seconds must total ${ctx.firstHalfSec} seconds (within 10%).
 - Each branch's shot seconds must total ${ctx.secondHalfSec} seconds (within 10%).
 - cards: 1 or 2 studio cards, the graphics the broadcast cuts to between first-half clips. Each has afterShot (the 0-based index of the first-half shot it follows, so it must be smaller than the number of first-half shots), a title under 48 characters, and exactly two short stat lines, also under 48 characters. Write them as a studio would: a heading and two numbers or facts about this event.

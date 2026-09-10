@@ -128,8 +128,10 @@ if (!stubMode) {
   });
   author = makeAuthor({
     or,
-    model: env("AUTHOR_MODEL", "openai/gpt-6-astra"),
-    reasoning: { effort: "medium" }, // gpt-6-astra: reasoning is mandatory, "none" is rejected
+    model: env("AUTHOR_MODEL", "openai/gpt-5-mini"),
+    // gpt-5-mini supports reasoning and structured outputs, at $0.25/M in and $2/M out — authoring is
+    // one call an event, so the cheap model is the default and AUTHOR_MODEL buys a bigger one.
+    reasoning: { effort: "medium" },
     subgraphUrl: process.env.SUBGRAPH_URL,
     log,
   });
