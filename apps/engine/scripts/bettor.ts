@@ -1,181 +1,315 @@
-// Drives real bets against a running engine so the subgraph has something to index.
+// Perpetual synthetic bettors: keeps every open market busy so the wall, the subgraph and the
+// payout arithmetic all have something real to chew on. Runs forever until SIGINT/SIGTERM; pass
+// --events N to stop after N events have been bet and claimed.
 //
-//   RPC_URL=http://127.0.0.1:8545 ARENA_ADDRESS=0x.. USDC_ADDRESS=0x.. GATE_ADDRESS=0x.. \
-//   DATABASE_URL=postgresql://... pnpm --filter engine exec tsx scripts/bettor.ts --events 2
+//   pnpm --filter engine bettor                       # perpetual, config from apps/engine/.env
+//   pnpm --filter engine bettor -- --events 2         # bounded, the README's smoke
 //
-// Anvil account 0 owns the Gate, so it can verify accounts 2–5; those four faucet, approve,
-// bet on whatever event is BETTING, then claim once the engine resolves it.
+// Keys come from the env (BETTOR_KEYS, GATE_OWNER_PRIVATE_KEY) and never from the command line.
+// The Gate owner is also the funder: it verifies each bettor and tops its native balance up, so on
+// anvil that is account 0 and on Base Sepolia it is the deployer wallet.
 import {
   createPublicClient,
   createWalletClient,
   http,
+  parseEther,
   parseEventLogs,
   type Address,
   type Hex,
   type PrivateKeyAccount,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { anvil } from "viem/chains";
+import { anvil, baseSepolia } from "viem/chains";
 import { arenaAbi } from "contracts/abi/Arena";
 import { gateAbi } from "contracts/abi/Gate";
 import { mockusdcAbi } from "contracts/abi/MockUSDC";
 import { makePrisma } from "db";
+import { USDC, emptyCoverage, makeRng, planBet, seedFor } from "../src/bettor-plan.js";
+
+try {
+  process.loadEnvFile();
+} catch {}
 
 const arg = (name: string): string | undefined => {
   const i = process.argv.indexOf(`--${name}`);
   return i > 0 ? process.argv[i + 1] : undefined;
 };
-const req = (name: string, env: string): string => {
-  const v = arg(name) ?? process.env[env];
-  if (!v) throw new Error(`missing --${name} / ${env}`);
+const req = (name: string, key: string): string => {
+  const v = arg(name) ?? process.env[key];
+  if (!v) throw new Error(`missing --${name} / ${key}`);
   return v;
 };
+const num = (key: string, dflt: number): number => Number(process.env[key] ?? dflt);
 
 const rpcUrl = req("rpc", "RPC_URL");
 const arena = req("arena", "ARENA_ADDRESS") as Address;
 const usdc = req("usdc", "USDC_ADDRESS") as Address;
 const gate = req("gate", "GATE_ADDRESS") as Address;
-const targetEvents = Number(arg("events") ?? "2");
+const dbUrl = req("db", "DATABASE_URL");
+const chainId = num("CHAIN_ID", anvil.id);
+const targetEvents = arg("events") ? Number(arg("events")) : Infinity;
 
-// anvil deterministic accounts: 0 is the Gate owner / engine resolver, 2–5 are the bettors.
-const OWNER_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80" as Hex;
-const BETTOR_KEYS: Hex[] = [
-  "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
-  "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
-  "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a",
-  "0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba",
-];
+const ownerKey = req("owner", "GATE_OWNER_PRIVATE_KEY") as Hex;
+const allKeys = req("keys", "BETTOR_KEYS")
+  .split(",")
+  .map((k) => k.trim())
+  .filter(Boolean) as Hex[];
+const keys = allKeys.slice(0, Math.min(num("BETTORS", allKeys.length), allKeys.length));
 
-const USDC = 1_000_000n; // 6 decimals
+const MIN_USDC = num("BET_MIN_USDC", 1);
+const MAX_USDC = num("BET_MAX_USDC", 50);
+const INTERVAL_MS = num("BET_INTERVAL_MS", 3000);
+const FUND_MIN_ETH = process.env.FUND_MIN_ETH ?? "0.005";
+const FUND_ETH = process.env.FUND_ETH ?? "0.01";
+const SEED = num("BETTOR_SEED", Date.now() >>> 0);
+/** Stop betting this long before lockTime so nothing in flight lands on BettingClosed. */
+const MARGIN_MS = 3000;
+/** Faucet below this; MockUSDC hands out 1000 USDC a day. */
+const TOPUP_USDC = 200n * USDC;
 const MAX_UINT = (1n << 256n) - 1n;
 
+const chain = chainId === baseSepolia.id ? baseSepolia : anvil;
 const transport = http(rpcUrl);
-const pub = createPublicClient({ chain: anvil, transport });
-const owner = privateKeyToAccount(OWNER_KEY);
-const bettors = BETTOR_KEYS.map((k) => privateKeyToAccount(k));
-const wallet = (account: PrivateKeyAccount) => createWalletClient({ account, chain: anvil, transport });
+const pub = createPublicClient({ chain, transport });
+const owner = privateKeyToAccount(ownerKey);
+const bettors = keys.map((k) => privateKeyToAccount(k));
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const log = (msg: string, extra?: Record<string, unknown>) =>
-  console.log(msg, extra ? JSON.stringify(extra) : "");
+const log = (msg: string) => console.log(new Date().toISOString().slice(11, 19), msg);
+const short = (a: Address) => `${a.slice(0, 6)}..${a.slice(-4)}`;
+const fmt = (v: bigint) => (Number(v) / 1e6).toFixed(2);
+const reason = (e: unknown) => (e as { shortMessage?: string })?.shortMessage ?? String(e).slice(0, 120);
 
-async function send(account: PrivateKeyAccount, request: Parameters<ReturnType<typeof wallet>["writeContract"]>[0]) {
-  const hash = await wallet(account).writeContract(request);
-  const receipt = await pub.waitForTransactionReceipt({ hash });
-  if (receipt.status !== "success") throw new Error(`tx reverted: ${hash}`);
-  return receipt;
+const wallets = new Map<Address, ReturnType<typeof createWalletClient>>();
+const queues = new Map<Address, Promise<unknown>>();
+const walletFor = (account: PrivateKeyAccount) => {
+  let w = wallets.get(account.address);
+  if (!w) wallets.set(account.address, (w = createWalletClient({ account, chain, transport })));
+  return w;
+};
+
+/** One key is one nonce: serialize everything sent from an account. Different accounts run free. */
+function lane<T>(account: PrivateKeyAccount, fn: () => Promise<T>): Promise<T> {
+  const p = (queues.get(account.address) ?? Promise.resolve()).then(fn);
+  queues.set(account.address, p.catch(() => {}));
+  return p;
 }
 
-/** Verify, faucet and approve each bettor. Idempotent: safe to re-run against a live anvil. */
-async function prepareBettors() {
-  for (const b of bettors) {
-    const verified = await pub.readContract({ abi: gateAbi, address: gate, functionName: "verified", args: [b.address] });
-    if (!verified) {
-      await send(owner, { abi: gateAbi, address: gate, functionName: "setVerified", args: [b.address, true] } as never);
-    }
-    const balance = await pub.readContract({ abi: mockusdcAbi, address: usdc, functionName: "balanceOf", args: [b.address] });
-    if (balance < 200n * USDC) {
-      await send(b, { abi: mockusdcAbi, address: usdc, functionName: "faucet", args: [] } as never);
-    }
-    const allowance = await pub.readContract({
-      abi: mockusdcAbi,
-      address: usdc,
-      functionName: "allowance",
-      args: [b.address, arena],
-    });
-    if (allowance < 1000n * USDC) {
-      await send(b, { abi: mockusdcAbi, address: usdc, functionName: "approve", args: [arena, MAX_UINT] } as never);
-    }
-    log("bettor ready", { address: b.address, usdc: Number(await usdcOf(b.address)) / 1e6 });
-  }
-}
+const write = (account: PrivateKeyAccount, request: unknown) =>
+  lane(account, async () => {
+    const hash = await walletFor(account).writeContract(request as never);
+    const receipt = await pub.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") throw new Error(`tx reverted: ${hash}`);
+    return receipt;
+  });
 
 const usdcOf = (a: Address) =>
   pub.readContract({ abi: mockusdcAbi, address: usdc, functionName: "balanceOf", args: [a] });
-
 const onChain = (id: Hex) => pub.readContract({ abi: arenaAbi, address: arena, functionName: "events", args: [id] });
 
-/** A mix of YES and NO across outcome indexes, 10–50 USDC each. Bettor 0 bets twice on one market. */
-function betPlan(nOutcomes: number) {
-  return [
-    { bettor: 0, outcomeIdx: 0, yes: true, amount: 10n * USDC },
-    { bettor: 1, outcomeIdx: 0, yes: false, amount: 20n * USDC },
-    { bettor: 2, outcomeIdx: 1 % nOutcomes, yes: true, amount: 30n * USDC },
-    { bettor: 3, outcomeIdx: nOutcomes - 1, yes: false, amount: 40n * USDC },
-    { bettor: 0, outcomeIdx: 0, yes: true, amount: 50n * USDC },
-  ];
-}
+const balances: bigint[] = bettors.map(() => 0n);
+const pnl: bigint[] = bettors.map(() => 0n);
+const stats = { bets: 0, staked: 0n, claims: 0, paid: 0n, fees: 0n, events: 0 };
+let stopping = false;
 
-async function betOn(id: Hex, channelId: string) {
-  const [nOutcomes, lockTime] = await onChain(id);
-  for (const p of betPlan(nOutcomes)) {
-    if (BigInt(Math.floor(Date.now() / 1000)) >= lockTime - 1n) {
-      log("lock reached, stopping bets", { channelId, eventId: id });
-      return;
+/** Fund with gas, verify, faucet and approve. Idempotent, so the loop can re-run it periodically. */
+async function topUp() {
+  for (const [i, b] of bettors.entries()) {
+    try {
+      if ((await pub.getBalance({ address: b.address })) < parseEther(FUND_MIN_ETH)) {
+        await lane(owner, async () => {
+          const hash = await walletFor(owner).sendTransaction({
+            to: b.address,
+            value: parseEther(FUND_ETH),
+          } as never);
+          await pub.waitForTransactionReceipt({ hash });
+        });
+        log(`fund   ${short(b.address)} +${FUND_ETH} ETH`);
+      }
+      const verified = await pub.readContract({
+        abi: gateAbi,
+        address: gate,
+        functionName: "verified",
+        args: [b.address],
+      });
+      if (!verified) {
+        await write(owner, { abi: gateAbi, address: gate, functionName: "setVerified", args: [b.address, true] });
+        log(`verify ${short(b.address)}`);
+      }
+      if ((await usdcOf(b.address)) < TOPUP_USDC) {
+        // FaucetCooldown is a day: a broke bettor just sits out until the planner can afford it again.
+        try {
+          await write(b, { abi: mockusdcAbi, address: usdc, functionName: "faucet", args: [] });
+          log(`faucet ${short(b.address)} -> ${fmt(await usdcOf(b.address))} USDC`);
+        } catch (e) {
+          log(`faucet ${short(b.address)} cooling (${reason(e)})`);
+        }
+      }
+      const allowance = await pub.readContract({
+        abi: mockusdcAbi,
+        address: usdc,
+        functionName: "allowance",
+        args: [b.address, arena],
+      });
+      if (allowance < MAX_UINT / 2n) {
+        await write(b, { abi: mockusdcAbi, address: usdc, functionName: "approve", args: [arena, MAX_UINT] });
+      }
+      balances[i] = await usdcOf(b.address);
+    } catch (e) {
+      log(`prep   ${short(b.address)} failed: ${reason(e)}`);
     }
-    const b = bettors[p.bettor];
-    await send(b, {
-      abi: arenaAbi,
-      address: arena,
-      functionName: "bet",
-      args: [id, p.outcomeIdx, p.yes, p.amount],
-    } as never);
-    log("bet", {
-      channelId,
-      eventId: id,
-      bettor: b.address,
-      outcomeIdx: p.outcomeIdx,
-      side: p.yes ? "YES" : "NO",
-      usdc: Number(p.amount) / 1e6,
-    });
   }
 }
 
-async function claimAll(id: Hex, channelId: string) {
-  while (!(await onChain(id))[3]) await sleep(1000);
-  const outcome = (await onChain(id))[4];
-  log("resolved", { channelId, eventId: id, outcome });
-  for (const b of bettors) {
+type Tracked = { id: Hex; channelId: string; seq: number; lockMs: number; stakers: Set<number> };
+const tracked = new Map<Hex, Tracked>();
+
+/** Bet on one event until its lock, keeping every market's YES and NO side non-empty. */
+async function playEvent(row: { id: Hex; channelId: string; seq: number }) {
+  const [nOutcomes, lockTime] = await onChain(row.id);
+  if (nOutcomes === 0) return; // DB says BETTING but createEvent has not landed yet; next tick.
+  const lockMs = Number(lockTime) * 1000;
+  const rng = makeRng(seedFor(SEED, row.id));
+  const yesBias = 0.25 + rng() * 0.5;
+  const covered = emptyCoverage(nOutcomes);
+  const t: Tracked = { ...row, lockMs, stakers: new Set() };
+  tracked.set(row.id, t);
+  stats.events++;
+  log(`open   ${row.channelId}#${row.seq} ${nOutcomes} markets, ${Math.round((lockMs - Date.now()) / 1000)}s left`);
+
+  while (!stopping && Date.now() < lockMs - MARGIN_MS) {
+    const p = planBet({
+      rng,
+      nOutcomes,
+      covered,
+      balances,
+      nowMs: Date.now(),
+      lockMs,
+      marginMs: MARGIN_MS,
+      minUsdc: MIN_USDC,
+      maxUsdc: MAX_USDC,
+      intervalMs: INTERVAL_MS,
+      yesBias,
+    });
+    if (!p) {
+      await sleep(INTERVAL_MS);
+      continue;
+    }
+    const b = bettors[p.bettor]!;
     try {
       const { request } = await pub.simulateContract({
         account: b,
         abi: arenaAbi,
         address: arena,
-        functionName: "claim",
-        args: [id],
+        functionName: "bet",
+        args: [row.id, p.outcomeIdx, p.yes, p.amount],
       });
-      const receipt = await send(b, request as never);
-      const [claimed] = parseEventLogs({ abi: arenaAbi, eventName: "Claimed", logs: receipt.logs });
-      log("claim", {
-        channelId,
-        eventId: id,
-        bettor: b.address,
-        payoutUsdc: Number(claimed.args.payout) / 1e6,
-        feeUsdc: Number(claimed.args.fee) / 1e6,
-      });
-    } catch {
-      log("nothing to claim", { channelId, eventId: id, bettor: b.address });
+      const receipt = await write(b, request);
+      covered[p.outcomeIdx]![p.yes ? 1 : 0] = true;
+      balances[p.bettor]! -= p.amount;
+      pnl[p.bettor]! -= p.amount;
+      t.stakers.add(p.bettor);
+      stats.bets++;
+      stats.staked += p.amount;
+      log(
+        `bet    ${row.channelId}#${row.seq} m${p.outcomeIdx} ${p.yes ? "YES" : "NO "} ${fmt(p.amount).padStart(6)} ${short(b.address)} ${receipt.transactionHash.slice(0, 10)}`,
+      );
+    } catch (e) {
+      log(`bet    ${row.channelId}#${row.seq} ${short(b.address)} skipped: ${reason(e)}`);
+      balances[p.bettor] = await usdcOf(b.address);
+    }
+    await sleep(p.delayMs);
+  }
+}
+
+/** Claim every tracked event that has resolved (or been bailed out into refunds). */
+async function settle() {
+  for (const [id, t] of [...tracked]) {
+    const [, , , resolved, outcome] = await onChain(id);
+    const bailed = await pub.readContract({ abi: arenaAbi, address: arena, functionName: "bailed", args: [id] });
+    if (!resolved && !bailed) continue;
+    tracked.delete(id);
+    log(bailed ? `bailed ${t.channelId}#${t.seq} — refunds only` : `won    ${t.channelId}#${t.seq} outcome ${outcome}`);
+    for (const i of t.stakers) {
+      const b = bettors[i]!;
+      try {
+        const { request } = await pub.simulateContract({
+          account: b,
+          abi: arenaAbi,
+          address: arena,
+          functionName: "claim",
+          args: [id],
+        });
+        const receipt = await write(b, request);
+        const [claimed] = parseEventLogs({ abi: arenaAbi, eventName: "Claimed", logs: receipt.logs });
+        const payout = claimed?.args.payout ?? 0n;
+        const fee = claimed?.args.fee ?? 0n;
+        balances[i]! += payout;
+        pnl[i]! += payout;
+        stats.claims++;
+        stats.paid += payout;
+        stats.fees += fee;
+        log(
+          `claim  ${t.channelId}#${t.seq} ${short(b.address)} +${fmt(payout)} fee ${fmt(fee)} pnl ${fmt(pnl[i]!)}`,
+        );
+      } catch (e) {
+        log(`claim  ${t.channelId}#${t.seq} ${short(b.address)} nothing (${reason(e)})`);
+      }
     }
   }
 }
 
-const prisma = makePrisma(req("db", "DATABASE_URL"));
-await prepareBettors();
+const summary = () =>
+  log(
+    `summary bets=${stats.bets} staked=${fmt(stats.staked)} events=${stats.events} claims=${stats.claims} paid=${fmt(stats.paid)} fee=${fmt(stats.fees)} | ` +
+      bettors.map((b, i) => `${short(b.address)} ${fmt(balances[i]!)} (${fmt(pnl[i]!)})`).join(" | "),
+  );
 
-const seen = new Set<string>();
-const betOnEvents: { id: Hex; channelId: string }[] = [];
-log("waiting for BETTING events", { targetEvents });
-while (betOnEvents.length < targetEvents) {
-  const rows = await prisma.event.findMany({ where: { state: "BETTING" }, select: { id: true, channelId: true } });
-  for (const row of rows) {
-    if (seen.has(row.id) || betOnEvents.length >= targetEvents) continue;
-    seen.add(row.id);
-    await betOn(row.id as Hex, row.channelId);
-    betOnEvents.push({ id: row.id as Hex, channelId: row.channelId });
-  }
-  await sleep(500);
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    if (stopping) process.exit(1);
+    stopping = true;
+    log(`${sig} — winding down`);
+  });
 }
 
-for (const ev of betOnEvents) await claimAll(ev.id, ev.channelId);
-for (const b of bettors) log("final balance", { bettor: b.address, usdc: Number(await usdcOf(b.address)) / 1e6 });
+const prisma = makePrisma(dbUrl);
+log(`bettor seed=${SEED} bettors=${bettors.length} funder=${short(owner.address)} events=${targetEvents} chain=${chain.name}`);
+await topUp();
+
+const seen = new Set<string>();
+const running = new Set<Promise<unknown>>();
+const ticker = setInterval(summary, 60_000);
+let lastTopUp = Date.now();
+
+while (!stopping) {
+  if (seen.size < targetEvents) {
+    const rows = await prisma.event.findMany({
+      where: { state: "BETTING" },
+      select: { id: true, channelId: true, seq: true },
+    });
+    for (const row of rows) {
+      if (seen.has(row.id) || seen.size >= targetEvents) continue;
+      seen.add(row.id);
+      const p = playEvent({ ...row, id: row.id as Hex })
+        .catch((e) => log(`event  ${row.channelId}#${row.seq} failed: ${reason(e)}`))
+        .finally(() => running.delete(p));
+      running.add(p);
+    }
+  }
+  await settle();
+  if (Date.now() - lastTopUp > 30_000) {
+    lastTopUp = Date.now();
+    await topUp();
+  }
+  if (seen.size >= targetEvents && running.size === 0 && tracked.size === 0) break;
+  await sleep(1000);
+}
+
+clearInterval(ticker);
+await Promise.allSettled([...running]);
+await settle();
+summary();
+log(`treasury fee collected ${fmt(stats.fees)} USDC`);
 await prisma.$disconnect();
+process.exit(0);

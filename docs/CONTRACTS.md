@@ -209,9 +209,13 @@ REAL: txBuffer 15 s, first half 60 s, second half 60 s, pause 30 s. DEMO: 3 / 15
 
 anvil account 0: `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266` / `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`. Account 1: `0x70997970C51812dc3A010C7d01b50e0d17dc79C8` / `0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d`.
 
-The treasury is anvil **account 9**, `0xa0Ee7A142d267C1f36714E4a8F75612F20a79720`: nothing else in the stack plays from it (account 1 is the dev wallet, 2–5 are the synthetic bettors), so its USDC balance is the accrued 2 % fee and a reviewer can check the house take against it. Never point `TREASURY` at an account that also bets — the fee round-trips and looks like it was never charged.
+The treasury is anvil **account 9**, `0xa0Ee7A142d267C1f36714E4a8F75612F20a79720`: nothing else in the stack plays from it (account 1 is the dev wallet, the synthetic bettors have keys of their own), so its USDC balance is the accrued 2 % fee and a reviewer can check the house take against it. Never point `TREASURY` at an account that also bets — the fee round-trips and looks like it was never charged.
 
-Synthetic bettors: `apps/engine/scripts/bettor.ts` (tsx + viem). Anvil account 0 is the Gate owner, so it verifies accounts 2–5; those four faucet, approve, bet on whatever event the DB has in `BETTING`, then claim after resolution and print payouts. It reads `RPC_URL`, `ARENA_ADDRESS`, `USDC_ADDRESS`, `GATE_ADDRESS`, `DATABASE_URL` from env (or `--rpc/--arena/--usdc/--gate/--db`), and `--events N` says how many events to play (default 2).
+### Synthetic bettors
+
+`pnpm --filter engine bettor` (`apps/engine/scripts/bettor.ts`, tsx + viem) keeps every open market busy: it discovers `BETTING` events across all channels through Prisma and, until three seconds before each `lockTime`, places random bets — random bettor, market, side and log-uniform amount — so no market is left one-sided and void. It funds, verifies, faucets and approves each bettor first, then claims once the event resolves and prints payouts and per-bettor P&L. Perpetual until SIGINT/SIGTERM; `--events N` stops after N events have been bet and claimed. It loads `apps/engine/.env` itself.
+
+Env (flags `--rpc/--arena/--usdc/--gate/--db/--owner/--keys/--events` override): required `BETTOR_KEYS` (comma-separated private keys), `GATE_OWNER_PRIVATE_KEY` (the Gate owner — anvil account 0 locally, the deployer on testnet — which also funds gas), `RPC_URL`, `CHAIN_ID`, `ARENA_ADDRESS`, `USDC_ADDRESS`, `GATE_ADDRESS`, `DATABASE_URL`. Optional: `BETTORS` (how many keys to use, default all), `BET_MIN_USDC` (1), `BET_MAX_USDC` (50), `BET_INTERVAL_MS` (3000, jittered 0.3x–2x), `FUND_MIN_ETH` (0.005), `FUND_ETH` (0.01), `BETTOR_SEED` (default time-based; the same seed replays the same bets).
 
 ## Rules
 
