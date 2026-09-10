@@ -72,8 +72,14 @@ export function makeStore(
       const rows = await prisma.canon.findMany({ where: { channelId }, orderBy: { createdAt: "desc" }, take: limit });
       return rows.reverse().map((r) => r.text);
     },
+    /**
+     * Idempotent per event: the CANON step can run twice (a crash between this insert and the state
+     * write leaves the row in CANON), and a re-run must not tell the world the same thing twice.
+     */
     async appendCanon(channelId, eventId, lines) {
-      if (lines.length) await prisma.canon.createMany({ data: lines.map((text) => ({ channelId, eventId, text })) });
+      if (!lines.length) return;
+      if (await prisma.canon.count({ where: { eventId } })) return;
+      await prisma.canon.createMany({ data: lines.map((text) => ({ channelId, eventId, text })) });
     },
     async lastSeenAt() {
       return (await prisma.world.findUnique({ where: { id: 1 } }))?.lastSeenAt ?? null;

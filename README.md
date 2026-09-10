@@ -165,7 +165,7 @@ Built and verified on a local stack (anvil, docker Postgres, fake OpenRouter, lo
 
 ## Known issues
 
-Open findings from the end-to-end validation and an adversarial review of the money path. None are fixed yet; fixes are queued behind the key setup above. Severity is the reviewer's.
+Open findings from the end-to-end validation and an adversarial review of the money path. Struck-through lines are fixed; the rest are queued behind the key setup above. Severity is the reviewer's.
 
 **Open validation findings**
 
@@ -177,11 +177,11 @@ Open findings from the end-to-end validation and an adversarial review of the mo
 
 - critical, `Arena.sol`: one micro-USDC on the empty side of a market converts an "everyone refunded" market into "one bettor takes the whole pool".
 - critical, `Arena.sol`: the verifier is not pinned per event, so the owner can switch to trusted mode after bets land.
-- critical, `apps/engine/src/media.ts`: a malformed percent-escape in a request URL kills the engine process.
-- high, `media.ts`: no error handler on the response stream, so a file-open failure crashes the engine.
+- ~~critical, `apps/engine/src/media.ts`: a malformed percent-escape in a request URL kills the engine process.~~ Fixed: the decode is wrapped, a bad escape is a 400 and the server keeps serving.
+- ~~high, `media.ts`: no error handler on the response stream, so a file-open failure crashes the engine.~~ Fixed: headers wait for the file descriptor, so a file that stats but will not open answers 500; the response's own errors close the stream.
 - ~~high, `machine.ts` / `render.ts`: `costUsd` omits failed and retried generations; there is no spend ceiling.~~ Fixed: every clip attempt, key-art image and authoring call is charged against `MAX_SPEND_USD`, persisted in `World.spendUsd`.
-- high, `machine.ts` / `drand.ts`: beacon fetch retries forever with no timeout or abort.
-- medium, `machine.ts`: canon lines are appended twice if the CANON step re-runs.
+- ~~high, `machine.ts` / `drand.ts`: beacon fetch retries forever with no timeout or abort.~~ Fixed: `fetchRound` carries an `AbortSignal.timeout` (10 s), so a hung request fails and the retry loop keeps its cadence.
+- ~~medium, `machine.ts`: canon lines are appended twice if the CANON step re-runs.~~ Fixed: `appendCanon` is idempotent per event id.
 - medium, `machine.ts`: `lockTime` is computed before the tx is mined, so tx latency eats the betting window.
 - low, `Arena.sol`: the ordering guarantee rests on the chain clock being within 10 s of drand's.
 
@@ -193,9 +193,9 @@ Open findings from the end-to-end validation and an adversarial review of the mo
 - high, `api/verify`: per-address rate limit is bypassed with fresh addresses; gas drain on the gate owner; no already-verified short-circuit.
 - medium, `api/verify` (world mode): the proof's signal is not bound to the target address.
 - medium, `api/heartbeat`: unauthenticated and unthrottled, and it is the only thing gating paid generation.
-- medium, `machine.ts`: a database reset against a live `Arena` replays stale on-chain events with a zero betting window.
+- ~~medium, `machine.ts`: a database reset against a live `Arena` replays stale on-chain events with a zero betting window.~~ Fixed: an on-chain twin whose lock has already passed marks the row `SKIPPED` and the channel moves on.
 - medium, `chain.ts`: one global tx queue plus viem's receipt timeout; a stuck tx blocks all channels.
-- low, `index.ts`: mode flags are exact-string `1` comparisons, so `true` silently means off.
+- ~~low, `index.ts`: mode flags are exact-string `1` comparisons, so `true` silently means off.~~ Fixed: `flag()` in `apps/engine/src/env.ts` accepts `1` and `true`, any case.
 
 ## Repo
 

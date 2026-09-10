@@ -1,4 +1,4 @@
-import { Authored } from "./authored.js";
+import { Authored, type Shot } from "./authored.js";
 import { eventIdFor, type Author, type AuthorCtx } from "./machine.js";
 import { SchemaError, type OpenRouter, type Reasoning } from "./openrouter.js";
 
@@ -81,6 +81,32 @@ async function previousPools(
   }
 }
 
+const MIN_SHOT_SEC = 5; // Shot's floor, and MiniMax's shortest clip
+const OVERRUN = 1.1; // the tolerance the prompt asks for, enforced here because video is billed per second
+
+const totalSec = (shots: Shot[]): number => shots.reduce((n, s) => n + s.seconds, 0);
+
+/**
+ * The model treats the target durations as a suggestion — a real probe against gpt-6-astra returned
+ * 26 s of first half against a 15 s target and branches of 22/16/20 s against 10 s. Video is billed
+ * per second, so the target has to be enforced in code, not in the prompt: trim the last shot down
+ * to the 5 s floor, then drop trailing shots, keeping at least one. Under-length is left alone.
+ */
+function clampToTarget(shots: Shot[], targetSec: number): Shot[] {
+  const cap = targetSec * OVERRUN;
+  const out = shots.map((s) => ({ ...s }));
+  while (totalSec(out) > cap) {
+    const last = out[out.length - 1]!;
+    if (last.seconds > MIN_SHOT_SEC) {
+      last.seconds = Math.max(MIN_SHOT_SEC, last.seconds - Math.ceil(totalSec(out) - cap));
+      continue;
+    }
+    if (out.length === 1) break; // one shot at the floor: nothing left to give
+    out.pop();
+  }
+  return out;
+}
+
 export function makeAuthor(cfg: {
   or: OpenRouter;
   model: string;
@@ -103,7 +129,30 @@ export function makeAuthor(cfg: {
             model: cfg.model,
             reasoning: cfg.reasoning,
           });
-          return { ...r.object, reasoning: r.reasoning ?? r.object.reasoning };
+          const fit = (shots: Shot[], targetSec: number, where: string): Shot[] => {
+            if (totalSec(shots) <= targetSec * OVERRUN) return shots;
+            const kept = clampToTarget(shots, targetSec);
+            log("shot list over target, clamped", {
+              channelId: ctx.channelId,
+              seq: ctx.seq,
+              where,
+              targetSec,
+              beforeSec: totalSec(shots),
+              afterSec: totalSec(kept),
+              beforeShots: shots.length,
+              afterShots: kept.length,
+            });
+            return kept;
+          };
+          const a = { ...r.object, reasoning: r.reasoning ?? r.object.reasoning };
+          const firstHalf = fit(a.firstHalf, ctx.firstHalfSec, "firstHalf");
+          return {
+            ...a,
+            firstHalf,
+            branches: a.branches.map((b, i) => fit(b, ctx.secondHalfSec, `branch ${i}`)),
+            // Dropping trailing shots can orphan a card's cue; keep it on the last shot that survived.
+            cards: a.cards.map((c) => ({ ...c, afterShot: Math.min(c.afterShot, firstHalf.length - 1) })),
+          };
         } catch (e) {
           // One correction round: hand the model its own validation errors. Then give up — produce() skips the event.
           if (attempt > 1 || !(e instanceof SchemaError)) throw e;

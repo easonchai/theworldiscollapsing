@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Hex } from "viem";
 import { outcomeFor } from "./drand.js";
-import { DEMO, runChannel, type Chain, type Deps, type EventRow, type Store, type Timing } from "./machine.js";
+import { DEMO, eventIdFor, runChannel, type Chain, type Deps, type EventRow, type Store, type Timing } from "./machine.js";
 import { stubAuthor } from "./stubs.js";
 
 const SIG =
@@ -25,6 +25,7 @@ function fakeStore(): FakeStore {
   const rows = new Map<Hex, EventRow>();
   const seqs = new Map<string, number>();
   const canonLog: string[] = [];
+  const canonEvents = new Set<Hex>();
   const store: FakeStore = {
     rows,
     canonLog,
@@ -52,7 +53,10 @@ function fakeStore(): FakeStore {
     async canon() {
       return canonLog;
     },
-    async appendCanon(_c, _e, lines) {
+    // Mirrors store.ts: canon rows are keyed by event, so a re-run of the CANON step is a no-op.
+    async appendCanon(_c, eventId, lines) {
+      if (!lines.length || canonEvents.has(eventId)) return;
+      canonEvents.add(eventId);
       canonLog.push(...lines);
     },
     async lastSeenAt() {
@@ -191,6 +195,41 @@ describe("channel lifecycle", () => {
     expect(ev.signature).toBe(SIG);
     expect(ev.outcome).toBe(outcomeFor(SIG, ev.id, 3));
     expect(h.fc.calls.filter((c) => c.startsWith("resolve:")).length).toBe(1);
+  });
+
+  it("appends canon once when the CANON step re-runs after a crash", async () => {
+    const h = harness();
+    const origUpdate = h.store.update;
+    let crashed = false;
+    h.store.update = async (id, patch) => {
+      // crash after appendCanon, before the state write: the step retries from CANON
+      if (patch.state === "PAUSE" && !crashed) {
+        crashed = true;
+        throw new Error("db blip");
+      }
+      return origUpdate(id, patch);
+    };
+    const store = await h.run((s) => doneCount(s) >= 1);
+    const ev = rows(store)[0];
+    expect(crashed).toBe(true);
+    expect(store.canonLog).toEqual(ev.script.canonUpdates[ev.outcome!]);
+  });
+
+  it("skips an event whose on-chain twin already locked instead of airing a zero-second window", async () => {
+    const h = harness();
+    // A database reset against a live Arena replays seq 1, whose id is already created on chain.
+    h.fc.created.set(eventIdFor("sports", 1), {
+      n: 3,
+      lock: BigInt(Math.floor(h.clock.now() / 1000)) - 60n,
+      round: 1n,
+    });
+    const store = await h.run((s) => doneCount(s) >= 1);
+    const [stale, fresh] = rows(store);
+    expect(stale.state).toBe("SKIPPED");
+    expect(stale.error).toBe("stale on-chain event (database reset against a live Arena?)");
+    expect(h.fc.calls).toEqual([`create:${fresh.id.slice(0, 6)}`, `resolve:${fresh.id.slice(0, 6)}`]);
+    expect(fresh.seq).toBe(2);
+    expect(fresh.state).toBe("DONE");
   });
 
   it("skips an event after bounded render failures and moves on", async () => {

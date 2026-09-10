@@ -100,6 +100,48 @@ describe("author", () => {
     expect(f.calls).toHaveLength(2);
   });
 
+  it("clamps shot lists the model made too long — video is billed per second", async () => {
+    // The shapes a real probe came back with at firstHalfSec=15 / secondHalfSec=10.
+    const overlong = {
+      ...good,
+      firstHalf: [shot(10), shot(8), shot(8)], // 26s
+      branches: [[shot(12), shot(10)], [shot(8), shot(8)], [shot(15), shot(5)]], // 22 / 16 / 20s
+      cards: [{ afterShot: 2, title: "Half time", stats: ["Possession 51-49", "Shots 4-4"] }],
+    };
+    const logged: Array<Record<string, unknown>> = [];
+    const f = chatFetch([overlong]);
+    const a = await makeAuthor({
+      or: makeOpenRouter({ baseUrl: "http://or", apiKey: "k", imageModel: "img", fetchImpl: f.impl }),
+      model: "openai/gpt-6-astra",
+      log: (_m, extra) => void logged.push(extra ?? {}),
+    }).author({ ...CTX, firstHalfSec: 15, secondHalfSec: 10 });
+
+    const total = (shots: { seconds: number }[]) => shots.reduce((n, s) => n + s.seconds, 0);
+    expect(total(a.firstHalf)).toBeLessThanOrEqual(15 * 1.1);
+    expect(a.firstHalf.length).toBeGreaterThanOrEqual(1);
+    for (const b of a.branches) {
+      expect(total(b)).toBeLessThanOrEqual(10 * 1.1);
+      expect(b.length).toBeGreaterThanOrEqual(1);
+    }
+    for (const s of [...a.firstHalf, ...a.branches.flat()]) {
+      expect(s.seconds).toBeGreaterThanOrEqual(5);
+      expect(s.seconds).toBeLessThanOrEqual(15);
+    }
+    for (const c of a.cards) expect(c.afterShot).toBeLessThan(a.firstHalf.length);
+    // one log line per adjusted list, with the seconds before and after
+    expect(logged).toHaveLength(4);
+    expect(logged[0]).toMatchObject({ where: "firstHalf", targetSec: 15, beforeSec: 26 });
+    expect(logged[3]).toMatchObject({ where: "branch 2", targetSec: 10, beforeSec: 20 });
+  });
+
+  it("leaves a shot list that is within the target alone", async () => {
+    const f = chatFetch([good]);
+    const a = await author(f).author(CTX); // good is exactly 60s / 15s per branch against 60s targets
+    expect(a.firstHalf).toEqual(good.firstHalf);
+    expect(a.branches).toEqual(good.branches);
+    expect(a.cards).toEqual(good.cards);
+  });
+
   it("queries the last settled event (seq-2) for pools and puts them in the prompt", async () => {
     const calls: any[] = [];
     const impl = (async (url: string | URL, init?: RequestInit) => {

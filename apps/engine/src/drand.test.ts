@@ -61,4 +61,12 @@ describe("fetchRound", () => {
   it("rejects non-2xx", async () => {
     await expect(fetchRound(5n, ok({}, 404))).rejects.toThrow(/HTTP 404/);
   });
+  it("aborts a request that never answers, so the retry loop keeps its cadence", async () => {
+    // Only the signal ends this fetch; without a timeout the caller waits forever with money locked.
+    const hang = ((_url: string | URL, init?: RequestInit) =>
+      new Promise((_res, rej) => init!.signal!.addEventListener("abort", () => rej(init!.signal!.reason)))) as unknown as typeof fetch;
+    const t0 = Date.now();
+    await expect(fetchRound(5n, hang, 20)).rejects.toThrow(/timeout/i);
+    expect(Date.now() - t0).toBeLessThan(2_000);
+  });
 });

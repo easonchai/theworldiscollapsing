@@ -2,6 +2,7 @@ import { makeBudget } from "./budget.js";
 import path from "node:path";
 import type { Address, Hex } from "viem";
 import { fetchRound } from "./drand.js";
+import { env, flag } from "./env.js";
 import { DEMO, REAL, runChannel, type Deps, type Render } from "./machine.js";
 import { makeChain } from "./chain.js";
 import { makePrisma } from "db";
@@ -17,13 +18,7 @@ try {
   process.loadEnvFile();
 } catch {}
 
-const env = (k: string, fallback?: string): string => {
-  const v = process.env[k] ?? fallback;
-  if (v === undefined || v === "") throw new Error(`missing env ${k}`);
-  return v;
-};
-
-const timing = process.env.DEMO_MODE === "1" ? DEMO : REAL;
+const timing = flag("DEMO_MODE") ? DEMO : REAL;
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 /** How long a sealed reveal waits for the CRE key before the engine decrypts the winner itself. */
 const CRE_GRACE_MS = 3_000;
@@ -50,7 +45,7 @@ const plainMedia = makeMediaStore({
 // BRANCH_SEAL=1: branch videos are published as AES-256-GCM ciphertext and only the Chainlink CRE
 // confidential workflow can release the winning key. Local media store only — reveal decrypts the
 // ciphertext in place on this box. Default off, so nothing else changes.
-const sealRoot = process.env.BRANCH_SEAL === "1" ? parseRoot(env("BRANCH_SEAL_ROOT")) : null;
+const sealRoot = flag("BRANCH_SEAL") ? parseRoot(env("BRANCH_SEAL_ROOT")) : null;
 if (sealRoot && mediaStoreKind !== "local") throw new Error("BRANCH_SEAL=1 needs MEDIA_STORE=local");
 const media = sealRoot ? sealingStore(plainMedia, sealRoot) : plainMedia;
 
@@ -92,7 +87,7 @@ if (mediaServer) log("media server", { dir: mediaDir, port: Number(env("MEDIA_PO
 
 // Stubs are the default only when OpenRouter is not configured at all.
 const stubMode =
-  process.env.STUB_MODE === "1" ||
+  flag("STUB_MODE") ||
   (process.env.STUB_MODE !== "0" && !process.env.OPENROUTER_API_KEY && !process.env.OPENROUTER_BASE_URL);
 
 // Intermediate clips and stills never leave the engine box; only finished files go through the media store.
@@ -160,7 +155,7 @@ const deps: Deps = {
   now: Date.now,
   sleep,
   log,
-  alwaysOn: process.env.ALWAYS_ON === "1",
+  alwaysOn: flag("ALWAYS_ON"),
   budget: stubMode ? undefined : budget,
   // The CRE workflow releases the winning key when it sees Arena.Resolved; give it a head start,
   // then reveal locally. The engine holds BRANCH_SEAL_ROOT anyway, so this costs no secrecy, and a
