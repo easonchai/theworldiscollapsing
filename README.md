@@ -165,13 +165,13 @@ Built and verified on a local stack (anvil, docker Postgres, fake OpenRouter, lo
 
 ## Known issues
 
-Open findings from the end-to-end validation and an adversarial review of the money path. None are fixed yet; fixes are queued behind the key setup above. Severity is the reviewer's.
+Findings from the end-to-end validation and an adversarial review of the money path. Struck lines are fixed and carry what the fix was; the rest are still open. Severity is the reviewer's.
 
 **Open validation findings**
 
-- high, web: client writes report success without checking `receipt.status`, so a reverted bet shows "Bet confirmed". Root cause for PRD stories 29 and 30.
-- medium, web: the engine authors studio cards but nothing renders them (story 11).
-- medium, web: the ticker overlay shows authored lines only, no pool odds or countdown (story 12).
+- ~~high, web: client writes report success without checking `receipt.status`, so a reverted bet shows "Bet confirmed". Root cause for PRD stories 29 and 30.~~ Fixed: approve, bet, claim and faucet simulate first (custom errors mapped to viewer copy, `NotVerified` links to `/verify`) and every write goes through `confirmed`, which fails on `receipt.status !== "success"`.
+- ~~medium, web: the engine authors studio cards but nothing renders them (story 11).~~ Fixed: `EventPublic.cards` carries the cue in seconds and the event stage runs each card as a lower third from its cue.
+- ~~medium, web: the ticker overlay shows authored lines only, no pool odds or countdown (story 12).~~ Fixed: `tickerLines` appends the lock countdown and the live implied-YES odds of every market to the authored straps.
 
 **Review findings confirmed by two of three independent refuters**
 
@@ -190,9 +190,9 @@ Open findings from the end-to-end validation and an adversarial review of the mo
 - high, `Arena.sol`: in trusted mode `resolve` never checks that the committed round has been published.
 - medium, `Arena.sol`: no escape hatch if an event is never resolved; stakes stay locked.
 - low, `Arena.sol`: 2 % fee is charged on principal when nobody took the other side.
-- high, `api/verify`: per-address rate limit is bypassed with fresh addresses; gas drain on the gate owner; no already-verified short-circuit.
-- medium, `api/verify` (world mode): the proof's signal is not bound to the target address.
-- medium, `api/heartbeat`: unauthenticated and unthrottled, and it is the only thing gating paid generation.
+- ~~high, `api/verify`: per-address rate limit is bypassed with fresh addresses; gas drain on the gate owner; no already-verified short-circuit.~~ Fixed: an address the gate already knows returns `{ verified: true, tx: null }` without a transaction, and the instance sends at most 30 `setVerified` txs an hour (429 beyond) on top of the per-address minute.
+- ~~medium, `api/verify` (world mode): the proof's signal is not bound to the target address.~~ Fixed: the widget signs the address as the signal and the route refuses any proof whose `responses[].signal_hash` is not `hashSignal(<the signed address>)`.
+- ~~medium, `api/heartbeat`: unauthenticated and unthrottled, and it is the only thing gating paid generation.~~ Fixed: same-origin only (403 otherwise), one accepted beat per client IP per 10 s, 204 either way.
 - medium, `machine.ts`: a database reset against a live `Arena` replays stale on-chain events with a zero betting window.
 - medium, `chain.ts`: one global tx queue plus viem's receipt timeout; a stuck tx blocks all channels.
 - low, `index.ts`: mode flags are exact-string `1` comparisons, so `true` silently means off.

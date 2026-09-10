@@ -7,7 +7,6 @@ import {
   USDC,
   USDC_DECIMALS,
   arenaAbi,
-  chain,
   impliedYes,
   marketPayout,
   mockusdcAbi,
@@ -15,10 +14,10 @@ import {
   publicClient,
 } from "@/lib/chain";
 import type { EventPublic } from "@/lib/public";
-import { betRevertMessage, confirmed } from "@/lib/tx";
+import { betRevertMessage, confirmed, txMessage, type TxMessage } from "@/lib/tx";
 import { useGate, usePoll } from "./chain-hooks";
 import { useWallet } from "./wallet";
-import { usdc } from "./bits";
+import { TxError, usdc } from "./bits";
 
 export type MarketState = { pool: [bigint, bigint]; stake: [bigint, bigint] };
 
@@ -165,7 +164,7 @@ export function Markets({
   const [pick, setPick] = useState<{ i: number; yes: boolean } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<TxMessage | null>(null);
 
   const open = event.state === "BETTING";
   const parsed = useMemo(() => {
@@ -203,25 +202,27 @@ export function Markets({
       });
       if (allowance < parsed) {
         setStatus("Approving USDC…");
-        const approveTx = await walletClient.writeContract({
+        // Simulate first: a revert is then a sentence the bettor reads, not a wallet prompt they
+        // pay for. The request it returns is the exact call that was simulated.
+        const approve = await publicClient.simulateContract({
           address: USDC,
           abi: mockusdcAbi,
           functionName: "approve",
           args: [ARENA, parsed],
           account: address,
-          chain,
         });
+        const approveTx = await walletClient.writeContract(approve.request);
         await confirmed(approveTx, () => "The USDC approval reverted — nothing was staked.");
       }
       setStatus("Confirming bet…");
-      const tx = await walletClient.writeContract({
+      const sim = await publicClient.simulateContract({
         address: ARENA,
         abi: arenaAbi,
         functionName: "bet",
         args: [event.id, outcomeIdx, yes, parsed],
         account: address,
-        chain,
       });
+      const tx = await walletClient.writeContract(sim.request);
       const receipt = await confirmed(tx, () => betRevertMessage(event.lockTime, Date.now()));
       setStatus(`Bet confirmed in block ${receipt.blockNumber}`);
       setPick(null);
@@ -229,7 +230,7 @@ export function Markets({
       refreshGate();
     } catch (e) {
       setStatus(null);
-      setError(shortError(e));
+      setError(txMessage(e));
     } finally {
       setBusy(null);
     }
@@ -374,7 +375,7 @@ export function Markets({
         )}
 
         {status ? <p className="data mt-1 text-bone">{status}</p> : null}
-        {error ? <p className="data mt-1 text-flare">{error}</p> : null}
+        <TxError error={error} />
       </div>
 
       {/* What this address already holds, under the ticket that made it: markets, stake, position,
@@ -382,11 +383,6 @@ export function Markets({
       {children}
     </section>
   );
-}
-
-export function shortError(e: unknown): string {
-  const msg = e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
-  return msg.split("\n")[0].slice(0, 160);
 }
 
 /** Everything the caller can take out of this event, computed the way Arena.claim computes it. */
@@ -408,27 +404,27 @@ export function ClaimButton({
   const { refresh: refreshGate } = useGate();
   const [busy, setBusy] = useState(false);
   const [paid, setPaid] = useState<bigint | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<TxMessage | null>(null);
 
   async function claim() {
     if (!walletClient || !address) return;
     setBusy(true);
     setError(null);
     try {
-      const tx = await walletClient.writeContract({
+      const sim = await publicClient.simulateContract({
         address: ARENA,
         abi: arenaAbi,
         functionName: "claim",
         args: [event.id as Hex],
         account: address,
-        chain,
       });
+      const tx = await walletClient.writeContract(sim.request);
       await confirmed(tx, () => "The claim reverted on chain — nothing was paid out.");
       setPaid(claimable);
       refreshGate();
       onClaimed?.();
     } catch (e) {
-      setError(shortError(e));
+      setError(txMessage(e));
     } finally {
       setBusy(false);
     }
@@ -442,7 +438,7 @@ export function ClaimButton({
       <button type="button" className="btn btn-primary w-full" disabled={busy || claimable === 0n} onClick={claim}>
         {busy ? "Claiming…" : claimable > 0n ? `Claim ${usdc(claimable)} USDC` : "Nothing to claim"}
       </button>
-      {error ? <p className="mt-1 num text-[11px] text-flare">{error}</p> : null}
+      <TxError error={error} className="mt-1 num text-[11px]" />
     </div>
   );
 }

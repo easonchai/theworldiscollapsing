@@ -5,6 +5,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { identOf } from "@/lib/channels";
 import { roundTime } from "@/lib/chain";
+import { cardAt } from "@/lib/playback";
 import type { EventPublic } from "@/lib/public";
 import { tickerLines } from "@/lib/ticker";
 import { Chyron, Countdown, Digits, URGENT_MS, Umd, clock, useNow, usdc } from "./bits";
@@ -13,9 +14,6 @@ import { Player } from "./player";
 import { VerifyBadge } from "./verify-badge";
 
 const roundAtMs = (round: string) => Number(roundTime(BigInt(round))) * 1000;
-
-/** How long a studio card stays on screen once its cue passes. */
-const CARD_MS = 3500;
 
 /**
  * The graphic the broadcast cuts to between first-half clips (PRD story 11): it paces the broadcast
@@ -26,8 +24,7 @@ const CARD_MS = 3500;
  */
 function StudioCard({ event, now }: { event: EventPublic; now: number | null }) {
   if (now === null || event.state !== "BETTING" || !event.startTime) return null;
-  const elapsed = now - Date.parse(event.startTime);
-  const card = event.cards.find((c) => elapsed >= c.at * 1000 && elapsed < c.at * 1000 + CARD_MS);
+  const card = cardAt(event.cards, now - Date.parse(event.startTime));
   if (!card) return null;
   return (
     <div className="slate absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-2">
