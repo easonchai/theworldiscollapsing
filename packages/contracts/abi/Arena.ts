@@ -27,6 +27,19 @@ export const arenaAbi = [
   },
   {
     "type": "function",
+    "name": "BAIL_DELAY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "DRAND_GENESIS",
     "inputs": [],
     "outputs": [
@@ -99,6 +112,38 @@ export const arenaAbi = [
         "name": "",
         "type": "uint8",
         "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "bail",
+    "inputs": [
+      {
+        "name": "eventId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "bailed",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -200,6 +245,25 @@ export const arenaAbi = [
       }
     ],
     "stateMutability": "pure"
+  },
+  {
+    "type": "function",
+    "name": "eventVerifier",
+    "inputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IDrandVerifier"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -503,6 +567,19 @@ export const arenaAbi = [
   },
   {
     "type": "event",
+    "name": "Bailed",
+    "inputs": [
+      {
+        "name": "eventId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Bet",
     "inputs": [
       {
@@ -715,12 +792,22 @@ export const arenaAbi = [
   },
   {
     "type": "error",
+    "name": "BailTooEarly",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "BettingClosed",
     "inputs": []
   },
   {
     "type": "error",
     "name": "BettingOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "EventBailed",
     "inputs": []
   },
   {
@@ -769,6 +856,11 @@ export const arenaAbi = [
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RoundNotPublished",
+    "inputs": []
   },
   {
     "type": "error",

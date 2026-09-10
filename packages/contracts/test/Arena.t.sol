@@ -5,7 +5,14 @@ import {Test} from "forge-std/Test.sol";
 import {Gate} from "../src/Gate.sol";
 import {MockUSDC} from "../src/MockUSDC.sol";
 import {Arena} from "../src/Arena.sol";
-import {DrandVerifier} from "../src/DrandVerifier.sol";
+import {DrandVerifier, IDrandVerifier} from "../src/DrandVerifier.sol";
+
+/// Waves any signature through — stands in for a verifier an owner could swap in after bets land.
+contract AlwaysOkVerifier is IDrandVerifier {
+    function verify(uint64, bytes calldata) external pure returns (bool) {
+        return true;
+    }
+}
 
 contract ArenaTest is Test {
     // Real drand evmnet beacon, round 20456251 (published 1788889825).
@@ -61,9 +68,16 @@ contract ArenaTest is Test {
         arena.bet(id, idx, yes, amt);
     }
 
+    /// Warp past the lock *and* past the event's committed round — trusted mode refuses to resolve
+    /// a round drand has not published yet.
     function lockAndResolve(bytes32 id, uint64 lock) internal {
-        vm.warp(lock);
+        vm.warp(roundTimeOf(id) > lock ? roundTimeOf(id) : lock);
         arena.resolve(id, SIG);
+    }
+
+    function roundTimeOf(bytes32 id) internal view returns (uint64) {
+        (,, uint64 round,,,) = arena.events(id);
+        return arena.roundTime(round);
     }
 
     function claimAs(address who, bytes32 id) internal returns (uint256 got) {
@@ -342,10 +356,132 @@ contract ArenaTest is Test {
 
     function test_ResolveGasInTrustedMode() public {
         bytes32 id = keccak256("v4");
-        uint64 lock = open(id, 3);
-        vm.warp(lock);
+        open(id, 3);
+        vm.warp(roundTimeOf(id));
         uint256 before = gasleft();
         arena.resolve(id, SIG);
         emit log_named_uint("Arena.resolve gas (trusted)", before - gasleft());
+    }
+
+    // ── the verifier is pinned per event (ARENA-02) ────────────────────────
+
+    function test_ClearingTheVerifierDoesNotUnverifyALiveEvent() public {
+        DrandVerifier v = new DrandVerifier();
+        arena.setVerifier(v);
+        bytes32 id = keccak256("p1");
+        openAtPinnedRound(id, 3);
+        arena.setVerifier(IDrandVerifier(address(0))); // owner tries to escape into trusted mode
+        assertEq(address(arena.eventVerifier(id)), address(v));
+
+        bytes memory bad = SIG;
+        bad[63] = bytes1(uint8(bad[63]) ^ 0x01);
+        vm.expectRevert(Arena.BadSignature.selector);
+        arena.resolve(id, bad);
+
+        arena.resolve(id, SIG); // the real beacon still resolves it
+        (,,, bool resolved,,) = arena.events(id);
+        assertTrue(resolved);
+    }
+
+    function test_SwappingInAPermissiveVerifierDoesNotAffectALiveEvent() public {
+        arena.setVerifier(new DrandVerifier());
+        bytes32 id = keccak256("p2");
+        openAtPinnedRound(id, 3);
+        arena.setVerifier(new AlwaysOkVerifier());
+        // SIG2 is a genuine beacon of the wrong round: the pinned verifier rejects it either way.
+        vm.expectRevert(Arena.BadSignature.selector);
+        arena.resolve(id, SIG2);
+    }
+
+    function test_SettingTheVerifierDoesNotRetrofitATrustedEvent() public {
+        bytes32 id = keccak256("p3");
+        uint64 lock = open(id, 3); // created in trusted mode
+        arena.setVerifier(new DrandVerifier());
+        assertEq(address(arena.eventVerifier(id)), address(0));
+        // SIG is not this event's beacon; under the global verifier resolve would revert.
+        lockAndResolve(id, lock);
+        (,,, bool resolved,,) = arena.events(id);
+        assertTrue(resolved);
+    }
+
+    function test_NewEventsPickUpTheCurrentVerifier() public {
+        DrandVerifier v = new DrandVerifier();
+        arena.setVerifier(v);
+        bytes32 id = keccak256("p4");
+        open(id, 3);
+        assertEq(address(arena.eventVerifier(id)), address(v));
+    }
+
+    // ── trusted mode waits for the round (ARENA-03) ────────────────────────
+
+    function test_TrustedResolveWaitsForTheCommittedRound() public {
+        bytes32 id = keccak256("r1");
+        uint64 lock = open(id, 3);
+        uint64 published = roundTimeOf(id);
+        assertGt(published, lock);
+
+        vm.warp(published - 1);
+        vm.expectRevert(Arena.RoundNotPublished.selector);
+        arena.resolve(id, SIG);
+
+        vm.warp(published);
+        arena.resolve(id, SIG);
+        (,,, bool resolved,,) = arena.events(id);
+        assertTrue(resolved);
+    }
+
+    // ── bail out of an event nobody resolved (ARENA-04) ────────────────────
+
+    event Bailed(bytes32 indexed eventId);
+
+    function test_BailRejectedBeforeTheDelay() public {
+        bytes32 id = keccak256("b1");
+        uint64 lock = open(id, 2);
+        betAs(alice, id, 0, true, 10e6);
+        vm.warp(lock + arena.BAIL_DELAY());
+        vm.expectRevert(Arena.BailTooEarly.selector);
+        arena.bail(id);
+    }
+
+    function test_BailRefundsEveryStakeInFull() public {
+        bytes32 id = keccak256("b2");
+        uint64 lock = open(id, 3);
+        betAs(alice, id, 0, true, 10e6);
+        betAs(alice, id, 0, false, 3e6);
+        betAs(alice, id, 2, false, 5e6);
+        betAs(bob, id, 1, true, 7e6);
+        vm.warp(lock + arena.BAIL_DELAY() + 1);
+
+        vm.expectEmit(true, false, false, false);
+        emit Bailed(id);
+        vm.prank(carol); // permissionless: carol is neither owner nor resolver
+        arena.bail(id);
+        assertTrue(arena.bailed(id));
+
+        assertEq(claimAs(alice, id), 18e6);
+        assertEq(claimAs(bob, id), 7e6);
+        expectNoClaim(alice, id);
+        assertEq(usdc.balanceOf(treasury), 0);
+        assertEq(usdc.balanceOf(address(arena)), 0);
+    }
+
+    function test_ResolveAndBailAreClosedAfterBail() public {
+        bytes32 id = keccak256("b3");
+        uint64 lock = open(id, 2);
+        vm.warp(lock + arena.BAIL_DELAY() + 1);
+        arena.bail(id);
+        vm.expectRevert(Arena.EventBailed.selector);
+        arena.resolve(id, SIG);
+        vm.expectRevert(Arena.EventBailed.selector);
+        arena.bail(id);
+    }
+
+    function test_BailRejectedOnResolvedEvent() public {
+        bytes32 id = keccak256("b4");
+        uint64 lock = open(id, 2);
+        lockAndResolve(id, lock);
+        vm.warp(block.timestamp + arena.BAIL_DELAY() + 1);
+        vm.expectRevert(Arena.AlreadyResolved.selector);
+        arena.bail(id);
     }
 }

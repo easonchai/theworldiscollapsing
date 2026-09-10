@@ -68,8 +68,7 @@ contract DrandVerifier is IDrandVerifier {
         }
         if (sx >= P || sy >= P || !onCurve(sx, sy)) return false;
         (uint256 mx, uint256 my) = hashToPoint(messageOf(round));
-        uint256[12] memory input =
-            [sx, sy, N_G2_X1, N_G2_X0, N_G2_Y1, N_G2_Y0, mx, my, PK_X1, PK_X0, PK_Y1, PK_Y0];
+        uint256[12] memory input = [sx, sy, N_G2_X1, N_G2_X0, N_G2_Y1, N_G2_Y0, mx, my, PK_X1, PK_X0, PK_Y1, PK_Y0];
         uint256[1] memory out;
         bool ok;
         assembly {
