@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { USDC, emptyCoverage, makeRng, planBet, seedFor, type PlannedBet } from "./bettor-plan.js";
+import { BaseError, ContractFunctionRevertedError, encodeErrorResult } from "viem";
+import { arenaAbi } from "contracts/abi/Arena";
+import { USDC, emptyCoverage, makeRng, planBet, revertReason, seedFor, type PlannedBet } from "./bettor-plan.js";
 
 const base = {
   nOutcomes: 3,
@@ -85,5 +87,51 @@ describe("planBet", () => {
   it("gives every event id its own stream", () => {
     expect(seedFor(1, "0xaa")).not.toBe(seedFor(1, "0xab"));
     expect(seedFor(1, "0xaa")).toBe(seedFor(1, "0xaa"));
+  });
+
+  // V1-01: a short window used to leave markets one-sided, i.e. void under Arena.claim.
+  it("still covers every side in a window far shorter than BET_INTERVAL_MS x slots", () => {
+    for (const seed of [1, 2, 3, 42, 999]) {
+      const { bets, covered } = run(seed, { nOutcomes: 5, windowMs: 9_000, intervalMs: 3000 });
+      expect(covered.every((m) => m[0] && m[1])).toBe(true);
+      // 10 slots at the configured 3 s interval would need 30 s; the plan fits them in 6 s.
+      expect(bets.slice(0, 10).every((b) => b.delayMs < 3000)).toBe(true);
+    }
+  });
+
+  it("spends the first bets on coverage, not on volume", () => {
+    const { bets } = run(77, { nOutcomes: 4, windowMs: 300_000 });
+    const slots = new Set(bets.slice(0, 8).map((b) => `${b.outcomeIdx}${b.yes}`));
+    expect(slots.size).toBe(8); // all 8 slots, no repeats
+    for (const b of bets.slice(0, 8)) expect(b.amount).toBe(1n * USDC);
+    expect(bets.slice(8).some((b) => b.amount > 1n * USDC)).toBe(true); // then volume
+  });
+
+  it("never schedules faster than 200 ms", () => {
+    const { bets } = run(9, { nOutcomes: 5, windowMs: 3_100, intervalMs: 3000 });
+    for (const b of bets) expect(b.delayMs).toBeGreaterThanOrEqual(200);
+  });
+});
+
+describe("revertReason", () => {
+  // V1-06: viem's shortMessage alone cannot tell an expected NothingToClaim from a real failure.
+  const reverted = (errorName: "NothingToClaim" | "BettingClosed") =>
+    new BaseError("The contract function \"claim\" reverted.", {
+      cause: new ContractFunctionRevertedError({
+        abi: arenaAbi,
+        functionName: "claim",
+        data: encodeErrorResult({ abi: arenaAbi, errorName }),
+      }),
+    });
+
+  it("names the custom error", () => {
+    expect(revertReason(reverted("NothingToClaim"))).toBe("NothingToClaim");
+    expect(revertReason(reverted("BettingClosed"))).toBe("BettingClosed");
+  });
+
+  it("falls back to shortMessage, then to the string", () => {
+    expect(revertReason(new BaseError("boom"))).toBe("boom");
+    expect(revertReason(new Error("plain"))).toBe("Error: plain");
+    expect(revertReason("nope")).toBe("nope");
   });
 });

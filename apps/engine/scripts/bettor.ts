@@ -24,7 +24,7 @@ import { arenaAbi } from "contracts/abi/Arena";
 import { gateAbi } from "contracts/abi/Gate";
 import { mockusdcAbi } from "contracts/abi/MockUSDC";
 import { makePrisma } from "db";
-import { USDC, emptyCoverage, makeRng, planBet, seedFor } from "../src/bettor-plan.js";
+import { USDC, emptyCoverage, makeRng, planBet, revertReason, seedFor } from "../src/bettor-plan.js";
 
 try {
   process.loadEnvFile();
@@ -78,7 +78,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const log = (msg: string) => console.log(new Date().toISOString().slice(11, 19), msg);
 const short = (a: Address) => `${a.slice(0, 6)}..${a.slice(-4)}`;
 const fmt = (v: bigint) => (Number(v) / 1e6).toFixed(2);
-const reason = (e: unknown) => (e as { shortMessage?: string })?.shortMessage ?? String(e).slice(0, 120);
+const reason = revertReason;
 
 const wallets = new Map<Address, ReturnType<typeof createWalletClient>>();
 const queues = new Map<Address, Promise<unknown>>();
@@ -163,11 +163,15 @@ async function topUp() {
 
 type Tracked = { id: Hex; channelId: string; seq: number; lockMs: number; stakers: Set<number> };
 const tracked = new Map<Hex, Tracked>();
+/** Events that actually opened. An event still waiting for its createEvent receipt is not in here,
+ *  so the discovery loop comes back for it instead of dropping it for good. */
+const seen = new Set<string>();
 
 /** Bet on one event until its lock, keeping every market's YES and NO side non-empty. */
 async function playEvent(row: { id: Hex; channelId: string; seq: number }) {
   const [nOutcomes, lockTime] = await onChain(row.id);
   if (nOutcomes === 0) return; // DB says BETTING but createEvent has not landed yet; next tick.
+  seen.add(row.id);
   const lockMs = Number(lockTime) * 1000;
   const rng = makeRng(seedFor(SEED, row.id));
   const yesBias = 0.25 + rng() * 0.5;
@@ -230,7 +234,8 @@ async function settle() {
     if (!resolved && !bailed) continue;
     tracked.delete(id);
     log(bailed ? `bailed ${t.channelId}#${t.seq} — refunds only` : `won    ${t.channelId}#${t.seq} outcome ${outcome}`);
-    for (const i of t.stakers) {
+    // Stakers are at most BETTORS accounts and each has its own nonce lane, so this is already bounded.
+    await Promise.all([...t.stakers].map(async (i) => {
       const b = bettors[i]!;
       try {
         const { request } = await pub.simulateContract({
@@ -255,9 +260,19 @@ async function settle() {
       } catch (e) {
         log(`claim  ${t.channelId}#${t.seq} ${short(b.address)} nothing (${reason(e)})`);
       }
-    }
+    }));
   }
 }
+
+/** settle() and topUp() are chain-heavy: keep them off the discovery loop, and never overlapping
+ *  themselves, by chaining each onto its own promise. Awaiting the returned promise waits for any
+ *  run already in flight plus this one. */
+const chained = (fn: () => Promise<void>, label: string) => {
+  let chain: Promise<void> = Promise.resolve();
+  return () => (chain = chain.then(fn).catch((e) => log(`${label} failed: ${reason(e)}`)));
+};
+const kickSettle = chained(settle, "settle");
+const kickTopUp = chained(topUp, "topup ");
 
 const summary = () =>
   log(
@@ -277,10 +292,9 @@ const prisma = makePrisma(dbUrl);
 log(`bettor seed=${SEED} bettors=${bettors.length} funder=${short(owner.address)} events=${targetEvents} chain=${chain.name}`);
 await topUp();
 
-const seen = new Set<string>();
-const running = new Set<Promise<unknown>>();
-const ticker = setInterval(summary, 60_000);
-let lastTopUp = Date.now();
+/** id -> the playEvent promise still running for it, so a retry cannot double-open an event. */
+const running = new Map<string, Promise<unknown>>();
+const timers = [setInterval(summary, 60_000), setInterval(kickSettle, 1000), setInterval(kickTopUp, 30_000)];
 
 while (!stopping) {
   if (seen.size < targetEvents) {
@@ -288,27 +302,26 @@ while (!stopping) {
       where: { state: "BETTING" },
       select: { id: true, channelId: true, seq: true },
     });
+    // seen only grows once an event opens, so the not-yet-open ones count against --events too.
+    let budget = targetEvents - seen.size - [...running.keys()].filter((id) => !seen.has(id)).length;
     for (const row of rows) {
-      if (seen.has(row.id) || seen.size >= targetEvents) continue;
-      seen.add(row.id);
-      const p = playEvent({ ...row, id: row.id as Hex })
-        .catch((e) => log(`event  ${row.channelId}#${row.seq} failed: ${reason(e)}`))
-        .finally(() => running.delete(p));
-      running.add(p);
+      if (seen.has(row.id) || running.has(row.id) || budget <= 0) continue;
+      budget--;
+      running.set(
+        row.id,
+        playEvent({ ...row, id: row.id as Hex })
+          .catch((e) => log(`event  ${row.channelId}#${row.seq} failed: ${reason(e)}`))
+          .finally(() => running.delete(row.id)),
+      );
     }
-  }
-  await settle();
-  if (Date.now() - lastTopUp > 30_000) {
-    lastTopUp = Date.now();
-    await topUp();
   }
   if (seen.size >= targetEvents && running.size === 0 && tracked.size === 0) break;
   await sleep(1000);
 }
 
-clearInterval(ticker);
-await Promise.allSettled([...running]);
-await settle();
+for (const t of timers) clearInterval(t);
+await Promise.allSettled([...running.values()]);
+await kickSettle();
 summary();
 log(`treasury fee collected ${fmt(stats.fees)} USDC`);
 await prisma.$disconnect();

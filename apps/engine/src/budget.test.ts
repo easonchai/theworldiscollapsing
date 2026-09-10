@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeBudget, SpendCapError, unlimited } from "./budget.js";
+import { billsRealMoney, makeBudget, SpendCapError, unlimited } from "./budget.js";
 
 describe("budget", () => {
   it("accumulates and persists every charge", async () => {
@@ -20,5 +20,14 @@ describe("budget", () => {
 
   it("unlimited never throws", () => {
     expect(() => unlimited().assertAffordable(1e9, "anything")).not.toThrow();
+  });
+
+  it("the loopback fake is free; every remote vendor, and anything unparseable, stays capped", () => {
+    expect(billsRealMoney("http://127.0.0.1:4100")).toBe(false);
+    expect(billsRealMoney("http://localhost:4100/v1")).toBe(false);
+    expect(billsRealMoney("http://[::1]:4100")).toBe(false);
+    expect(billsRealMoney("https://openrouter.ai")).toBe(true);
+    expect(billsRealMoney("https://gateway.example.com")).toBe(true);
+    expect(billsRealMoney("openrouter")).toBe(true);
   });
 });

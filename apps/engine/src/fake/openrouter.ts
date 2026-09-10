@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createReadStream } from "node:fs";
+import { appendFileSync, createReadStream } from "node:fs";
 import { mkdir, readFile, stat } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
@@ -34,7 +34,7 @@ const CHANNELS: Record<string, { title: (n: number) => string; premise: string; 
       ["Harbour City win", "Northgate win", "Draw"],
       ["Harbour City win by two or more", "Harbour City win by one", "Draw", "Northgate win"],
     ],
-    beat: "wide stadium shot, crowd surging, floodlights",
+    beat: "main side camera, wide of the stadium, both teams in kit contesting midfield",
   },
   politics: {
     title: (n) => `Election night ${n}: the Basin seat`,
@@ -43,7 +43,7 @@ const CHANNELS: Record<string, { title: (n: number) => string; premise: string; 
       ["Incumbent holds", "Challenger wins", "Recount ordered"],
       ["Incumbent holds", "Challenger wins", "Independent takes the seat", "Recount ordered"],
     ],
-    beat: "count hall, tellers stacking ballots, camera push in",
+    beat: "studio camera on the anchor desk, big screen behind carrying a rising bar chart and a map with red zones",
   },
   culture: {
     title: (n) => `Awards night ${n}: Best Picture`,
@@ -52,7 +52,7 @@ const CHANNELS: Record<string, { title: (n: number) => string; premise: string; 
       ["Nominee A", "Nominee B", "Nominee C"],
       ["Nominee A", "Nominee B", "Nominee C", "Nominee D", "No award given"],
     ],
-    beat: "auditorium, presenters at the podium, slow dolly",
+    beat: "press-pool camera in the photographers' pen, hard camera locked on the stage",
   },
   region: {
     title: (n) => `Council vote ${n}: the harbour bill`,
@@ -61,7 +61,7 @@ const CHANNELS: Record<string, { title: (n: number) => string; premise: string; 
       ["Bill passes", "Bill fails", "Vote deferred"],
       ["Bill passes unamended", "Bill passes amended", "Bill fails", "Vote deferred"],
     ],
-    beat: "council chamber, hands raised, rain on the windows",
+    beat: "reporter's camera on the seawall, contractors working, grey daylight",
   },
 };
 
@@ -132,6 +132,12 @@ function png(): Promise<Buffer> {
   return keyArt;
 }
 
+// ponytail: set FAKE_LOG=<file> to append every request body as JSONL, for prompt inspection.
+const FAKE_LOG = process.env.FAKE_LOG;
+const record = (kind: string, body: unknown) => {
+  if (FAKE_LOG) appendFileSync(FAKE_LOG, `${JSON.stringify({ at: new Date().toISOString(), kind, body })}\n`);
+};
+
 export function startFake(port: number): http.Server {
   const jobs = new Map<string, Job>();
   const server = http.createServer(async (req, res) => {
@@ -147,6 +153,7 @@ export function startFake(port: number): http.Server {
     try {
       if (req.method === "POST" && url.pathname === "/api/v1/chat/completions") {
         const body = await read();
+        record("chat", body);
         const schema = body.response_format?.json_schema?.schema;
         if (!schema?.properties) return json(400, { error: { message: "expected response_format.json_schema.schema" } });
         const prompt = (body.messages ?? []).map((m: { content: string }) => m.content).join("\n");
@@ -174,6 +181,7 @@ export function startFake(port: number): http.Server {
       }
 
       if (req.method === "POST" && url.pathname === "/api/v1/images") {
+        record("image", await read());
         const buf = await png();
         return json(200, {
           created: Math.floor(Date.now() / 1000),
@@ -184,6 +192,7 @@ export function startFake(port: number): http.Server {
 
       if (req.method === "POST" && url.pathname === "/api/v1/videos") {
         const body = await read();
+        record("video", body);
         const id = `vid_${Math.random().toString(36).slice(2, 10)}`;
         jobs.set(id, { at: Date.now(), duration: Number(body.duration ?? 6), resolution: String(body.resolution ?? "480p") });
         return json(202, { id, polling_url: `${url.origin}/api/v1/videos/${id}`, status: "pending" });

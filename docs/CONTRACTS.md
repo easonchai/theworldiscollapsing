@@ -17,7 +17,7 @@ Every agent working in this repo codes against the names, routes, env vars and r
 
 - **Chain (`Arena`)** owns: `lockTime`, `drandRound`, `resolved`, `outcome`, `signature`, `eventVerifier`, `bailed`, pools, stakes, `verified`.
 - **Postgres** owns: event content (title, premise, outcomes, script, ticker, reasoning), video URLs, engine state, canon log, presence (`World.lastSeenAt`).
-- **Subgraph** is a derived index of chain for the markets list, positions and stats. No mocks: when `NEXT_PUBLIC_SUBGRAPH_URL` is unset the pages that need it render an explicit "subgraph not configured" state.
+- **Subgraph** is a derived index of chain for the markets list, positions and stats. No mocks: when `NEXT_PUBLIC_SUBGRAPH_URL` is unset the pages that need it render an explicit "subgraph not configured" state. Only `/markets` and `/positions` read it (`apps/web/src/components/markets-list.tsx`, `positions-list.tsx`); the wall tiles and the event page read pools from `Arena` with a viem public client (`readMarket` in `apps/web/src/components/markets.tsx`). The README's local run does not start graph-node, so on that stack live pools are checked on `/` and `/e/<id>` — `/markets` correctly stays "not configured" until you bring up the graph-node stack (`packages/subgraph/README.md`) and set the var.
 - The engine is the only writer of `Event`/`Canon`/`Channel`. The web app writes only `World.lastSeenAt`.
 
 ## Event lifecycle (`Event.state`)

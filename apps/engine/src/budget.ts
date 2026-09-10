@@ -44,5 +44,23 @@ export function makeBudget(cfg: {
   };
 }
 
-/** For tests and stub mode: never throws, never persists. */
+/** Loopback: nothing behind one of these hosts can charge a card. */
+const LOOPBACK = /^(localhost|127(\.\d+){1,3}|\[?::1\]?)$/i;
+
+/**
+ * Can `baseUrl` cost money? A vendor on loopback is the local fake (`pnpm --filter engine fake`):
+ * its clips are free ffmpeg patterns, so charging them the real MiniMax rate table stops the wall a
+ * few events into a soak — and World.spendUsd is cumulative, so a restart does not clear it.
+ * Everything else, including anything unparseable, keeps the cap: failing open costs real dollars,
+ * failing closed only ends a fake run early with a log line saying why.
+ */
+export const billsRealMoney = (baseUrl: string): boolean => {
+  try {
+    return !LOOPBACK.test(new URL(baseUrl).hostname);
+  } catch {
+    return true;
+  }
+};
+
+/** For tests, stub mode and fake vendors: never throws, never persists. */
 export const unlimited = (): Budget => makeBudget({ capUsd: Number.POSITIVE_INFINITY, spentUsd: 0, persist: async () => {}, log: () => {} });

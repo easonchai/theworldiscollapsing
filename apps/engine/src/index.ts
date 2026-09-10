@@ -1,4 +1,4 @@
-import { makeBudget } from "./budget.js";
+import { billsRealMoney, makeBudget, unlimited } from "./budget.js";
 import path from "node:path";
 import type { Address, Hex } from "viem";
 import { fetchRound } from "./drand.js";
@@ -108,20 +108,27 @@ let render: Render = stubRender({
 });
 
 // Hard ceiling on everything bought from OpenRouter, persisted in World.spendUsd across restarts.
+// Only the vendor that bills is metered: against the local fake the clips are free ffmpeg patterns,
+// so charging them the real MiniMax rate table just stops the wall a few events into a soak (and
+// World.spendUsd is cumulative, so a restart does not clear it).
+const baseUrl = env("OPENROUTER_BASE_URL", "https://openrouter.ai");
+const paidVendor = billsRealMoney(baseUrl);
 const capUsd = Number(env("MAX_SPEND_USD", "20"));
-const budget = makeBudget({
-  capUsd,
-  spentUsd: (await prisma.world.findUnique({ where: { id: 1 } }))?.spendUsd ?? 0,
-  persist: async (usd) => {
-    await prisma.world.update({ where: { id: 1 }, data: { spendUsd: { increment: usd } } });
-  },
-  log,
-});
-if (!stubMode) log("budget", { capUsd, spentUsd: budget.spent() });
+const budget = paidVendor
+  ? makeBudget({
+      capUsd,
+      spentUsd: (await prisma.world.findUnique({ where: { id: 1 } }))?.spendUsd ?? 0,
+      persist: async (usd) => {
+        await prisma.world.update({ where: { id: 1 }, data: { spendUsd: { increment: usd } } });
+      },
+      log,
+    })
+  : unlimited();
+if (!stubMode) log("budget", paidVendor ? { capUsd, spentUsd: budget.spent() } : { capUsd: null, vendor: baseUrl, note: "not openrouter.ai: spend cap off, nothing recorded" });
 
 if (!stubMode) {
   const or = makeOpenRouter({
-    baseUrl: env("OPENROUTER_BASE_URL", "https://openrouter.ai"),
+    baseUrl,
     apiKey: env("OPENROUTER_API_KEY"),
     imageModel: env("IMAGE_MODEL", "google/gemini-3.1-flash-image"),
     onUsage: (usd, model) => budget.charge(usd, model),

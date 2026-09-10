@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CHANNEL_STYLE } from "./author.js";
+import { authored } from "./fake/openrouter.js";
 import type { EventRow } from "./machine.js";
 import { CHANNEL_PREFIX, clipPrompt, keyArtPrompt, STYLE_SUFFIX } from "./render.js";
 
@@ -60,6 +61,20 @@ describe("clip prompts", () => {
     }
     // and for a shot far longer than any the author should write
     expect(clipPrompt("politics", "y".repeat(4000)).length).toBeLessThanOrEqual(600);
+  });
+
+  it("keeps the fake vendor's canned shots inside the house style, so a local soak is representative", () => {
+    for (const channelId of CHANNELS) {
+      const script = authored(channelId, 15, 10);
+      const shots = [...script.firstHalf, ...script.branches.flat()];
+      for (const { prompt } of shots) {
+        const built = clipPrompt(channelId, prompt);
+        for (const look of ["cinematic", "slow motion", "film look", "dolly", "push in", "drone", "crane"])
+          expect(asksFor(built, look), `${channelId}: ${look} in "${built}"`).toBe(false);
+      }
+    }
+    // politics is the channel that must show data, so its canned beat has to carry a chart
+    expect(authored("politics", 15, 10).firstHalf[0]!.prompt).toMatch(/chart|graph|map|gauge/i);
   });
 
   it("seeds the key art in the same house style as the clips it seeds", () => {
