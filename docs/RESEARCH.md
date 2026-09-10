@@ -91,7 +91,9 @@ Outcome derivation (B-long): `outcome = uint(keccak256(sig_R ‖ eventId)) % n`,
 
 **Superseded by measurement on 2026-09-10** — see "Verified live" at the end of this file. A
 3-outcome `DEMO_MODE=1` event (45 s of video) costs **$3.27**, of which authoring is **$0.08–0.09**,
-not the ≲$1 budgeted. The $6–9 line still stands for a full-length `DEMO_MODE=0` event.
+not the ≲$1 budgeted — and since the default author became `openai/gpt-5-mini` that share is
+**$0.0033**, so the event is ≈**$3.20** and effectively all of it is video. The $6–9 line still stands
+for a full-length `DEMO_MODE=0` event.
 
 ## OpenRouter API shapes — verified 2026-09-09 (day 3)
 
@@ -477,3 +479,55 @@ It hit **4 of 4** chain writes in one run. viem's `waitForTransactionReceipt` re
 itself; the `getBlock` that follows it (for the block timestamp) did not, so the step failed, resumed
 from on-chain state and recorded `tx: null`. `chain.ts` now retries that block read too. Use a keyed
 RPC for anything that writes.
+
+## Verified live — house style, 2026-09-10 (evening)
+
+Two probes against the real vendors after the house-style prompts landed, $0.507 of real spend in
+total. Everything else that day ran against the local fake.
+
+### `minimax/hailuo-3-max` obeys plain positive constraints — 2 clips, $0.50
+
+Text-to-video, 5 s @480p each, no `frame_images`. The prompts are what `clipPrompt` builds, verbatim:
+`CHANNEL_PREFIX[channel]` + a hand-written shot + `STYLE_SUFFIX` ("Real-time speed. No slow motion.
+Not cinematic. No film look. Natural light as it is."). MiniMax has no negative-prompt field, so the
+question was whether naming a thing you do not want summons it. It did not, on either channel.
+
+| | sports | politics |
+|---|---|---|
+| Shot asked for | a striker driving at two defenders and shooting low, keeper dives | anchor turns to the studio wall showing a bar chart of yearly temperatures and a red-shaded world map |
+| `ffprobe` duration | **5.184 s** for a 5 s request | **5.184 s** |
+| What the frames show | elevated main side camera at broadcast height panning with the play, red kit against blue, mow-stripes, penalty arc, LED hoardings, full stands; cuts to a behind-goal frame at t=4.375 s for the save | locked-off studio camera at eye height, anchor behind a glass desk, video wall carrying **both** requested graphics — a rising bar chart on a labelled axis and a world map shaded red over four continents |
+| Slow motion? | no — mean absolute luma difference between adjacent frames at 24 fps **6.47** (max 19.32), 1 fps buckets 18.3 / 19.1 / 16.5 / 21.0 / 32.2, motion blur on the players | no by inspection, not by the number: adjacent-frame MAD is **0.62** because the camera is locked and the set is static; the anchor completes a full turn between t=0.625 s and t=2.875 s, i.e. human speed |
+| Film look? | none — flat stadium light, no teal/orange grade, no shallow-focus hero framing, no drone shot | none — flat broadcast key-plus-fill, no bloom, no grade |
+
+The measure is a crude 64×36 grayscale mean-absolute-difference, not optical flow: it separates "lots
+of pixels changing fast" from "almost nothing changing" and nothing finer.
+
+The one artefact on both clips: **on-screen text renders as gibberish** — hoarding sponsors read
+"Ge-Bary" and "TAORS", the chart title reads "YEARY-ation". That is a MiniMax limitation, and it is
+why the authoring rules allow graphics as broadcast furniture but forbid anything that depends on
+reading them. Appending "No captions, no logos." to `STYLE_SUFFIX` (as `keyArtPrompt` already does)
+might suppress it — **untested**, deliberately not applied.
+
+Not covered: culture and region prefixes have never been through the real model; nothing was tested
+at 768p (every branch clip is 768p); and this was text-to-video, while production first-half and
+branch clips are image-to-video seeded from key art or a last frame, which can override the prefix's
+camera and lighting.
+
+### Authoring on `openai/gpt-5-mini` — 2 calls, $0.006659
+
+`AUTHOR_MODEL` default, reasoning effort medium, one event each on politics and sports, key usage
+read from `GET /api/v1/auth/key` before and after ($7.59266465 → $7.5993239).
+
+| Fact | Value |
+|---|---|
+| Strict `json_schema` (`strict: true`, `provider.require_parameters`) | accepted on the first answer both times; **0** schema-correction retries |
+| Cost | **$0.0033 an event** — 25× cheaper than `openai/gpt-6-astra`'s $0.08–0.09, which is why it is the default now |
+| Latency | 29.4 s (politics), 31.1 s (sports) |
+| Durations | first half **exactly 15 s** against a 15 s target on both, branches 10/10/10 — the duration clamp never fired (`gpt-6-astra` had returned 26 s) |
+| House style held | 10 of 11 politics shot prompts name a chart, gauge, map or funding bar; sports prompts open with "main side camera" / "tight follow" / "goal-line camera" and every branch opens "same frame continuing" |
+| Banned looks | `/slow motion\|cinematic\|slow-motion/gi` over all 20 shot prompts returned **nothing** |
+| Canon | politics continued all three canon lines (minister Ilse Rakan, the seawall works, the coastal levy) and its `canonUpdates` carried the storyline forward |
+
+Watch out for one drift: `gpt-5-mini` labels outcomes "Outcome 1 — Plan passed and funded", and those
+strings are the market names on the betting UI. `gpt-6-astra` did not number them.

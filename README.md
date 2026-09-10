@@ -8,7 +8,7 @@ Four channels each run one event at a time. An event is an AI-generated video th
 
 ```mermaid
 flowchart LR
-  A[author<br/>GPT-6 Astra, strict JSON] --> R[render first half<br/>+ every second half, hidden]
+  A[author<br/>gpt-5-mini, strict JSON] --> R[render first half<br/>+ every second half, hidden]
   R --> C[createEvent<br/>lock time + drand round committed]
   C --> B[BETTING<br/>first half plays, pools open]
   B --> L[LOCKED<br/>round not yet published]
@@ -21,6 +21,7 @@ flowchart LR
 - **Randomness**: drand `evmnet` (BN254). The round is committed in `createEvent` and must land at least 10 s after betting locks. `resolve` verifies the BLS signature on chain (`packages/contracts/src/DrandVerifier.sol`) and derives the outcome with a keccak.
 - **Markets**: every outcome of an event is a YES/NO parimutuel market. One beacon settles all of them. Payout is stake × total pool ÷ winning pool, less 2 %.
 - **Video**: the first half is shared and ends level; one full second half is rendered per outcome during the first half and kept hidden. Only the winning branch URL ever leaves the API (`apps/web/src/lib/public.ts`), so nobody can skip ahead.
+- **House style**: every channel is shot as real footage as broadcast on television, in real time — never cinematic, never slow motion, no film look, no drone hero shots. Sports is an actual competition from broadcast camera positions; politics is a studio whose screen carries charts, graphs, maps or gauges, cut with field reportage; culture is an ENG press-pool camera; region is a reporter in the field. The base prompts live in two places: `CHANNEL_STYLE` in `apps/engine/src/author.ts` (what the showrunner is told to write) and `clipPrompt` in `apps/engine/src/render.ts`, which puts the channel's camera in front of every authored shot and the same constraints behind it, key art included, capped at 600 characters — MiniMax has no negative-prompt field, so the constraints ride in the prompt as plain sentences.
 - **Engine**: one Node process, one state machine per channel, restart-safe against chain state, presence-gated so an empty site costs nothing. `apps/engine/src/machine.ts`.
 - **World state**: canon lines in Postgres, injected into every authoring prompt. No simulation, just memory.
 
@@ -106,23 +107,30 @@ EOF
 
 Those are anvil's published test keys, which is the only reason they can sit in a README. Real keys go nowhere near a tracked file. The full variable lists — OpenRouter, Privy, World, Vercel Blob, branch sealing — are in `apps/engine/.env.example` and `apps/web/.env.local.example`; set `STUB_MODE=0` with an `OPENROUTER_API_KEY` for real video.
 
-**4 — run**, one terminal each:
+**4 — run**, one terminal each (if you want synthetic volume, start the bettor below *first* — the engine opens its first four events within seconds):
 
 ```bash
 pnpm --filter engine start                 # terminal 2 — the loop, and the media server on 4000
 pnpm --filter web dev                      # terminal 3 — http://localhost:3000
 ```
 
-The wall fills in as the first four events author, render and go on chain. To put volume on it, four synthetic bettors (anvil accounts 2–5) will faucet, bet and claim through as many events as you ask for:
+The wall fills in as the first four events author, render and go on chain.
+
+**Synthetic bettors.** They fund, verify and faucet themselves, then bet both sides of every market of every open event and claim when it resolves, perpetually, until Ctrl-C. Give them six keys in `BETTOR_KEYS` (anvil prints ten accounts at startup; 2–7 are unused by the rest of the stack) and the Gate owner in `GATE_OWNER_PRIVATE_KEY` — that account verifies them and pays their gas out of its own balance. **Start them before the engine**: a bettor that arrives after an event has opened misses that whole betting window, so the first event on each channel ends with empty pools.
 
 ```bash
+BETTOR_KEYS=<six anvil keys, comma-separated> \
+GATE_OWNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
 RPC_URL=http://127.0.0.1:8545 \
 ARENA_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0 \
 USDC_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 \
 GATE_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3 \
 DATABASE_URL=postgresql://twic:twic@localhost:5433/twic \
-pnpm --filter engine exec tsx scripts/bettor.ts --events 2
+BET_INTERVAL_MS=1500 BETTOR_SEED=424242 \
+pnpm --filter engine bettor                # --events 2 stops after two events
 ```
+
+Everything but the keys can live in `apps/engine/.env` instead — the script loads it itself, and the shell wins. `BETTOR_SEED` makes a run replayable; without it the seed is time-based and printed on the first line. Measured on 2026-09-10: 10 minutes of this against four channels put 776 bets on 68 events with both sides funded on every market, paid 222 claims and left 130.68 USDC of fees in the treasury.
 
 The house take is that treasury's balance, so you can watch it accrue while they play:
 
@@ -171,13 +179,13 @@ The pitch is that nobody, including us, can know an outcome in advance. Here is 
 
 ## Status
 
-The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1)) is 65 user stories; 61 of them are built and verified — on a local stack (anvil, docker Postgres, fake OpenRouter, local graph-node, Playwright) and, on 2026-09-10, on Base Sepolia with real OpenRouter authoring and real MiniMax video. The other 4 — stories 18, 23, 43, 44 — are the Pending column below: a first half that visibly *shows* the score level at the break (18 — the authored premise says level and the rendered football is real, but no generated frame carries a readable scoreboard, so this is asserted, not shown), Privy email login (23 — the production domain is not in the Privy app's allowed origins, see [Known issues](#known-issues)), and World Selfie Check (43, 44; the 18+ checkbox of story 46 is what runs). Open bugs are in [Known issues](#known-issues). What to obtain and what it turns on is in [`docs/SETUP.md`](docs/SETUP.md); deploying is [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1)) is 65 user stories; 61 of them are built and verified — on a local stack (anvil, docker Postgres, fake OpenRouter, local graph-node, Playwright) and, on 2026-09-10, on Base Sepolia with real OpenRouter authoring and real MiniMax video. The other 4 — stories 18, 23, 43, 44 — are the Pending column below: a first half that visibly *shows* the score level at the break (18 — the authored premise says level and the rendered football is real, but no generated frame carries a readable scoreboard, so this is asserted, not shown), Privy email login (23 — the allowed-origins block is gone and the login modal now opens on the production domain with a clean console, but no email login has been completed end to end, see [Known issues](#known-issues)), and World Selfie Check (43, 44; the 18+ checkbox of story 46 is what runs). Open bugs are in [Known issues](#known-issues). What to obtain and what it turns on is in [`docs/SETUP.md`](docs/SETUP.md); deploying is [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
 | Area | Verified | Pending |
 |---|---|---|
 | Contracts | 40 Foundry tests incl. real evmnet rounds verified on chain, tampered and wrong-round rejected, per-event verifier pinning, bail refunds, the minimum bet, void markets. Deployed to Base Sepolia and source-verified on Basescan; 3 events resolved there against live beacons (`createEvent` 77,368 gas, verified `resolve` 261,292) | — |
-| Engine | 70 tests; 20-event unattended soak over 4 channels; SIGKILL mid-event and resume without duplicate events; presence gating. Real GPT-6 Astra authoring, real MiniMax clips and the Vercel Blob store, on anvil and on Base Sepolia — $3.27 an event, spend metered against `MAX_SPEND_USD` | bettor-sentiment authoring (`SUBGRAPH_URL`) has never run against a live index |
-| Web | 79 tests; wall, channel, event, markets, positions, verify flows in a browser; bet → lock → reveal → claim with on-chain numbers checked. In production: the wall and the event page play real generated video from Blob, the verify badge re-derives the outcome from live drand, `/markets` reads the Studio subgraph | Privy login (CSP-blocked on the production domain), World Selfie Check |
+| Engine | 98 tests; a 10-minute soak over 4 channels — 80 events, 776 synthetic bets, engine and bettor each restarted mid-window with no duplicate events and no double claims — on top of the earlier 20-event soak and SIGKILL resume; presence gating. Real MiniMax clips and the Vercel Blob store, on anvil and on Base Sepolia. Authoring is now `openai/gpt-5-mini` (was `openai/gpt-6-astra`): one call an event does not need a $10/M model, and in a real probe on 2026-09-10 it took the strict schema first try on both channels and hit the first-half seconds exactly, so the duration clamp never fired (`docs/RESEARCH.md`). $3.27 an event was measured under the old author; the video is unchanged and authoring is now under a cent, so ≈$3.20. Spend metered against `MAX_SPEND_USD` | bettor-sentiment authoring (`SUBGRAPH_URL`) has never run against a live index |
+| Web | 79 tests; wall, channel, event, markets, positions, verify flows in a browser; bet → lock → reveal → claim with on-chain numbers checked. In production: the wall and the event page play real generated video from Blob, the verify badge re-derives the outcome from live drand, `/markets` reads the Studio subgraph, and the Privy login modal opens with no console error | a Privy email login carried through to an embedded wallet, World Selfie Check |
 | Subgraph | 5 matchstick tests; pools, outcomes, claims and totals equal `cast` reads against a local graph-node. Deployed to Studio, indexing Base Sepolia with no indexing errors, and read by `/markets` in production | Subgraph MCP (needs a published subgraph and a gateway key) |
 | CRE | workflow compiles to WASM, 7 handler tests, engine seal/unseal round trip | `cre workflow simulate` and deploy (login-gated), Confidential Workflows beta |
 
@@ -199,10 +207,12 @@ Findings from the end-to-end validation, an adversarial review of the money path
 - ~~high, `apps/engine/src/machine.ts`: **the reveal can lose its branches.** `case "RESOLVE"` reads `branchUrls` off the row `produce()` handed it, so when the branch render finished *before* resolve — which real, fast rendering makes likely — `inflightBranches` has already dropped its entry and `ensureBranches` starts a *second* render. That one throws `ENOENT` on the already-swept `media/.work/<id>/last.png`, the step logs `branches unavailable at reveal`, and it then persists `branchUrls: null` over three URLs the database already held. Seen on Base Sepolia event `0x4734962d…`: branches finished at 09:26:36, resolve ran at 09:26:44, and the event page replayed the first half instead of the winning branch. Latent money bug too: had the work directory survived, the second render would have re-bought every branch clip (~$2.40).~~ Fixed: `RESOLVE` waits for a branch render that is still running, otherwise reads the URLs the render stored, and only renders again when nothing was stored; it never writes null over stored URLs. Reproduced by a test with the real timeline (`machine.test.ts`, "reveals branches that finished in the background"). The production row for `0x4734962d…` was repaired by hand from the Blob listing and its winning branch plays.
 - ~~medium, `machine.ts` / `chain.ts`: **a `BlockNotFoundError` right after a write loses the transaction hash.** Public `https://sepolia.base.org` load-balances across nodes at different heights, so the block read that follows a receipt can be told the block does not exist. The step then retried and took the "event already exists on chain" resume path, which adopts the on-chain state with `tx: null`, so `Event.createTx` / `resolveTx` are NULL and the event page has no explorer link. It hit 4 of 4 chain writes on 2026-09-10.~~ Fixed: `chain.ts` retries the block read on `BlockNotFoundError` (up to 20 s) instead of failing the step, so the hash is kept. The five events already on Base Sepolia keep their NULL hashes. A keyed RPC is still the right choice.
 - medium, `apps/web/src/lib/data.ts`: `getChannels` prefers *any* live event over the newest `DONE` one, so stopping the engine mid-cycle pins a tile at "Locked" forever instead of replaying the last finished event. Let the current event finish before stopping, or skip live events whose `lockTime` passed more than a grace period ago.
-- medium, deployment: **Privy login cannot open on the production domain.** `https://theworldiscollapsing.vercel.app` is not in the Privy app's allowed origins, so the login iframe is refused by `frame-ancestors` and every page carries that CSP error in the console. A Privy dashboard change, not a code change (`docs/SETUP.md`, item 7). PRD story 23 is unmet until it is made.
+- ~~medium, deployment: **Privy login cannot open on the production domain.** `https://theworldiscollapsing.vercel.app` is not in the Privy app's allowed origins, so the login iframe is refused by `frame-ancestors` and every page carries that CSP error in the console.~~ Fixed in the Privy dashboard, not in this repo. Re-checked on 2026-09-10 in a browser against production: `/` and `/c/sports` log zero console errors and zero warnings (the only output is the Privy iframe's own self-XSS banner, so the frame loads), and clicking "Sign in" opens the "Log in or sign up" modal with an email field and the "Protected by Privy" footer. No email was submitted, so the OTP step and the embedded wallet are still unproven and story 23 stays in Pending.
 
 **Open validation findings**
 
+- low, `apps/engine/scripts/bettor.ts`: **a bettor stopped mid-window never comes back for that event's money.** It only claims events it opened in its own process, so Ctrl-C during a betting window leaves those events to resolve with nobody claiming — ~118 USDC sat unclaimed on one event in the 2026-09-10 soak, and the 2 % fee on those markets never reached the treasury. Nothing is lost (`claim` stays open forever) but a soak that restarts accumulates dead pools and understates the house take. Fix is a startup sweep: claim recent `DONE` events for every configured key, catching `NothingToClaim` the way `settle()` already does.
+- low, authoring copy: `openai/gpt-5-mini` labels outcomes "Outcome 1 — Plan passed and funded", and those strings are the market names on the betting UI. `gpt-6-astra` did not number them. Model drift from the cheap default, not a prompt bug; the outcome-labelling rule was left alone.
 - ~~high, web: client writes report success without checking `receipt.status`, so a reverted bet shows "Bet confirmed". Root cause for PRD stories 29 and 30.~~ Fixed: approve, bet, claim and faucet simulate first (custom errors mapped to viewer copy, `NotVerified` links to `/verify`) and every write goes through `confirmed`, which fails on `receipt.status !== "success"`.
 - ~~medium, web: the engine authors studio cards but nothing renders them (story 11).~~ Fixed: `EventPublic.cards` carries the cue in seconds and the event stage runs each card as a lower third from its cue.
 - ~~medium, web: the ticker overlay shows authored lines only, no pool odds or countdown (story 12).~~ Fixed: `tickerLines` appends the lock countdown and the live implied-YES odds of every market to the authored straps.

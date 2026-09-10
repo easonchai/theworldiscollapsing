@@ -75,7 +75,7 @@ Stopping the engine mid-cycle leaves that channel's newest event in a live state
 - Import the repo, set **Root Directory** to `apps/web`, framework Next.js. pnpm is detected from `packageManager`.
 - Build command: `pnpm --filter db run generate && next build --webpack`. The Prisma client is generated into `packages/db/src/generated`, which is gitignored, so the build must generate it. Turbopack is off on purpose (`docs/CONTRACTS.md`, "Web env").
 - Environment variables: everything in `apps/web/.env.local.example` with production values. `NEXT_PUBLIC_CHAIN_ID=84532`, the three contract addresses from step 2, `NEXT_PUBLIC_RPC_URL`, `DATABASE_URL`, `GATE_OWNER_PRIVATE_KEY` (deployer), `NEXT_PUBLIC_PRIVY_APP_ID`, `NEXT_PUBLIC_SUBGRAPH_URL`. Leave `NEXT_PUBLIC_DEV_WALLET_KEY` empty.
-- **Add the production domain to the Privy app's allowed origins** (dashboard.privy.io → your app → allowed origins) *before* you rely on login. Without it Privy serves `frame-ancestors 'self' http://localhost:3000 https://auth.privy.io`, the login iframe is refused, and every page logs a CSP error. This is the one thing between the deployment and PRD story 23.
+- **Add the production domain to the Privy app's allowed origins** (dashboard.privy.io → your app → allowed origins) *before* you rely on login. Without it Privy serves `frame-ancestors 'self' http://localhost:3000 https://auth.privy.io`, the login iframe is refused, and every page logs a CSP error. Done for this deployment on 2026-09-10: the modal opens on the production domain and the console is clean (no login has been carried through to a wallet yet, so PRD story 23 is still open).
 - Deploying from the CLI: because the project's Root Directory is already `apps/web`, `cd apps/web && vercel deploy` fails with `The provided path …/apps/web/apps/web does not exist`. Link and deploy **from the repo root**:
   ```bash
   vercel link --yes --scope <team> --project theworldiscollapsing   # writes a gitignored root .vercel/
@@ -101,21 +101,22 @@ The query URL carries the version label — `https://api.studio.thegraph.com/que
 ## 6. Turning real video on
 
 1. `STUB_MODE=0`, `OPENROUTER_API_KEY`, `MEDIA_STORE=blob` + token in the engine `.env`, and a `MAX_SPEND_USD` you are willing to lose; restart.
-2. Watch one event end to end in the logs: `budget` → `spend openai/gpt-6-astra` → `authored` → `spend key art` → `spend clip-N.mp4` ×3 → `rendered first half` → `on-chain` → `spend branch-…` → `rendered event` → `resolved`. Then confirm the first-half MP4 plays from its blob URL.
+2. Watch one event end to end in the logs: `budget` → `spend openai/gpt-5-mini` (whatever `AUTHOR_MODEL` is) → `authored` → `spend key art` → `spend clip-N.mp4` ×3 → `rendered first half` → `on-chain` → `spend branch-…` → `rendered event` → `resolved`. Then confirm the first-half MP4 plays from its blob URL.
 3. Measured on 2026-09-10 with `DEMO_MODE=1` and a 3-outcome event (two runs, anvil and Base Sepolia):
 
    | | Wall clock | Charged |
    |---|---|---|
-   | authoring (`openai/gpt-6-astra`, reasoning mandatory) | 13 s warm, 44 s from a cold start | $0.081–0.094, real `usage.cost` from the vendor |
+   | authoring (`openai/gpt-6-astra`, reasoning mandatory — the default is now `openai/gpt-5-mini`, $0.0033 an event) | 13 s warm, 44 s from a cold start | $0.081–0.094, real `usage.cost` from the vendor |
    | key art (one still) | ~12 s | $0.04 (rate-card estimate, not vendor-reported) |
    | first half — 3 × 5 s @480p, submitted in parallel, downloaded and concatenated | 21 s | $0.25 a clip |
    | branches — 3 × 10 s @768p | 43 s | $0.80 a clip |
    | branches — 6 × 5 s @768p | 36 s | $0.40 a clip |
-   | **`Event.costUsd`** (key art + 15 s @480p + 30 s @768p) | | **$3.19**, ≈ **$3.27** all-in with authoring |
+   | **`Event.costUsd`** (key art + 15 s @480p + 30 s @768p) | | **$3.19**, ≈ **$3.27** all-in with `gpt-6-astra` authoring, ≈ **$3.20** with the `gpt-5-mini` default |
 
    No clip failed, timed out or retried in either run, so `pollVideo`'s 15-minute ceiling was never approached and needs no tuning yet. The plan's $6–9 an event is for `DEMO_MODE=0` (60 s halves); a demo event is 45 s of video.
 4. The engine pipelines: about 2 s after `rendered event` it authors the *next* event and charges for its key art, and clips follow ~13 s later. There is no way to stop after exactly one event — budget roughly $0.12 of overshoot if you SIGTERM at `rendered event`, or ~$0.87 if you are a few seconds later.
-5. Media lands on the Blob store's public host. A plain `GET` answers 200 `video/mp4`; a `Range` request answers **206 Partial Content** with a `content-range` header, which is what the video element needs to scrub. Nothing prunes blobs — the engine's `MEDIA_KEEP` retention only applies to the local store — so objects accrue until you delete them by hand.
+5. The house style holds on the real video model. Two 5 s @480p clips on 2026-09-10, prompts built by `clipPrompt` exactly as the loop builds them, **$0.50** of real spend: the sports clip is an elevated main side camera panning with a red-kit attacker at two defenders, mow-stripes, hoardings and a full crowd, cutting to behind the goal for the save; the politics clip is a locked-off studio camera on an anchor who turns to a video wall carrying a rising bar chart and a red-shaded world map. Neither is slow motion or graded like film (`ffprobe`: 5.184 s each; details and the motion measure in `docs/RESEARCH.md`). On-screen text renders as gibberish on both — a MiniMax limitation, which is why nothing is allowed to depend on reading it.
+6. Media lands on the Blob store's public host. A plain `GET` answers 200 `video/mp4`; a `Range` request answers **206 Partial Content** with a `content-range` header, which is what the video element needs to scrub. Nothing prunes blobs — the engine's `MEDIA_KEEP` retention only applies to the local store — so objects accrue until you delete them by hand.
 
 ## 7. World mode ⚠
 
@@ -130,7 +131,18 @@ Only with the local media store and a public `MEDIA_BASE_URL` (Tailscale Funnel 
 - `DEMO_MODE=1`, `ALWAYS_ON=1` on the engine for the recording, `0`/`0` afterwards.
 - Verified addresses: the deployer key signs `Gate.setVerified` through `/verify`; for a pre-verified demo wallet run `cast send <GATE> "setVerified(address,bool)" <addr> true --private-key <deployer>`.
 - Faucet: 1,000 USDC per verified address per day (`MockUSDC.faucet`).
-- Synthetic volume on testnet: `apps/engine/scripts/bettor.ts` works against any RPC given funded keys; on Base Sepolia the four accounts need ETH. **Nobody has bet on Base Sepolia yet** — every pool there is 0, so payout, claim, the treasury fee and the void-market rule have only ever run on anvil. Run the bettor once before the recording.
+- Synthetic volume on testnet: same command as the README's local block, different env. Start it **before** the engine — it does not bet on a window it was not running for, and it only claims events it opened itself.
+
+  ```bash
+  CHAIN_ID=84532 RPC_URL=<keyed base sepolia rpc> \
+  ARENA_ADDRESS=<arena> USDC_ADDRESS=<mock usdc> GATE_ADDRESS=<gate> \
+  DATABASE_URL=<the engine's database> \
+  GATE_OWNER_PRIVATE_KEY=<deployer key> BETTOR_KEYS=<k1,...,k6> \
+  BET_INTERVAL_MS=8000 FUND_MIN_ETH=0.005 FUND_ETH=0.01 \
+  pnpm --filter engine bettor
+  ```
+
+  `GATE_OWNER_PRIVATE_KEY` must be the deployer: it owns `Gate` (so it can verify the bettors) **and** it is the funder — it sends each of the six bettors `FUND_ETH` of **real testnet ETH** whenever they fall below `FUND_MIN_ETH`, so top the deployer up first and expect its balance to fall. Six bettors at the defaults is 0.06 ETH before any gas of its own. **Nobody has bet on Base Sepolia yet** — every pool there is 0, so payout, claim, the treasury fee and the void-market rule have only ever run on anvil, and this command has never been executed against a public RPC (`BET_INTERVAL_MS=1500`, the local value, is certainly too aggressive for one). Run it once before the recording.
 - Known leftover on the live deployment (2026-09-10): sports seq 6 sits at `RENDER` in Neon with `World.spendUsd` at $4.14, so the next engine start against Neon buys its first half (~$0.75) and then pauses at the $5 cap unless `MAX_SPEND_USD` is raised. Seq 1–5 are `DONE` on chain and in the database.
 
 ## 10. Rollback

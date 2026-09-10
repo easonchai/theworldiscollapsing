@@ -6,7 +6,7 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 
 | # | Get | Unlocks | Env vars | Lead time |
 |---|---|---|---|---|
-| 1 | **OpenRouter** API key + credits | real authoring (`openai/gpt-6-astra`), real video (`minimax/hailuo-3-max`), key-art stills | engine `OPENROUTER_API_KEY`, `STUB_MODE=0` | minutes |
+| 1 | **OpenRouter** API key + credits | real authoring (`openai/gpt-5-mini` by default, `AUTHOR_MODEL` buys a bigger one), real video (`minimax/hailuo-3-max`), key-art stills | engine `OPENROUTER_API_KEY`, `STUB_MODE=0` | minutes |
 | 2 | **Vercel Blob** read-write token | public media URLs. Required for real video: OpenRouter must fetch the key-art still by URL, and Vercel cannot reach a laptop | engine `MEDIA_STORE=blob`, `BLOB_READ_WRITE_TOKEN` | minutes |
 | 3 | **Postgres** URL (Neon) | one database shared by the engine on the laptop and the web app on Vercel | engine + web `DATABASE_URL` | minutes |
 | 4 | **Base Sepolia deployer** key + test ETH | contracts on Base Sepolia; this key also owns `Gate` and `Arena` | contracts `.env`, deploy `--private-key`; web `GATE_OWNER_PRIVATE_KEY` | minutes (faucet) |
@@ -22,15 +22,15 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 
 ## Where this stands, 2026-09-10
 
-**Provisioned and exercised**: 1 OpenRouter (real authoring and real MiniMax clips, two events), 2 Vercel Blob (media serving from its public host), 3 Neon, 4 Base Sepolia deployer (contracts live, `Gate.owner()` confirmed), 5 Etherscan (all four contracts verified on Basescan), 6 resolver + treasury (three events created and resolved on chain), 8 Vercel (production deployment live), 9 Subgraph Studio (deployed, indexing, read by `/markets`). Addresses and URLs are in the root README's **Live** table.
+**Provisioned and exercised**: 1 OpenRouter (real authoring and real MiniMax clips, two events), 2 Vercel Blob (media serving from its public host), 3 Neon, 4 Base Sepolia deployer (contracts live, `Gate.owner()` confirmed), 5 Etherscan (all four contracts verified on Basescan), 6 resolver + treasury (three events created and resolved on chain), 7 Privy (allowed origins now include the production domain; the login modal opens there with a clean console, but no login has been completed), 8 Vercel (production deployment live), 9 Subgraph Studio (deployed, indexing, read by `/markets`). Addresses and URLs are in the root README's **Live** table.
 
-**Still missing**: 7 Privy — the app id is set in production but the domain is *not* in the app's allowed origins, so login is CSP-blocked (below); 10 the gateway API key; 11 World Selfie Check beta; 12 CRE deploy access and the Confidential Workflows beta; 13 a public URL for the laptop, only needed for sealing.
+**Still missing**: 10 the gateway API key; 11 World Selfie Check beta; 12 CRE deploy access and the Confidential Workflows beta; 13 a public URL for the laptop, only needed for sealing.
 
 ## Details
 
 ### 1. OpenRouter
 
-- Create a key at openrouter.ai/keys. Load credits: **measured** on 2026-09-10, a 3-outcome `DEMO_MODE=1` event (45 s of video) costs **$3.27** — $0.08–0.09 of authoring, $0.04 of key art, $3.15 of clips — so 100 demo events is about $330. The plan's $6–9 figure is a full-length `DEMO_MODE=0` event; budget that if you run real timing.
+- Create a key at openrouter.ai/keys. Load credits: **measured** on 2026-09-10, a 3-outcome `DEMO_MODE=1` event (45 s of video) costs **≈$3.20** — $3.15 of clips, $0.04 of key art, and **under a cent of authoring**, so 100 demo events is about $320. Almost all of it is video. Authoring defaults to `openai/gpt-5-mini`, one call an event, measured at **$0.0033 an event** over two real probes; the $0.08–0.09 an event in the runbook's cost table is the old `openai/gpt-6-astra` default, which `AUTHOR_MODEL` still buys. The plan's $6–9 figure is a full-length `DEMO_MODE=0` event; budget that if you run real timing.
 - Set in `apps/engine/.env`: `OPENROUTER_API_KEY`, `STUB_MODE=0`, and leave `OPENROUTER_BASE_URL=https://openrouter.ai`. Set `MAX_SPEND_USD` too — it is cumulative in `World.spendUsd`, so it survives restarts.
 - Real video also needs item 2 (or 13): with `MEDIA_STORE=local` the key-art URL is `localhost`, which OpenRouter cannot fetch, and image-to-video fails.
 - Now exercised against the real API: the strict JSON schema (accepted first try, reasoning non-empty), the image endpoint (key art generated first try, no fallback), image-to-video seeding (the first frame of the first half is visibly the key-art composition one beat later), and clip latency — nowhere near `pollVideo`'s 15-minute ceiling, so no tuning was needed. Numbers in `docs/RESEARCH.md`, section "Verified live". Still unverified: the download URL's lifetime (we download immediately) and the key-art image *price*, which the engine estimates at $0.04 because OpenRouter publishes none.
@@ -57,7 +57,7 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 
 - dashboard.privy.io → create app → App ID. Enable email login and "create embedded wallets on login". Add `localhost:3000` **and the Vercel domain** to allowed origins. Base Sepolia (84532) is in Privy's default chain list.
 - Set `NEXT_PUBLIC_PRIVY_APP_ID`. When it is set the dev wallet is ignored; leave `NEXT_PUBLIC_DEV_WALLET_KEY` empty in production (the app refuses it on chain 84532 anyway).
-- ⚠ **This is the open one.** The app id is set in production and the "Sign in" button renders, but `https://theworldiscollapsing.vercel.app` was never added to the allowed origins, so Privy still serves `frame-ancestors 'self' http://localhost:3000 https://auth.privy.io`, the browser refuses to frame `auth.privy.io`, and login cannot open. Every page carries that CSP error in the console. Nothing in this repo can fix it — it is one field in the Privy dashboard — and PRD story 23 stays unmet until it is set. The rest of the Privy path still has never executed.
+- The allowed-origins block is cleared. Re-checked in a browser against production on 2026-09-10: `/` and `/c/sports` log **zero console errors and zero warnings** (the only output is the Privy iframe's own self-XSS banner, which is proof the `auth.privy.io` frame loads), and "Sign in" opens the "Log in or sign up" modal with an email field and the "Protected by Privy" footer. What is still unproven: no email was submitted, so the OTP step and the embedded wallet have never executed. PRD story 23 stays in Pending until one login is carried through.
 
 ### 9–10. The Graph
 
@@ -87,7 +87,6 @@ printf '0x%s\n' "$(openssl rand -hex 32)"         # REVEAL_SECRET
 
 ## Apply today, the answers take time
 
-0. Privy: add `https://theworldiscollapsing.vercel.app` to the app's allowed origins. Two minutes, and it is the only thing between the live site and story 23.
 1. World: Selfie Check feature flag + sandbox device for your app.
 2. Chainlink: CRE deploy access, then the Confidential Workflows beta.
 3. ETHOnline Discord: ask both sponsors for a hackathon fast track.
