@@ -126,9 +126,13 @@ function YourPosition({ event, markets }: { event: EventPublic; markets: MarketS
 export function EventStage({
   initial,
   showHeader = true,
+  onEvent,
 }: {
   initial: EventPublic;
   showHeader?: boolean;
+  /** Every fresh copy of this event, for a parent that has to outlive the page moving on. Must be
+      stable across renders — it is a dependency of the poll. */
+  onEvent?: (e: EventPublic) => void;
 }) {
   const [event, setEvent] = useState(initial);
   const router = useRouter();
@@ -151,12 +155,13 @@ export function EventStage({
         .then((e) => {
           if (!e) return;
           setEvent(e);
+          onEvent?.(e);
           if (e.state === "DONE") router.refresh();
         })
         .catch(() => {});
     }, 2000);
     return () => clearInterval(id);
-  }, [event.id, router]);
+  }, [event.id, router, onEvent]);
 
   return (
     <>

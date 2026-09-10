@@ -36,6 +36,8 @@ export const outcomeFor = (signature: Hex, eventId: Hex, nOutcomes: number): num
 // ── parimutuel math (mirrors Arena.claim) ────────────────────────────────────
 export const FEE_BPS = 200n;
 export const USDC_DECIMALS = 6;
+/** `Arena.MIN_BET` — 1 USDC. Below it `bet` reverts `BelowMinBet`. */
+export const MIN_BET = 1_000_000n;
 
 /** Payout for one market, given the caller's stakes and the market's pools. */
 export function marketPayout(stake: readonly [bigint, bigint], pool: readonly [bigint, bigint], won: boolean): bigint {

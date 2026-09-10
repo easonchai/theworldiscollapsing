@@ -18,6 +18,12 @@ contract Arena is Ownable {
     uint256 public constant FEE_BPS = 200;
     uint8 public constant NO = 0;
     uint8 public constant YES = 1;
+    /// @notice Smallest bet, in USDC's 6 decimals: 1 USDC. `claim` refunds a market whose winning
+    ///         side is empty and pays winner-take-all when it holds anything at all, so without a
+    ///         floor that switch is one micro-USDC wide: dust on the winning side of every outcome
+    ///         costs nOutcomes micro-USDC and takes the losing pool of whichever outcome lands.
+    ///         A stake worth taking that pool has to be worth losing too.
+    uint256 public constant MIN_BET = 1e6;
 
     // drand evmnet: round r is published at DRAND_GENESIS + (r - 1) * DRAND_PERIOD.
     uint64 public constant DRAND_GENESIS = 1727521075;
@@ -76,6 +82,7 @@ contract Arena is Ownable {
     error BettingOpen();
     error BadOutcome();
     error ZeroAmount();
+    error BelowMinBet();
     error NotVerified();
     error AlreadyResolved();
     error NotResolved();
@@ -138,6 +145,7 @@ contract Arena is Ownable {
         if (block.timestamp >= e.lockTime) revert BettingClosed();
         if (outcomeIdx >= e.nOutcomes) revert BadOutcome();
         if (amount == 0) revert ZeroAmount();
+        if (amount < MIN_BET) revert BelowMinBet();
         if (!gate.verified(msg.sender)) revert NotVerified();
         uint8 side = yes ? YES : NO;
         pools[eventId][outcomeIdx][side] += amount;

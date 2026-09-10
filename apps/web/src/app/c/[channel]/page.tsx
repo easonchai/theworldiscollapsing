@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { CSSProperties } from "react";
 import { identOf } from "@/lib/channels";
 import { getChannels, getEvents } from "@/lib/data";
-import { EventStage } from "@/components/event-stage";
+import { ChannelStage } from "@/components/channel-stage";
 import { StateBadge } from "@/components/bits";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +36,7 @@ export default async function ChannelPage({ params }: PageProps<"/c/[channel]">)
       </header>
 
       {current ? (
-        <EventStage key={current.id} initial={current} showHeader={false} />
+        <ChannelStage current={current} />
       ) : (
         <p className="copy px-2 py-4 text-dim">This channel has not gone on air yet.</p>
       )}

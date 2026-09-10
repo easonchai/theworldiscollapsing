@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { parseUnits, type Hex } from "viem";
 import {
   ARENA,
+  MIN_BET,
   USDC,
   USDC_DECIMALS,
   arenaAbi,
@@ -186,7 +187,10 @@ export function Markets({
           : "Betting is closed"
         : !parsed
           ? "Enter an amount"
-          : null;
+          : // The contract's floor, said here rather than after an approval the bet would waste.
+            parsed < MIN_BET
+            ? `Minimum bet is ${usdc(MIN_BET)} USDC`
+            : null;
 
   async function bet(outcomeIdx: number, yes: boolean) {
     if (!walletClient || !address || !parsed) return;
@@ -250,7 +254,9 @@ export function Markets({
           ? "Pick a side"
           : !parsed
             ? "Enter an amount"
-            : `Place ${usdc(parsed)} on ${picked.yes ? "yes" : "no"}`;
+            : parsed < MIN_BET
+              ? `Minimum bet is ${usdc(MIN_BET)} USDC`
+              : `Place ${usdc(parsed)} on ${picked.yes ? "yes" : "no"}`;
 
   return (
     // Not flex-1: the rail is a ledger read top to bottom, so nothing in it is allowed to grow and

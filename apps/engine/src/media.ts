@@ -177,6 +177,18 @@ export function startMediaServer(cfg: {
     if (req.method === "HEAD") return res.writeHead(200, { "content-length": size }).end();
     sendFile(200, { "content-length": size });
   });
+  /**
+   * A taken port (a second engine, or a node child that outlived a SIGKILLed `tsx` wrapper) emits
+   * an unhandled `error` on the server, which takes the whole engine down with a raw stack trace
+   * before any channel work starts. One sentence naming the port instead.
+   */
+  server.on("error", (e: NodeJS.ErrnoException) => {
+    console.error(
+      new Date().toISOString(),
+      `media server cannot listen on port ${cfg.port}: ${e.code ?? e.message}`,
+    );
+    process.exit(1);
+  });
   server.listen(cfg.port);
   return server;
 }

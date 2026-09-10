@@ -39,6 +39,7 @@ const CONTRACT_ERRORS: Record<string, TxMessage> = {
   BettingClosed: { text: "Betting is closed on this event — nothing was staked.", href: null },
   BadOutcome: { text: "That market is not on this event.", href: null },
   ZeroAmount: { text: "Enter a stake above zero.", href: null },
+  BelowMinBet: { text: "The minimum bet is 1 USDC — nothing was staked.", href: null },
   NothingToClaim: { text: "Nothing to claim on this event.", href: null },
   NotResolved: { text: "The round has not landed yet, so there is nothing to claim.", href: null },
   UnknownEvent: { text: "This event is not on chain.", href: null },

@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises"
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { makeMediaStore, pruneEventMedia, startMediaServer } from "./media.js";
 
 const BODY = "0123456789abcdefghij"; // 20 bytes
@@ -82,6 +82,22 @@ describe("media server", () => {
       expect(await res.text()).not.toContain("not served");
     }
     expect((await fetch(`${base}/`)).status).toBe(404);
+  });
+
+  it("exits with one line instead of an unhandled error when the port is taken", async () => {
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => {}) as never);
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    const clash = startMediaServer({ dir, port: (server.address() as AddressInfo).port });
+    try {
+      await once(clash, "error");
+      expect(exit).toHaveBeenCalledWith(1);
+      expect(err.mock.calls[0]?.join(" ")).toContain("EADDRINUSE");
+    } finally {
+      clash.close(() => {});
+      exit.mockRestore();
+      err.mockRestore();
+    }
+    expect((await fetch(`${base}/first.mp4`)).status).toBe(200); // the one that had the port still serves
   });
 });
 

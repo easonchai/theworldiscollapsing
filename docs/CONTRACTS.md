@@ -64,7 +64,7 @@ Clients read live pools, stakes, `verified` and balances straight from chain wit
 - Privy (`@privy-io/react-auth` 3.40) when `NEXT_PUBLIC_PRIVY_APP_ID` is set: email login, embedded wallets, default chain Base Sepolia (84532).
 - Dev wallet when it is unset: a viem local account from `NEXT_PUBLIC_DEV_WALLET_KEY` (anvil key). Dev only; the build must refuse to start with it on chain 84532.
 
-All writes go through `publicClient.simulateContract` → `walletClient.writeContract(request)` → `confirmed(hash, …)` (`apps/web/src/lib/tx.ts`), never `writeContract` on its own: the simulation turns a revert into a sentence before the wallet opens, and `confirmed` treats `receipt.status !== "success"` as a failure — viem resolves the receipt of a reverted transaction, so a caller that skips it announces a revert as "Bet confirmed in block N". `txMessage(e)` maps the contracts' custom errors (`BettingClosed`, `NotVerified` → links to `/verify`, `BadOutcome`, `ZeroAmount`, `NothingToClaim`, `NotResolved`, `UnknownEvent`, `FaucetCooldown`) to viewer copy and falls back to viem's short message. Bet flow: `approve` (if allowance short) → `bet`. Claim: `claim(eventId)`. Faucet: `faucet()`.
+All writes go through `publicClient.simulateContract` → `walletClient.writeContract(request)` → `confirmed(hash, …)` (`apps/web/src/lib/tx.ts`), never `writeContract` on its own: the simulation turns a revert into a sentence before the wallet opens, and `confirmed` treats `receipt.status !== "success"` as a failure — viem resolves the receipt of a reverted transaction, so a caller that skips it announces a revert as "Bet confirmed in block N". `txMessage(e)` maps the contracts' custom errors (`BettingClosed`, `NotVerified` → links to `/verify`, `BadOutcome`, `ZeroAmount`, `BelowMinBet`, `NothingToClaim`, `NotResolved`, `UnknownEvent`, `FaucetCooldown`) to viewer copy and falls back to viem's short message. Bet flow: `approve` (if allowance short) → `bet`. Claim: `claim(eventId)`. Faucet: `faucet()`.
 
 ## Web env
 
@@ -154,6 +154,13 @@ the resolver:
 `eventVerifier[eventId]` (public getter, `address` in the ABI) and `resolve` reads that, never the
 global. `setVerifier` therefore only changes how *future* events resolve: an owner cannot drop an
 event that is already taking bets into trusted mode, nor swap in a permissive verifier under it.
+
+**Minimum bet.** `Arena.MIN_BET` = `1e6` (1 USDC, 6 decimals); `bet` reverts `BelowMinBet` under it
+(`ZeroAmount` still answers a stake of 0). `claim` refunds a market whose winning side is empty and
+pays winner-take-all when it holds anything at all, so the floor is what keeps that switch from being
+one micro-USDC wide — dust on the winning side of every outcome would otherwise cost `nOutcomes`
+micro-USDC and take the losing pool of whichever outcome lands. `apps/web/src/lib/chain.ts` mirrors it
+as `MIN_BET` and the ticket refuses a smaller stake before it asks for an approval.
 
 **Bail.** `bail(bytes32 eventId)` is permissionless and callable once an event exists, is unresolved
 and `block.timestamp > lockTime + BAIL_DELAY` (3 days) — earlier reverts `BailTooEarly`, on a resolved

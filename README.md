@@ -131,7 +131,7 @@ The pitch is that nobody, including us, can know an outcome in advance. Here is 
 - **The verifier is pinned when the event opens, not when it settles.** `createEvent` records the verifier of the moment in `eventVerifier[eventId]` and `resolve` reads that one, so a later `setVerifier` — including `setVerifier(address(0))` — only changes events created after it. Nobody can move an event that is already taking bets into trusted mode, or under a verifier that waves anything through. In trusted mode (no verifier at creation, which is not how this is deployed) `resolve` still refuses to run until the committed round is actually published (`RoundNotPublished`).
 - **An event that is never resolved refunds.** `bail(eventId)` is callable by anyone 3 days after `lockTime` (`BAIL_DELAY`) while the event is unresolved; after it, `resolve` is closed for good and `claim` hands every staker their stakes back in full on every market of that event, no fee. Being ignored is the worst the resolver can do to your money.
 - **You do not have to take our word for the beacon.** The signature is stored and emitted, and the event page fetches that round from `api.drand.sh` in your browser, compares it byte for byte and re-derives the outcome (the verify badge).
-- **The payout arithmetic is parimutuel and in the contract.** `stake × total pool ÷ winning pool`, less a flat 2 % (`FEE_BPS = 200`) to the treasury, rounding dust left behind. A market whose winning side has no stake refunds every staker on that market in full. The house is escrow; bettors are paid by other bettors.
+- **The payout arithmetic is parimutuel and in the contract.** `stake × total pool ÷ winning pool`, less a flat 2 % (`FEE_BPS = 200`) to the treasury, rounding dust left behind. A market whose winning side has no stake refunds every staker on that market in full, and `MIN_BET` (1 USDC) is the floor on any stake, so nobody flips that market into a payout with dust. The house is escrow; bettors are paid by other bettors.
 
 ### What it does not prove
 
@@ -150,7 +150,7 @@ Built and verified on a local stack (anvil, docker Postgres, fake OpenRouter, lo
 
 | Area | Verified locally | Pending |
 |---|---|---|
-| Contracts | 36 Foundry tests incl. real evmnet rounds verified on chain, tampered and wrong-round rejected, per-event verifier pinning, bail refunds | Base Sepolia deploy, Basescan verification |
+| Contracts | 38 Foundry tests incl. real evmnet rounds verified on chain, tampered and wrong-round rejected, per-event verifier pinning, bail refunds, the minimum bet | Base Sepolia deploy, Basescan verification |
 | Engine | 47 tests; 20-event unattended soak over 4 channels; SIGKILL mid-event and resume without duplicate events; presence gating | real OpenRouter authoring and MiniMax video (never called with a key), Vercel Blob store |
 | Web | 37 tests; wall, channel, event, markets, positions, verify flows in a browser; bet → lock → reveal → claim with on-chain numbers checked | Privy login, World Selfie Check, subgraph pages against Studio |
 | Subgraph | 5 matchstick tests; pools, outcomes, claims and totals equal `cast` reads against a local graph-node | Studio deploy, Subgraph MCP |
@@ -177,7 +177,7 @@ Findings from the end-to-end validation and an adversarial review of the money p
 
 **Review findings confirmed by two of three independent refuters**
 
-- critical, `Arena.sol`: one micro-USDC on the empty side of a market converts an "everyone refunded" market into "one bettor takes the whole pool".
+- ~~critical, `Arena.sol`: one micro-USDC on the empty side of a market converts an "everyone refunded" market into "one bettor takes the whole pool".~~ Fixed: `bet` reverts `BelowMinBet` under `MIN_BET` (1 USDC), so taking a market's whole pool costs a stake that is worth losing on the outcomes that miss.
 - ~~critical, `Arena.sol`: the verifier is not pinned per event, so the owner can switch to trusted mode after bets land.~~ Fixed: `createEvent` pins `eventVerifier[eventId]` and `resolve` reads that, so `setVerifier` only reaches future events.
 - ~~critical, `apps/engine/src/media.ts`: a malformed percent-escape in a request URL kills the engine process.~~ Fixed: the decode is wrapped, a bad escape is a 400 and the server keeps serving.
 - ~~high, `media.ts`: no error handler on the response stream, so a file-open failure crashes the engine.~~ Fixed: headers wait for the file descriptor, so a file that stats but will not open answers 500; the response's own errors close the stream.

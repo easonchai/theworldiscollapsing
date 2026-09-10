@@ -60,6 +60,7 @@ describe("txMessage", () => {
     expect(said("BettingClosed")).toBe("Betting is closed on this event — nothing was staked.");
     expect(said("BadOutcome")).toBe("That market is not on this event.");
     expect(said("ZeroAmount")).toBe("Enter a stake above zero.");
+    expect(said("BelowMinBet")).toBe("The minimum bet is 1 USDC — nothing was staked.");
     expect(said("NothingToClaim")).toBe("Nothing to claim on this event.");
     expect(said("NotResolved")).toBe("The round has not landed yet, so there is nothing to claim.");
     expect(said("UnknownEvent")).toBe("This event is not on chain.");

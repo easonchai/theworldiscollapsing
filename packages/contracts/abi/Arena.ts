@@ -79,6 +79,19 @@ export const arenaAbi = [
   },
   {
     "type": "function",
+    "name": "MIN_BET",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "NO",
     "inputs": [],
     "outputs": [
@@ -793,6 +806,11 @@ export const arenaAbi = [
   {
     "type": "error",
     "name": "BailTooEarly",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "BelowMinBet",
     "inputs": []
   },
   {

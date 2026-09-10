@@ -278,7 +278,7 @@ contract ArenaTest is Test {
         vm.expectRevert(MockUSDC.NotVerified.selector);
         usdc.faucet();
         vm.expectRevert(Arena.NotVerified.selector);
-        arena.bet(id, 0, true, 1);
+        arena.bet(id, 0, true, 1e6);
         vm.stopPrank();
     }
 
@@ -483,5 +483,47 @@ contract ArenaTest is Test {
         vm.warp(block.timestamp + arena.BAIL_DELAY() + 1);
         vm.expectRevert(Arena.AlreadyResolved.selector);
         arena.bail(id);
+    }
+
+    // ── a bet has to be worth losing (ARENA-01) ────────────────────────────
+
+    /// Dust on the winning side of every outcome used to cost 5 micro-USDC and take the losing
+    /// pool of whichever outcome landed — 24.5 USDC of alice's stake, and the refund she was owed
+    /// on the market nobody else took. `MIN_BET` is what stands between those two payouts now.
+    function test_DustOnEveryOutcomeCannotCaptureThePool() public {
+        bytes32 id = keccak256("d1");
+        uint8 w = win(id, 5);
+        uint64 lock = open(id, 5);
+        address mallory = mk("mallory");
+        for (uint8 i = 0; i < 5; i++) {
+            betAs(alice, id, i, false, 25e6);
+            vm.prank(mallory);
+            vm.expectRevert(Arena.BelowMinBet.selector);
+            arena.bet(id, i, true, 1);
+        }
+        lockAndResolve(id, lock);
+        // The winning market's YES side is still empty, so alice is refunded there in full and paid
+        // on the four she won: 25e6 + 4 × 24.5e6.
+        assertEq(arena.pools(id, w, arena.YES()), 0);
+        assertEq(claimAs(alice, id), 123e6);
+        expectNoClaim(mallory, id);
+    }
+
+    function test_BetBelowTheMinimumIsRejected() public {
+        bytes32 id = keccak256("d2");
+        open(id, 2);
+        uint256 min = arena.MIN_BET(); // read it before arming expectRevert: this is a call too
+        assertEq(min, 1e6);
+
+        vm.prank(alice);
+        vm.expectRevert(Arena.ZeroAmount.selector);
+        arena.bet(id, 0, true, 0);
+
+        vm.prank(alice);
+        vm.expectRevert(Arena.BelowMinBet.selector);
+        arena.bet(id, 0, true, min - 1);
+
+        betAs(alice, id, 0, true, min); // exactly the minimum is a bet
+        assertEq(arena.pools(id, 0, arena.YES()), 1e6);
     }
 }
