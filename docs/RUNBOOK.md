@@ -131,7 +131,7 @@ Only with the local media store and a public `MEDIA_BASE_URL` (Tailscale Funnel 
 - Verified addresses: the deployer key signs `Gate.setVerified` through `/verify`; for a pre-verified demo wallet run `cast send <GATE> "setVerified(address,bool)" <addr> true --private-key <deployer>`.
 - Faucet: 1,000 USDC per verified address per day (`MockUSDC.faucet`).
 - Synthetic volume on testnet: `apps/engine/scripts/bettor.ts` works against any RPC given funded keys; on Base Sepolia the four accounts need ETH. **Nobody has bet on Base Sepolia yet** — every pool there is 0, so payout, claim, the treasury fee and the void-market rule have only ever run on anvil. Run the bettor once before the recording.
-- Known leftovers on the live deployment (2026-09-10): sports seq 3 was created on chain and never resolved, so it becomes `bail(eventId)`-able three days after its `lockTime`; seq 6 sits at `RENDER` in the database and the next engine start will resume it and pay for whatever is missing.
+- Known leftover on the live deployment (2026-09-10): sports seq 6 sits at `RENDER` in Neon with `World.spendUsd` at $4.14, so the next engine start against Neon buys its first half (~$0.75) and then pauses at the $5 cap unless `MAX_SPEND_USD` is raised. Seq 1–5 are `DONE` on chain and in the database.
 
 ## 10. Rollback
 
