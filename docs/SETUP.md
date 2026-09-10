@@ -20,19 +20,25 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 | 12 | **Chainlink CRE** login (`cre login` or `CRE_API_KEY`), deploy access, **Confidential Workflows beta** | simulate and deploy the reveal-key workflow (Chainlink prize) | `packages/cre/.env`; engine `BRANCH_SEAL=1`, `BRANCH_SEAL_ROOT`, `REVEAL_SECRET` | beta approval, unknown. Apply now |
 | 13 | A public URL for the laptop (Tailscale Funnel or cloudflared) | only for branch sealing + CRE with real video, because sealing needs the local media store and the CRE workflow must reach the engine | engine `MEDIA_BASE_URL` | minutes |
 
+## Where this stands, 2026-09-10
+
+**Provisioned and exercised**: 1 OpenRouter (real authoring and real MiniMax clips, two events), 2 Vercel Blob (media serving from its public host), 3 Neon, 4 Base Sepolia deployer (contracts live, `Gate.owner()` confirmed), 5 Etherscan (all four contracts verified on Basescan), 6 resolver + treasury (three events created and resolved on chain), 8 Vercel (production deployment live), 9 Subgraph Studio (deployed, indexing, read by `/markets`). Addresses and URLs are in the root README's **Live** table.
+
+**Still missing**: 7 Privy — the app id is set in production but the domain is *not* in the app's allowed origins, so login is CSP-blocked (below); 10 the gateway API key; 11 World Selfie Check beta; 12 CRE deploy access and the Confidential Workflows beta; 13 a public URL for the laptop, only needed for sealing.
+
 ## Details
 
 ### 1. OpenRouter
 
-- Create a key at openrouter.ai/keys. Load credits: the plan budgets about $6–9 of video per event plus under $1 of authoring, so 100 events is roughly $700–1,000. Key-art image cost is on top and its price was not verified.
-- Set in `apps/engine/.env`: `OPENROUTER_API_KEY`, `STUB_MODE=0`, and leave `OPENROUTER_BASE_URL=https://openrouter.ai`.
+- Create a key at openrouter.ai/keys. Load credits: **measured** on 2026-09-10, a 3-outcome `DEMO_MODE=1` event (45 s of video) costs **$3.27** — $0.08–0.09 of authoring, $0.04 of key art, $3.15 of clips — so 100 demo events is about $330. The plan's $6–9 figure is a full-length `DEMO_MODE=0` event; budget that if you run real timing.
+- Set in `apps/engine/.env`: `OPENROUTER_API_KEY`, `STUB_MODE=0`, and leave `OPENROUTER_BASE_URL=https://openrouter.ai`. Set `MAX_SPEND_USD` too — it is cumulative in `World.spendUsd`, so it survives restarts.
 - Real video also needs item 2 (or 13): with `MEDIA_STORE=local` the key-art URL is `localhost`, which OpenRouter cannot fetch, and image-to-video fails.
-- Not yet exercised against the real API: the strict JSON schema the engine sends, the video download URL lifetime, and real MiniMax latency. Expect to tune `pollVideo` timeouts on the first real run. Details in `docs/RESEARCH.md`, section "OpenRouter API shapes".
+- Now exercised against the real API: the strict JSON schema (accepted first try, reasoning non-empty), the image endpoint (key art generated first try, no fallback), image-to-video seeding (the first frame of the first half is visibly the key-art composition one beat later), and clip latency — nowhere near `pollVideo`'s 15-minute ceiling, so no tuning was needed. Numbers in `docs/RESEARCH.md`, section "Verified live". Still unverified: the download URL's lifetime (we download immediately) and the key-art image *price*, which the engine estimates at $0.04 because OpenRouter publishes none.
 
 ### 2. Vercel Blob
 
 - Vercel dashboard → Storage → Blob → create a store → copy the read-write token.
-- Set `MEDIA_STORE=blob` and `BLOB_READ_WRITE_TOKEN`. The blob path was written against the installed `@vercel/blob` 2.8 types but has never executed; the first run is the test.
+- Set `MEDIA_STORE=blob` and `BLOB_READ_WRITE_TOKEN`. The blob path has now run: every clip, key-art still and last frame of both real events is on the store's public host, a plain `GET` answers 200 `video/mp4` and a `Range` request answers 206 with a `content-range`. Nothing prunes it — `MEDIA_KEEP` is local-store only — so blobs accrue until deleted by hand.
 - Branch sealing (`BRANCH_SEAL=1`) refuses to start with the blob store. If you want the CRE demo with real video, use item 13 instead of Blob.
 
 ### 3. Postgres
@@ -49,15 +55,15 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 
 ### 7. Privy
 
-- dashboard.privy.io → create app → App ID. Enable email login and "create embedded wallets on login". Add `localhost:3000` and the Vercel domain to allowed origins. Base Sepolia (84532) is in Privy's default chain list.
+- dashboard.privy.io → create app → App ID. Enable email login and "create embedded wallets on login". Add `localhost:3000` **and the Vercel domain** to allowed origins. Base Sepolia (84532) is in Privy's default chain list.
 - Set `NEXT_PUBLIC_PRIVY_APP_ID`. When it is set the dev wallet is ignored; leave `NEXT_PUBLIC_DEV_WALLET_KEY` empty in production (the app refuses it on chain 84532 anyway).
-- The Privy code path compiles and lints against the 3.40 types but has never run. First login is the test.
+- ⚠ **This is the open one.** The app id is set in production and the "Sign in" button renders, but `https://theworldiscollapsing.vercel.app` was never added to the allowed origins, so Privy still serves `frame-ancestors 'self' http://localhost:3000 https://auth.privy.io`, the browser refuses to frame `auth.privy.io`, and login cannot open. Every page carries that CSP error in the console. Nothing in this repo can fix it — it is one field in the Privy dashboard — and PRD story 23 stays unmet until it is set. The rest of the Privy path still has never executed.
 
 ### 9–10. The Graph
 
-- thegraph.com/studio → connect a wallet → create subgraph on **Base Sepolia**, slug `twic-arena` (or change `deploy:studio` in `packages/subgraph/package.json`). Copy the deploy key. Follow `packages/subgraph/README.md`, section "Deploying to Base Sepolia".
-- Put the Studio query URL in web `NEXT_PUBLIC_SUBGRAPH_URL` and engine `SUBGRAPH_URL`.
-- For judges: a gateway API key from Studio → API keys enables the Subgraph MCP server (`packages/subgraph/README.md`, section "Subgraph MCP"). Only published subgraphs are reachable through it; the Studio development URL works directly.
+- Done: `twic-arena` is deployed to Studio on **Base Sepolia**, indexing without errors, and the production `/markets` page reads it. The query URL carries the version label — see the README's Live table — and it is in web `NEXT_PUBLIC_SUBGRAPH_URL`. Steps and the exact working deploy command are in `packages/subgraph/README.md`, section "Deploying to Base Sepolia".
+- Still open: engine `SUBGRAPH_URL`, which feeds the previous event's pools into authoring, has not been run against the live index — so the bettor-sentiment half of the world model is unproven.
+- For judges: a gateway API key from Studio → API keys enables the Subgraph MCP server (`packages/subgraph/README.md`, section "Subgraph MCP"). Still not obtained. Only published subgraphs are reachable through it; the Studio development query URL works directly and is rate-limited to 3,000 queries a day.
 
 ### 11. World
 
@@ -81,6 +87,7 @@ printf '0x%s\n' "$(openssl rand -hex 32)"         # REVEAL_SECRET
 
 ## Apply today, the answers take time
 
+0. Privy: add `https://theworldiscollapsing.vercel.app` to the app's allowed origins. Two minutes, and it is the only thing between the live site and story 23.
 1. World: Selfie Check feature flag + sandbox device for your app.
 2. Chainlink: CRE deploy access, then the Confidential Workflows beta.
 3. ETHOnline Discord: ask both sponsors for a hackathon fast track.

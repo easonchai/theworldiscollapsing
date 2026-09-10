@@ -89,6 +89,10 @@ Outcome derivation (B-long): `outcome = uint(keccak256(sig_R ‖ eventId)) % n`,
 - Authoring: GPT-6 Astra ≲$1/event.
 - 24/7 continuous generation (rejected): $4,320/day at 480P per channel.
 
+**Superseded by measurement on 2026-09-10** — see "Verified live" at the end of this file. A
+3-outcome `DEMO_MODE=1` event (45 s of video) costs **$3.27**, of which authoring is **$0.08–0.09**,
+not the ≲$1 budgeted. The $6–9 line still stands for a full-length `DEMO_MODE=0` event.
+
 ## OpenRouter API shapes — verified 2026-09-09 (day 3)
 
 Fetched live from the doc markdown mirrors (`<page>.md`) and the raw JSON APIs, because the rendered pages are client-side.
@@ -276,7 +280,7 @@ CRE account this stops at `cre workflow build`.
 | viem client | `await wallet.switchChain(chain.id)`; `const provider = await wallet.getEthereumProvider()` (EIP-1193) → `createWalletClient({ account, chain, transport: custom(provider) })` | docs.privy.io/wallets/connectors/ethereum/integrations/viem.md |
 | Session | `usePrivy(): { ready, authenticated, user, login(), logout(), … }` | installed `dist/dts/index.d.ts` |
 
-⚠ The Privy path is written against the docs and the installed types but was **never run**: no `NEXT_PUBLIC_PRIVY_APP_ID` exists, so all browser QA used the dev-wallet path.
+⚠ The Privy path is written against the docs and the installed types but has still **never run**. An app id is now set in Vercel production and the "Sign in" button renders, but the login iframe is refused: Privy serves `Content-Security-Policy: frame-ancestors 'self' http://localhost:3000 https://auth.privy.io`, and the production domain was never added to the app's allowed origins (2026-09-10, observed in the browser console on every page, alongside a 403 on `auth.privy.io/api/v1/analytics_events`). Allowed origins are per-app dashboard state, not a request parameter — no code change reaches this.
 
 ### World ID / Selfie Check (`@worldcoin/idkit` 4.2.3)
 
@@ -360,9 +364,13 @@ Negative cases proven, not assumed: a signature with one flipped bit in `y` fail
 pre-check, and the *genuine* beacon of round 20456252 fails the pairing for round 20456251 (and vice
 versa) — so the round binding is real, not just a length check.
 
-⚠ Not verified: nothing has been deployed to Base Sepolia, so the verifier has only ever run on
-anvil (foundry 1.7.1) and in `forge test`. The bn254 precompiles 0x05/0x06/0x08 are pre-Byzantium/
-Byzantium-era and present on every EVM chain, but that is reasoning, not a measurement on 84532.
+**Verified on 84532 on 2026-09-10** (this note previously read "nothing has been deployed to Base
+Sepolia, so the verifier has only ever run on anvil"). `DrandVerifier` is deployed at
+`0x1cdD3198E323BC816125CF40B22A11c65111a405`, `Arena.eventVerifier(eventId)` points at it for every
+event created since, and three events have resolved through it against real `evmnet` beacons — so
+the bn254 precompiles 0x05/0x06/0x08 are a measurement on Base Sepolia now, not an inference. Gas on
+chain is higher than in `forge test`: **261,292** for a verified `resolve` (vs 219,202 measured) and
+**77,368** for `createEvent`.
 
 
 ## viem write confirmation — verified 2026-09-09 (validation round 3)
@@ -390,3 +398,82 @@ a non-`success` receipt. `apps/web/src/lib/tx.test.ts` also fails if any compone
 Consequence: `apps/web` loads one display family and sets it condensed with
 `font-variation-settings: "wdth" 78` (`h1..h3`, `.display`, `.money` in `globals.css`), so broadcast
 caps headlines and the lock countdown fit on one line without a second font family.
+
+## Verified live — 2026-09-10
+
+Everything above this line was read from a vendor's documentation or measured on a local stack.
+Everything below was observed in production: the Base Sepolia deploy, one real-money event on anvil,
+and one real-money event on Base Sepolia. $7.50 of OpenRouter credit was spent to get these numbers.
+
+### OpenRouter — what a real event actually costs
+
+| Fact | Value | How it was seen |
+|---|---|---|
+| Authoring is billed by the vendor, not estimated | `usage: { include: true }` returns `usage.cost`, and the engine charges exactly that (`openrouter.ts`, `onUsage`) | four calls: **$0.085, $0.094, $0.081, $0.080** |
+| Authoring cost per event (`openai/gpt-6-astra`, reasoning mandatory, strict JSON) | **$0.08–0.09** — the plan budgeted "≲$1", so authoring is an order of magnitude cheaper than assumed | same |
+| Video and image cost are *estimates*, not vendor figures | the engine multiplies requested seconds by a rate card (`render.ts`: `$0.05/s` 480p, `$0.08/s` 768p, `$0.04` an image) | `spend` log lines |
+| The rate card is right | 5 s @480p = $0.25, 5 s @768p = $0.40, 10 s @768p = $0.80 — exactly `pricing_skus` from the model list | `spend` lines vs `/api/v1/videos/models` |
+| Estimate vs the account's own usage | anvil run: charged $3.4096, account moved **$3.302456** (engine 3.2 % high). Base Sepolia run: charged $4.1404, account moved **$4.1949115** (engine 1.3 % low) | `GET /api/v1/key` before and after |
+| Why it drifts both ways | MiniMax returns clips slightly **longer** than requested (15 s → 15.584 s, 10 s → 10.176 s and 10.400 s) while the engine charges the requested seconds | `ffprobe` on the downloaded MP4s |
+| `Event.costUsd` for a 3-outcome `DEMO_MODE=1` event | **$3.19** = key art $0.04 + 15 s @480p + 30 s @768p. All-in with authoring ≈ **$3.27** | `rendered event` log line |
+| Clip streams | h264 + **aac**, 24 fps, 864×480 for a 480p request and 1376×768 for a 768p request; ~17–18 MB a clip. The audio track appears even though the model list says `generate_audio: false` | `ffprobe` |
+| No failures at all | zero `clip failed`, zero retries, zero vendor errors across 15 clips and 4 images | the engine logs |
+
+Latency, wall clock, from the `spend` line that precedes a request to the `rendered` line that
+follows the download (so it includes download and ffmpeg concat):
+
+| Step | Time |
+|---|---|
+| authoring | 13 s warm; 44 s including engine start |
+| key art (one still) | ~12 s |
+| first half — 3 × 5 s @480p in parallel | 21 s |
+| branches — 3 × 10 s @768p in parallel | 43 s |
+| branches — 6 × 5 s @768p in parallel | 36 s |
+
+So the ⚠ "~15 s for a 5 s clip" from MiniMax's consumer page is the right order of magnitude, and
+`pollVideo`'s 15-minute ceiling was never approached — it still has not been stress-tested.
+
+Image-to-video seeding works: the key-art still and the first frame of `first.mp4` are the same
+composition, wardrobe and camera, one beat apart. The strict JSON schema was accepted on the first
+call every time, and `message.reasoning` came back non-empty and on-topic (it cites the canon lines
+of the three prior matchdays when authoring the fourth).
+
+### drand `evmnet` on a public chain
+
+- The 64 bytes stored by `Arena.resolve` are **byte-identical** to `GET https://api.drand.sh/v2/beacons/evmnet/rounds/<round>` for the committed round, on both live events (rounds 20503254, 20503274 and 20503772).
+- `keccak256(signature ‖ eventId) mod nOutcomes` reproduces the on-chain outcome, recomputed independently with `cast keccak` and in the browser by the verify badge.
+- On-chain gas, Base Sepolia at 0.006 gwei: `createEvent` **77,368**, verified `resolve` **261,292** (`forge test` said 219,202 — real cold storage access is ~19 % more).
+
+### Vercel Blob
+
+Public host, one directory per event id. `GET` → 200 `video/mp4`; a `Range` request → **206 Partial
+Content** with `content-range: bytes 0-1023/2175546`, which is what a `<video>` element needs to
+seek. Stills return 200 `image/png`. Nothing expires or is pruned — `MEDIA_KEEP` is local-store only.
+
+### Subgraph Studio
+
+| Fact | Value |
+|---|---|
+| The deploy script prompts | `deploy:studio` is `graph deploy twic-arena` with no version label, so it stops interactively; `pnpm run deploy:studio -- -l 0.0.1` prints the CLI help and exits 2 (pnpm eats the flag) |
+| What works | `pnpm --filter subgraph exec graph deploy twic-arena -l 0.0.1` |
+| Query URL shape | `https://api.studio.thegraph.com/query/<account id>/<slug>/<version label>` — the label is part of the path, so a new version means a new URL unless it is republished |
+| First poll after deploy | `hasIndexingErrors: false`, `_meta.block` already past the start block, and an **empty** `events` list. That is a healthy index with nothing indexed yet, not an error |
+| Once events existed | every event, its `Market` rows (one per outcome) and `Protocol.eventCount` matched `cast` reads against `Arena` exactly |
+
+### Vercel platform
+
+- A project whose **Root Directory** is `apps/web` must be deployed from the **repo root** (`vercel link` there first); `cd apps/web && vercel deploy` resolves to `apps/web/apps/web` and fails.
+- `vercel deploy` from the root uploads everything `.gitignore` does not cover — a large file excluded only via `.git/info/exclude` is uploaded.
+- ⚠ **Preview env vars cannot be set from CLI 53.3.2.** `vercel env add <NAME> preview --value <v> --yes --force` returns `action_required` / `git_branch_required` in a loop whose suggested next command is the one that just failed; passing `main` is rejected with `Cannot set Production Branch "main" for a Preview Environment Variable`. Use the dashboard.
+- A `sensitive` env var reads back as an empty string through `vercel env pull`, so a value set earlier cannot be verified from the CLI — only re-set.
+- There is no `vercel.json` in `apps/web`, so functions run in `iad1` regardless of where the database is.
+- No timezone skew between an engine host on UTC+8 and the Vercel runtime: a `lockTime` written by the engine came back from the production API as the same instant as the on-chain value.
+
+### Base Sepolia public RPC
+
+`https://sepolia.base.org` is load-balanced across nodes at different heights and answers
+`BlockNotFoundError: Block at number "N" could not be found` for a transaction that is already mined.
+It hit **4 of 4** chain writes in one run. viem's `waitForTransactionReceipt` retries that error
+itself; the `getBlock` that follows it (for the block timestamp) did not, so the step failed, resumed
+from on-chain state and recorded `tx: null`. `chain.ts` now retries that block read too. Use a keyed
+RPC for anything that writes.

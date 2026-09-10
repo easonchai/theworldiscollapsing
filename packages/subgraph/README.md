@@ -58,11 +58,12 @@ pnpm --filter subgraph run check   # compose RPC port still matches the root REA
 
 Teardown: `docker compose -f packages/subgraph/docker-compose.yml down -v`.
 
-## Deploying to Base Sepolia (Subgraph Studio) — ⚠ pending a deploy key
+## Deploying to Base Sepolia (Subgraph Studio) — done 2026-09-10
 
-Nothing here has been run against Studio yet: it needs a wallet-connected Studio subgraph and its
-deploy key, which we do not have. Steps, from the live docs
-(<https://thegraph.com/docs/en/subgraphs/developing/deploying-publishing/using-subgraph-studio/>):
+Live at <https://api.studio.thegraph.com/query/1760049/twic-arena/0.0.1>, indexing
+`Arena` `0xcC9D2B9A192a6Ff5F3C5950EcdFd4CaF958fFe1b` from block 46631130 with
+`hasIndexingErrors: false`. The production `/markets` page reads it. Steps, as they actually ran
+(docs: <https://thegraph.com/docs/en/subgraphs/developing/deploying-publishing/using-subgraph-studio/>):
 
 1. Create the subgraph at <https://thegraph.com/studio/> (connect wallet), network **Base Sepolia**.
    Note its slug and deploy key. Each account is limited to 3 deployed (unpublished) subgraphs.
@@ -71,14 +72,24 @@ deploy key, which we do not have. Steps, from the live docs
    ARENA_ADDRESS=0x… START_BLOCK=<Arena deploy block> pnpm --filter subgraph run prepare:base-sepolia
    pnpm --filter subgraph run codegen && pnpm --filter subgraph run build
    ```
-3. Authenticate and deploy (the CLI prompts for a version label; use semver, e.g. `0.0.1`):
+3. Authenticate and deploy, passing the version label on the command line:
    ```bash
    pnpm --filter subgraph exec graph auth <DEPLOY_KEY>
-   pnpm --filter subgraph run deploy:studio          # graph deploy twic-arena
+   pnpm --filter subgraph exec graph deploy twic-arena -l 0.0.1
    ```
-   Change the slug in `package.json`'s `deploy:studio` if Studio hands out a different one.
-4. Test in the Studio playground or against the development query URL (rate-limited to 3,000
-   queries/day). Publishing to the network (`graph publish`) is a separate, optional step.
+   ⚠ Not `run deploy:studio`. That script is `graph deploy twic-arena` with no label, so it stops on
+   an interactive prompt, and `pnpm run deploy:studio -- -l 0.0.1` prints the graph CLI's help and
+   exits 2 — pnpm does not pass the flag through. Use the `exec` form above, or add `-l` to the
+   script. Change the slug if Studio hands out a different one.
+4. The query URL is `https://api.studio.thegraph.com/query/<account id>/<slug>/<version label>` — the
+   label is in the path, so deploying `0.0.2` changes the URL and `NEXT_PUBLIC_SUBGRAPH_URL` /
+   `SUBGRAPH_URL` have to move with it. On the first poll after a deploy the endpoint answers with
+   `hasIndexingErrors: false`, a `_meta.block` past the start block and an **empty** `events` list:
+   that is a healthy index with nothing indexed yet, not a failure. Development URL is rate-limited
+   to 3,000 queries/day; publishing to the network (`graph publish`) is a separate, optional step.
+
+Once events existed, every `Event`, its `Market` rows and `Protocol.eventCount` matched `cast` reads
+against `Arena` exactly.
 
 The network name in `subgraph.template.yaml` is `base-sepolia`, which is what graph-node and Studio
 call Base Sepolia; `prepare:local` writes `localhost`, matching the `ethereum:` env in
@@ -135,8 +146,8 @@ own pages with the same server):
 subgraph indexing contract 0x… on base-sepolia, then show me the markets with the largest pools"
 resolves to a deployment and a query without anyone writing GraphQL.
 
-⚠ Not exercised: we have no gateway API key and no published deployment yet, so this section is
-documentation, not a verified run. The server addresses deployments on The Graph Network — a
-graph-node on `localhost:8000` is not reachable from it, and an unpublished Studio subgraph is
-unlikely to be either. Judges pointing an agent at this project before it is published should use
-the Studio development query URL directly.
+⚠ Not exercised: we have no gateway API key and the Studio deployment is not *published* to the
+network, so this section is documentation, not a verified run. The server addresses deployments on
+The Graph Network — a graph-node on `localhost:8000` is not reachable from it, and an unpublished
+Studio subgraph is unlikely to be either. Judges pointing an agent at this project should use the
+Studio development query URL in the "Deploying to Base Sepolia" section directly.

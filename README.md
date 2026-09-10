@@ -24,6 +24,21 @@ flowchart LR
 - **Engine**: one Node process, one state machine per channel, restart-safe against chain state, presence-gated so an empty site costs nothing. `apps/engine/src/machine.ts`.
 - **World state**: canon lines in Postgres, injected into every authoring prompt. No simulation, just memory.
 
+## Live
+
+Base Sepolia (chain 84532), deployed 2026-09-10 from block 46631130. Testnet and play money — `MockUSDC.faucet` mints 1,000 a day to any verified address.
+
+| | |
+|---|---|
+| Site | <https://theworldiscollapsing.vercel.app> |
+| Subgraph (Studio) | <https://api.studio.thegraph.com/query/1760049/twic-arena/0.0.1> |
+| `Arena` | [`0xcC9D2B9A192a6Ff5F3C5950EcdFd4CaF958fFe1b`](https://sepolia.basescan.org/address/0xcc9d2b9a192a6ff5f3c5950ecdfd4caf958ffe1b#code) |
+| `DrandVerifier` | [`0x1cdD3198E323BC816125CF40B22A11c65111a405`](https://sepolia.basescan.org/address/0x1cdd3198e323bc816125cf40b22a11c65111a405#code) |
+| `MockUSDC` | [`0x763CD7478F3d4D2320c01C383dD8CF57119cf970`](https://sepolia.basescan.org/address/0x763cd7478f3d4d2320c01c383dd8cf57119cf970#code) |
+| `Gate` | [`0xF7ff820BBcD99fd59E47C50aAE1fAa7DBbdC5527`](https://sepolia.basescan.org/address/0xf7ff820bbcd99fd59e47c50aae1faa7dbbdc5527#code) |
+
+All four are source-verified on Basescan. Three events have resolved on chain under that verifier against real drand `evmnet` beacons; the one with real generated video is [`0x4734962d…`](https://theworldiscollapsing.vercel.app/e/0x4734962dd63171cb92e109ac5d31cbb5cf27ca797f94c647084ec8e71a006019) — "United–Chelsea: The Fourth Meeting", round 20503772, outcome 1. Open it and the verify badge fetches that round from `api.drand.sh` in your browser, compares the signature with the one stored on chain and re-derives the outcome. Its winning branch does not play, for the reason in [Known issues](#known-issues).
+
 ## Run the whole thing locally
 
 Needs Node 24 (`.nvmrc`), pnpm 9, [Foundry](https://getfoundry.sh), Docker and ffmpeg. Nothing below needs an API key or a funded account: video is stubbed with ffmpeg test patterns, the chain is anvil, the money is fake. Demo timing puts a full event — bet, lock, resolve, reveal, claim — at about 35 seconds.
@@ -142,18 +157,18 @@ The pitch is that nobody, including us, can know an outcome in advance. Here is 
 - **Branch sealing is a spoiler lock, not a fairness claim.** With `BRANCH_SEAL=1` the branch files are published as AES-256-GCM ciphertext and a Chainlink CRE confidential workflow releases only the winning key after `Resolved` (`key_i = keccak256(root ‖ eventId ‖ i)`). That stops a curious viewer reading the ending off the media server early. It says nothing about the outcome, which was already unknowable, and the operator holds the root either way. Off by default.
 - **Anything about the odds being "right".** The outcome is uniform over the event's outcome space; the world model is canon injection, not a simulation. Prices are the pool ratio between bettors, and nothing more.
 - **Identity.** World Selfie Check — or the checkbox fallback — gates the faucet and betting to slow bots down. It is per address, not per person, and it is not age verification: 18+ is self-attested.
-- ⚠ **Scale of the claim.** This is testnet play money: `MockUSDC.faucet` mints 1,000 to any verified address once a day. Deployment status of the contracts, including whether the verifier has ever run outside anvil and `forge test`, is recorded in [`docs/RESEARCH.md`](docs/RESEARCH.md).
+- ⚠ **Scale of the claim.** This is testnet play money: `MockUSDC.faucet` mints 1,000 to any verified address once a day. The contracts are live on Base Sepolia ([Live](#live)) and `DrandVerifier` has now checked real `evmnet` beacons there — 261,292 gas for a verified `resolve` — not only on anvil and in `forge test`. What has and has not run against a real vendor or a real chain is recorded in [`docs/RESEARCH.md`](docs/RESEARCH.md).
 
 ## Status
 
-The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1)) is 65 user stories; 57 of them are built and verified on a local stack (anvil, docker Postgres, fake OpenRouter, local graph-node, Playwright). The other 8 — stories 16, 17, 18, 23, 43, 44, 60, 61 — each need a key or a beta and are the Pending column below: real video instead of ffmpeg test patterns (16–18), Privy email login (23), World Selfie Check (43, 44; the 18+ checkbox of story 46 is what runs), and a Base Sepolia deploy with a published subgraph and Basescan verification (60, 61). Open bugs are in [Known issues](#known-issues). What to obtain and what it turns on is in [`docs/SETUP.md`](docs/SETUP.md); deploying is [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1)) is 65 user stories; 61 of them are built and verified — on a local stack (anvil, docker Postgres, fake OpenRouter, local graph-node, Playwright) and, on 2026-09-10, on Base Sepolia with real OpenRouter authoring and real MiniMax video. The other 4 — stories 18, 23, 43, 44 — are the Pending column below: a first half that visibly *shows* the score level at the break (18 — the authored premise says level and the rendered football is real, but no generated frame carries a readable scoreboard, so this is asserted, not shown), Privy email login (23 — the production domain is not in the Privy app's allowed origins, see [Known issues](#known-issues)), and World Selfie Check (43, 44; the 18+ checkbox of story 46 is what runs). Open bugs are in [Known issues](#known-issues). What to obtain and what it turns on is in [`docs/SETUP.md`](docs/SETUP.md); deploying is [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
 
-| Area | Verified locally | Pending |
+| Area | Verified | Pending |
 |---|---|---|
-| Contracts | 40 Foundry tests incl. real evmnet rounds verified on chain, tampered and wrong-round rejected, per-event verifier pinning, bail refunds, the minimum bet, void markets | Base Sepolia deploy, Basescan verification |
-| Engine | 47 tests; 20-event unattended soak over 4 channels; SIGKILL mid-event and resume without duplicate events; presence gating | real OpenRouter authoring and MiniMax video (never called with a key), Vercel Blob store |
-| Web | 37 tests; wall, channel, event, markets, positions, verify flows in a browser; bet → lock → reveal → claim with on-chain numbers checked | Privy login, World Selfie Check, subgraph pages against Studio |
-| Subgraph | 5 matchstick tests; pools, outcomes, claims and totals equal `cast` reads against a local graph-node | Studio deploy, Subgraph MCP |
+| Contracts | 40 Foundry tests incl. real evmnet rounds verified on chain, tampered and wrong-round rejected, per-event verifier pinning, bail refunds, the minimum bet, void markets. Deployed to Base Sepolia and source-verified on Basescan; 3 events resolved there against live beacons (`createEvent` 77,368 gas, verified `resolve` 261,292) | — |
+| Engine | 70 tests; 20-event unattended soak over 4 channels; SIGKILL mid-event and resume without duplicate events; presence gating. Real GPT-6 Astra authoring, real MiniMax clips and the Vercel Blob store, on anvil and on Base Sepolia — $3.27 an event, spend metered against `MAX_SPEND_USD` | bettor-sentiment authoring (`SUBGRAPH_URL`) has never run against a live index |
+| Web | 79 tests; wall, channel, event, markets, positions, verify flows in a browser; bet → lock → reveal → claim with on-chain numbers checked. In production: the wall and the event page play real generated video from Blob, the verify badge re-derives the outcome from live drand, `/markets` reads the Studio subgraph | Privy login (CSP-blocked on the production domain), World Selfie Check |
+| Subgraph | 5 matchstick tests; pools, outcomes, claims and totals equal `cast` reads against a local graph-node. Deployed to Studio, indexing Base Sepolia with no indexing errors, and read by `/markets` in production | Subgraph MCP (needs a published subgraph and a gateway key) |
 | CRE | workflow compiles to WASM, 7 handler tests, engine seal/unseal round trip | `cre workflow simulate` and deploy (login-gated), Confidential Workflows beta |
 
 ## Sponsor integrations
@@ -167,7 +182,14 @@ The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1))
 
 ## Known issues
 
-Findings from the end-to-end validation and an adversarial review of the money path. Struck lines are fixed and carry what the fix was; the rest are still open. Severity is the reviewer's.
+Findings from the end-to-end validation, an adversarial review of the money path, and the first real-money runs. Struck lines are fixed and carry what the fix was; the rest are still open. Severity is the reviewer's.
+
+**From the first real-video runs and the Base Sepolia deploy (2026-09-10)**
+
+- ~~high, `apps/engine/src/machine.ts`: **the reveal can lose its branches.** `case "RESOLVE"` reads `branchUrls` off the row `produce()` handed it, so when the branch render finished *before* resolve — which real, fast rendering makes likely — `inflightBranches` has already dropped its entry and `ensureBranches` starts a *second* render. That one throws `ENOENT` on the already-swept `media/.work/<id>/last.png`, the step logs `branches unavailable at reveal`, and it then persists `branchUrls: null` over three URLs the database already held. Seen on Base Sepolia event `0x4734962d…`: branches finished at 09:26:36, resolve ran at 09:26:44, and the event page replayed the first half instead of the winning branch. Latent money bug too: had the work directory survived, the second render would have re-bought every branch clip (~$2.40).~~ Fixed: `RESOLVE` waits for a branch render that is still running, otherwise reads the URLs the render stored, and only renders again when nothing was stored; it never writes null over stored URLs. Reproduced by a test with the real timeline (`machine.test.ts`, "reveals branches that finished in the background"). The production row for `0x4734962d…` was repaired by hand from the Blob listing and its winning branch plays.
+- ~~medium, `machine.ts` / `chain.ts`: **a `BlockNotFoundError` right after a write loses the transaction hash.** Public `https://sepolia.base.org` load-balances across nodes at different heights, so the block read that follows a receipt can be told the block does not exist. The step then retried and took the "event already exists on chain" resume path, which adopts the on-chain state with `tx: null`, so `Event.createTx` / `resolveTx` are NULL and the event page has no explorer link. It hit 4 of 4 chain writes on 2026-09-10.~~ Fixed: `chain.ts` retries the block read on `BlockNotFoundError` (up to 20 s) instead of failing the step, so the hash is kept. The five events already on Base Sepolia keep their NULL hashes. A keyed RPC is still the right choice.
+- medium, `apps/web/src/lib/data.ts`: `getChannels` prefers *any* live event over the newest `DONE` one, so stopping the engine mid-cycle pins a tile at "Locked" forever instead of replaying the last finished event. Let the current event finish before stopping, or skip live events whose `lockTime` passed more than a grace period ago.
+- medium, deployment: **Privy login cannot open on the production domain.** `https://theworldiscollapsing.vercel.app` is not in the Privy app's allowed origins, so the login iframe is refused by `frame-ancestors` and every page carries that CSP error in the console. A Privy dashboard change, not a code change (`docs/SETUP.md`, item 7). PRD story 23 is unmet until it is made.
 
 **Open validation findings**
 
@@ -184,7 +206,7 @@ Findings from the end-to-end validation and an adversarial review of the money p
 - ~~high, `machine.ts` / `render.ts`: `costUsd` omits failed and retried generations; there is no spend ceiling.~~ Fixed: every clip attempt, key-art image and authoring call is charged against `MAX_SPEND_USD`, persisted in `World.spendUsd`.
 - ~~high, `machine.ts` / `drand.ts`: beacon fetch retries forever with no timeout or abort.~~ Fixed: `fetchRound` carries an `AbortSignal.timeout` (10 s), so a hung request fails and the retry loop keeps its cadence.
 - ~~medium, `machine.ts`: canon lines are appended twice if the CANON step re-runs.~~ Fixed: `appendCanon` is idempotent per event id.
-- medium, `machine.ts`: `lockTime` is computed before the tx is mined, so tx latency eats the betting window.
+- medium, `machine.ts`: `lockTime` is computed before the tx is mined, so tx latency eats the betting window. Live on Base Sepolia this once cost a whole window — a `BlockNotFoundError` step retry (since fixed, above) opened one event with about 5 s left to bet — and ordinary tx latency still shaves a few seconds off every window.
 - low, `Arena.sol`: the ordering guarantee rests on the chain clock being within 10 s of drand's.
 
 **Review candidates not yet adjudicated** (the refuters ran out of session budget)
