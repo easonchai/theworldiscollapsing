@@ -128,13 +128,15 @@ The pitch is that nobody, including us, can know an outcome in advance. Here is 
 - **The randomness is committed before the money.** `Arena.createEvent` stores the deciding drand round alongside the event and rejects it (`BadRound`) unless that round is published at least `SUSPENSE_GAP` = 10 s after `lockTime`. `bet` reverts (`BettingClosed`) at `lockTime`. So every bet is placed before the signature that decides it exists anywhere — not merely before anyone here has seen it.
 - **The outcome is a public function of that signature.** `outcome = uint(keccak256(signature ‖ eventId)) % nOutcomes`, recomputable by anyone from the `Resolved` event. No operator input, no commit-reveal, no VRF, no oracle, no ZK.
 - **`resolve` cannot run early, twice, or on a made-up signature.** It reverts before `lockTime` (`BettingOpen`), after resolution (`AlreadyResolved`), and — because `script/Deploy.s.sol` deploys `DrandVerifier` and calls `setVerifier` — unless the 64-byte BN254 signature verifies on chain against drand `evmnet`'s group key **for the round this event committed to at creation** (`BadSignature`). A genuine beacon from the wrong round fails the pairing, not just a length check; both directions are tested in `packages/contracts/test/DrandVerifier.t.sol`.
+- **The verifier is pinned when the event opens, not when it settles.** `createEvent` records the verifier of the moment in `eventVerifier[eventId]` and `resolve` reads that one, so a later `setVerifier` — including `setVerifier(address(0))` — only changes events created after it. Nobody can move an event that is already taking bets into trusted mode, or under a verifier that waves anything through. In trusted mode (no verifier at creation, which is not how this is deployed) `resolve` still refuses to run until the committed round is actually published (`RoundNotPublished`).
+- **An event that is never resolved refunds.** `bail(eventId)` is callable by anyone 3 days after `lockTime` (`BAIL_DELAY`) while the event is unresolved; after it, `resolve` is closed for good and `claim` hands every staker their stakes back in full on every market of that event, no fee. Being ignored is the worst the resolver can do to your money.
 - **You do not have to take our word for the beacon.** The signature is stored and emitted, and the event page fetches that round from `api.drand.sh` in your browser, compares it byte for byte and re-derives the outcome (the verify badge).
 - **The payout arithmetic is parimutuel and in the contract.** `stake × total pool ÷ winning pool`, less a flat 2 % (`FEE_BPS = 200`) to the treasury, rounding dust left behind. A market whose winning side has no stake refunds every staker on that market in full. The house is escrow; bettors are paid by other bettors.
 
 ### What it does not prove
 
-- **Liveness.** Only the `resolver` address can call `resolve`, and `claim` requires a resolved event. The resolver cannot change an outcome, but it can stall one, and there is no permissionless resolve path and no timeout refund. The *amount* you are owed does not trust us; the *timing* does.
-- **Admin keys.** `Arena` is `Ownable`: the owner can `setResolver`, `setTreasury`, and `setVerifier(address(0))`, which puts future events back into trusted mode where the submitted signature is only checked off chain. The `Gate` owner decides who is verified at all. In this deployment one key holds all of it.
+- **Liveness.** Only the `resolver` address can call `resolve`, and `claim` requires a resolved event. The resolver cannot change an outcome, but it can stall one: there is no permissionless resolve path, so a stalled event pays nothing for three days, until anyone calls `bail` and it refunds instead of settling. The *amount* you are owed does not trust us; the *timing* does.
+- **Admin keys.** `Arena` is `Ownable`: the owner can `setResolver`, `setTreasury`, and `setVerifier(address(0))`, which puts future events into trusted mode where the submitted signature is only checked off chain — events already open keep the verifier they were created under. The `Gate` owner decides who is verified at all. In this deployment one key holds all of it.
 - **The video vendor.** Every prompt, including the shot lists for branches that never air, goes to OpenRouter in plaintext while betting is open. The vendor learns what every ending looks like. It cannot learn or influence which one happens — that is drand's job — but the prompts are not confidential, and no TEE would change it, because TLS terminates at the vendor (`docs/RESEARCH.md`).
 - **That the video matches the chain.** Nothing on chain commits to the video files. The engine reads the on-chain outcome and publishes the matching branch; a dishonest operator could publish a branch that contradicts it, and settlement would still follow the signature. The broadcast is the show, not the proof.
 - **Branch sealing is a spoiler lock, not a fairness claim.** With `BRANCH_SEAL=1` the branch files are published as AES-256-GCM ciphertext and a Chainlink CRE confidential workflow releases only the winning key after `Resolved` (`key_i = keccak256(root ‖ eventId ‖ i)`). That stops a curious viewer reading the ending off the media server early. It says nothing about the outcome, which was already unknowable, and the operator holds the root either way. Off by default.
@@ -148,7 +150,7 @@ Built and verified on a local stack (anvil, docker Postgres, fake OpenRouter, lo
 
 | Area | Verified locally | Pending |
 |---|---|---|
-| Contracts | 27 Foundry tests incl. real evmnet rounds verified on chain, tampered and wrong-round rejected | Base Sepolia deploy, Basescan verification |
+| Contracts | 36 Foundry tests incl. real evmnet rounds verified on chain, tampered and wrong-round rejected, per-event verifier pinning, bail refunds | Base Sepolia deploy, Basescan verification |
 | Engine | 47 tests; 20-event unattended soak over 4 channels; SIGKILL mid-event and resume without duplicate events; presence gating | real OpenRouter authoring and MiniMax video (never called with a key), Vercel Blob store |
 | Web | 37 tests; wall, channel, event, markets, positions, verify flows in a browser; bet → lock → reveal → claim with on-chain numbers checked | Privy login, World Selfie Check, subgraph pages against Studio |
 | Subgraph | 5 matchstick tests; pools, outcomes, claims and totals equal `cast` reads against a local graph-node | Studio deploy, Subgraph MCP |
@@ -165,7 +167,7 @@ Built and verified on a local stack (anvil, docker Postgres, fake OpenRouter, lo
 
 ## Known issues
 
-Open findings from the end-to-end validation and an adversarial review of the money path. None are fixed yet; fixes are queued behind the key setup above. Severity is the reviewer's.
+Open findings from the end-to-end validation and an adversarial review of the money path. Struck lines are fixed; the rest are queued behind the key setup above. Severity is the reviewer's.
 
 **Open validation findings**
 
@@ -176,7 +178,7 @@ Open findings from the end-to-end validation and an adversarial review of the mo
 **Review findings confirmed by two of three independent refuters**
 
 - critical, `Arena.sol`: one micro-USDC on the empty side of a market converts an "everyone refunded" market into "one bettor takes the whole pool".
-- critical, `Arena.sol`: the verifier is not pinned per event, so the owner can switch to trusted mode after bets land.
+- ~~critical, `Arena.sol`: the verifier is not pinned per event, so the owner can switch to trusted mode after bets land.~~ Fixed: `createEvent` pins `eventVerifier[eventId]` and `resolve` reads that, so `setVerifier` only reaches future events.
 - critical, `apps/engine/src/media.ts`: a malformed percent-escape in a request URL kills the engine process.
 - high, `media.ts`: no error handler on the response stream, so a file-open failure crashes the engine.
 - ~~high, `machine.ts` / `render.ts`: `costUsd` omits failed and retried generations; there is no spend ceiling.~~ Fixed: every clip attempt, key-art image and authoring call is charged against `MAX_SPEND_USD`, persisted in `World.spendUsd`.
@@ -187,8 +189,8 @@ Open findings from the end-to-end validation and an adversarial review of the mo
 
 **Review candidates not yet adjudicated** (the refuters ran out of session budget)
 
-- high, `Arena.sol`: in trusted mode `resolve` never checks that the committed round has been published.
-- medium, `Arena.sol`: no escape hatch if an event is never resolved; stakes stay locked.
+- ~~high, `Arena.sol`: in trusted mode `resolve` never checks that the committed round has been published.~~ Fixed: a trusted-mode event reverts `RoundNotPublished` until `block.timestamp >= roundTime(drandRound)`.
+- ~~medium, `Arena.sol`: no escape hatch if an event is never resolved; stakes stay locked.~~ Fixed: permissionless `bail(eventId)` 3 days after `lockTime` closes `resolve` and turns `claim` into a full, fee-free refund.
 - low, `Arena.sol`: 2 % fee is charged on principal when nobody took the other side.
 - high, `api/verify`: per-address rate limit is bypassed with fresh addresses; gas drain on the gate owner; no already-verified short-circuit.
 - medium, `api/verify` (world mode): the proof's signal is not bound to the target address.

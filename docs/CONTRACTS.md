@@ -15,7 +15,7 @@ Every agent working in this repo codes against the names, routes, env vars and r
 
 ## Sources of truth
 
-- **Chain (`Arena`)** owns: `lockTime`, `drandRound`, `resolved`, `outcome`, `signature`, pools, stakes, `verified`.
+- **Chain (`Arena`)** owns: `lockTime`, `drandRound`, `resolved`, `outcome`, `signature`, `eventVerifier`, `bailed`, pools, stakes, `verified`.
 - **Postgres** owns: event content (title, premise, outcomes, script, ticker, reasoning), video URLs, engine state, canon log, presence (`World.lastSeenAt`).
 - **Subgraph** is a derived index of chain for the markets list, positions and stats. No mocks: when `NEXT_PUBLIC_SUBGRAPH_URL` is unset the pages that need it render an explicit "subgraph not configured" state.
 - The engine is the only writer of `Event`/`Canon`/`Channel`. The web app writes only `World.lastSeenAt`.
@@ -143,11 +143,27 @@ the resolver:
 
 - `address(0)` — **trusted mode**, the pre-day-7 behaviour: the signature is stored as submitted and
   only checked off-chain (the web verify badge). This is still the default in a fresh `Arena`.
+  `resolve` still refuses to run before the committed round exists: it reverts `RoundNotPublished`
+  until `block.timestamp >= roundTime(drandRound)`.
 - a `DrandVerifier` — `resolve()` reverts `BadSignature` unless the BLS signature verifies against the
   evmnet group public key **for the round the event committed at creation**. `script/Deploy.s.sol`
   deploys one and sets it, so every deployed stack runs verified.
 
-Gas: `resolve` costs ~73k in trusted mode and ~219k with the verifier (`DrandVerifier.verify` alone is
+**The verifier is pinned per event.** `createEvent` copies the current `verifier` into
+`eventVerifier[eventId]` (public getter, `address` in the ABI) and `resolve` reads that, never the
+global. `setVerifier` therefore only changes how *future* events resolve: an owner cannot drop an
+event that is already taking bets into trusted mode, nor swap in a permissive verifier under it.
+
+**Bail.** `bail(bytes32 eventId)` is permissionless and callable once an event exists, is unresolved
+and `block.timestamp > lockTime + BAIL_DELAY` (3 days) — earlier reverts `BailTooEarly`, on a resolved
+event `AlreadyResolved`, twice `EventBailed`. It sets `bailed[eventId]` and emits `Bailed(eventId)`.
+After that `resolve` reverts `EventBailed` for good and `claim(eventId)` refunds every stake the caller
+holds on every market of that event in full, no fee, zeroing the stakes (so a second `claim` reverts
+`NothingToClaim`). It is the timeout escape hatch for a resolver that never shows up; nothing in the
+engine calls it. (`EventBailed` rather than `Bailed` for the error because Solidity gives events and
+errors one namespace.)
+
+Gas: `resolve` costs ~73k in trusted mode and ~221k with the verifier (`DrandVerifier.verify` alone is
 ~153k). Numbers logged by `forge test -vv` (`test_ResolveGasInTrustedMode`, `test_ResolveWithVerifierAcceptsRealBeacon`).
 
 ## Gate / verification
