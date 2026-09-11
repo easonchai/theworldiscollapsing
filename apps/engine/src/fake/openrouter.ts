@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { appendFileSync, createReadStream } from "node:fs";
-import { mkdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -95,7 +95,34 @@ export function authored(channelId: string, firstHalfSec: number, secondHalfSec:
   };
 }
 
-type Job = { at: number; duration: number; resolution: string };
+type Job = { at: number; duration: number; resolution: string; prompt: string };
+
+// ponytail: FAKE_MEDIA_DIR=<dir> replays real clips already paid for instead of test patterns.
+// Files are named <channel|any>-<resolution>-<anything>.mp4; the channel is read off the prompt's
+// house-style prefix, resolution must match, and a pool is walked round-robin so a three-shot first
+// half gets three different clips when three exist. No match → the ffmpeg pattern as before.
+const MEDIA_DIR = process.env.FAKE_MEDIA_DIR;
+const replayCursor = new Map<string, number>();
+async function replay(prompt: string, resolution: string): Promise<string | null> {
+  if (!MEDIA_DIR) return null;
+  const all = (await readdir(MEDIA_DIR)).filter((f) => f.endsWith(".mp4") && f.includes(`-${resolution}-`)).sort();
+  const channel = /reporter's camera|field footage/i.test(prompt)
+    ? "region"
+    : /press-pool|event television/i.test(prompt)
+      ? "culture"
+      : /news footage|studio/i.test(prompt)
+        ? "politics"
+        : /sports/i.test(prompt)
+          ? "sports"
+          : "any";
+  const own = all.filter((f) => f.startsWith(`${channel}-`));
+  const pool = own.length ? own : all;
+  if (!pool.length) return null;
+  const key = `${channel}-${resolution}`;
+  const i = replayCursor.get(key) ?? 0;
+  replayCursor.set(key, i + 1);
+  return path.join(MEDIA_DIR, pool[i % pool.length]!);
+}
 
 const clips = new Map<string, Promise<string>>();
 function clip(duration: number, resolution: string): Promise<string> {
@@ -194,7 +221,12 @@ export function startFake(port: number): http.Server {
         const body = await read();
         record("video", body);
         const id = `vid_${Math.random().toString(36).slice(2, 10)}`;
-        jobs.set(id, { at: Date.now(), duration: Number(body.duration ?? 6), resolution: String(body.resolution ?? "480p") });
+        jobs.set(id, {
+          at: Date.now(),
+          duration: Number(body.duration ?? 6),
+          resolution: String(body.resolution ?? "480p"),
+          prompt: String(body.prompt ?? ""),
+        });
         return json(202, { id, polling_url: `${url.origin}/api/v1/videos/${id}`, status: "pending" });
       }
 
@@ -202,7 +234,7 @@ export function startFake(port: number): http.Server {
       if (req.method === "GET" && content) {
         const job = jobs.get(content[1]!);
         if (!job) return json(404, { error: { message: "no such job" } });
-        const file = await clip(job.duration, job.resolution);
+        const file = (await replay(job.prompt, job.resolution)) ?? (await clip(job.duration, job.resolution));
         res.writeHead(200, { "content-type": "video/mp4" });
         return void createReadStream(file).pipe(res);
       }
@@ -214,7 +246,7 @@ export function startFake(port: number): http.Server {
         if (!job) return json(404, { error: { message: "no such job" } });
         const polling_url = `${url.origin}/api/v1/videos/${id}`;
         if (Date.now() - job.at < 1000) return json(200, { id, polling_url, status: "in_progress" });
-        await clip(job.duration, job.resolution); // ready before we advertise the URL
+        if (!MEDIA_DIR) await clip(job.duration, job.resolution); // ready before we advertise the URL
         return json(200, {
           id,
           generation_id: `gen-fake-${id}`,
