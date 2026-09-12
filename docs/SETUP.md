@@ -80,9 +80,9 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 
 ### 14. Reactor
 
-- Get a Reactor API key and load credit before a real run. ADR 0002 puts the REAL-timing hackathon run at about $100, and Reactor bills $0.007 per session-second regardless of resolution (confirmed in ticket 09's paid probe). Set `MAX_SPEND_USD` to whatever credit you load; it is the same cumulative cap `World.spendUsd` already enforces for OpenRouter.
+- Get a Reactor API key and load credit before a real run. Reactor bills $0.007 per second of generated media, not per second of session wall clock, and not by resolution. Budget from the media a round produces: a four-channel REAL round at 30 s halves came to about $3.70. Set `MAX_SPEND_USD` to whatever credit you load; it is the same cumulative cap `World.spendUsd` already enforces for OpenRouter.
 - Set `REACTOR_API_KEY` in `apps/engine/.env`; that alone makes `reactor` the default `VIDEO_VENDOR` (set it explicitly to override). The sidecar venv and `REACTOR_PYTHON` are in `docs/RUNBOOK.md`, section 7.
-- Not yet exercised against a live account: everything in `reactor_sidecar.py` is built from the SDK's own source and the fast-h3 schema docs, not a paid probe (see the file's module docstring). `REACTOR_SIDECAR=fake` runs the same `reactor.ts` path against `fake_reactor.py` with no key and the budget off, for a dry run first.
+- Exercised against a live account on 2026-09-12: a DEMO round and a REAL round spent $6.70 by the engine's own meter against $6.18 on the dashboard, so the engine over-records by about 7% and fails closed against a hard balance. Watch that direction rather than the absolute figure. `REACTOR_SIDECAR=fake` runs the same `reactor.ts` path against `fake_reactor.py` with no key and the budget off, so do the dry run first.
 
 ## Secrets you generate yourself
 

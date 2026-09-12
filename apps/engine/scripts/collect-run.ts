@@ -41,7 +41,16 @@ type LogEvent = {
   segments: Map<string, Seg>;
 };
 /** Per-production facts the log reports by channel and seq rather than by event id. */
-type LogRender = { billedS: number; fetchS: number; usd: number; estimateUsd: number; at: number };
+type LogRender = {
+  billedS: number;
+  fetchS: number;
+  usd: number;
+  estimateUsd: number;
+  at: number;
+  /** `null` when the sidecar could not probe the file, which is not the same as a complete one. */
+  recordingS: number | null;
+  fetchAttempts: number;
+};
 
 const logEvents = new Map<string, LogEvent>();
 const renders = new Map<string, LogRender>();
@@ -85,6 +94,8 @@ for (const line of (await readFile(logPath, "utf8")).split("\n")) {
         usd: Number(j.usd),
         estimateUsd: Number(j.estimateUsd),
         at,
+        recordingS: typeof j.recording_s === "number" ? j.recording_s : null,
+        fetchAttempts: Number(j.fetch_attempts ?? 1),
       });
       break;
     case "session slot wait":
@@ -197,7 +208,12 @@ for (const row of rows) {
   const waitedMs = slotWaits.get(key) ?? 0;
   const cutForThis = cutErrors.filter((c) => c.file.startsWith(`${round}-${row.channelId}-`));
   const worstCut = cutForThis.reduce((m, c) => Math.max(m, Math.abs(c.error)), 0);
-  const note = `slot_wait_ms=${waitedMs}; estimate=$${rd.estimateUsd}; worst_cut_err_s=${r2(worstCut)}; outcome=${row.outcome}`;
+  // Ticket 32: the recording against the plan it was meant to cover. A short file is where the last
+  // branch's missing seconds come from, and reading it per session next to `fetch_s` and
+  // `fetch_attempts` is how the contended-fetch hypothesis gets tested on a four-channel round.
+  const lastEndT = [...le.segments.values()].reduce((m, s) => Math.max(m, s.end), 0);
+  const shortBy = rd.recordingS === null || lastEndT === 0 ? null : r2(Math.max(0, lastEndT - rd.recordingS));
+  const note = `slot_wait_ms=${waitedMs}; estimate=$${rd.estimateUsd}; worst_cut_err_s=${r2(worstCut)}; recording_short_by_s=${shortBy ?? "?"}; outcome=${row.outcome}`;
   sessionRows.push(
     [
       `${round}-${row.channelId}`,
@@ -231,6 +247,10 @@ for (const row of rows) {
     author_to_onchain_s: authored && onChain ? r2((onChain - authored) / 1000) : null,
     cost_usd_row: row.costUsd,
     worst_cut_err_s: r2(worstCut),
+    fetch_attempts: rd.fetchAttempts,
+    recording_s: rd.recordingS,
+    last_end_t: lastEndT || null,
+    recording_short_by_s: shortBy,
   });
 }
 
