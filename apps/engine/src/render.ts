@@ -23,12 +23,17 @@ export const CHANNEL_PREFIX: Record<string, string> = {
   sports: "Live sports broadcast footage, broadcast camera, real-time speed:",
   politics:
     "Television news footage, handheld news camera or fixed studio camera, real-time, charts and graphs on the studio screen where the shot is in a studio:",
-  culture: "Live event television coverage, ENG press-pool camera, stage light as it is, real-time:",
+  culture: "Live event television coverage, press camera, stage light as it is, real-time:",
   region: "Local television news field footage, reporter's camera, natural light, real-time:",
 };
 const DEFAULT_PREFIX = "Live television broadcast footage, broadcast camera, real-time speed:";
-/** MiniMax has no negative-prompt field, so the constraints ride in the prompt as plain statements. */
-export const STYLE_SUFFIX = "Real-time speed. No slow motion. Not cinematic. No film look. Natural light as it is.";
+/**
+ * MiniMax has no negative-prompt field, so the constraints ride in the prompt as plain statements.
+ * "No captions, no logos" lives here (ticket 09 prompt v2) so every clip carries it once, and
+ * `keyArtPrompt` no longer repeats it.
+ */
+export const STYLE_SUFFIX =
+  "Real-time speed. No slow motion. Not cinematic. No film look. Natural light as it is. No captions, no logos.";
 /** Prompts over ~2000 chars are risky on MiniMax and short ones follow better; this is the ceiling. */
 const MAX_PROMPT = 600;
 
@@ -224,4 +229,4 @@ const round = (n: number) => Math.round(n * 100) / 100;
 
 /** The still that seeds every first-half clip, so it has to be in the same house style as they are. */
 export const keyArtPrompt = (ev: EventRow) =>
-  clipPrompt(ev.channelId, `A still frame from live coverage of: ${ev.title}. ${ev.premise} No captions, no logos.`);
+  clipPrompt(ev.channelId, `A still frame from live coverage of: ${ev.title}. ${ev.premise}`);

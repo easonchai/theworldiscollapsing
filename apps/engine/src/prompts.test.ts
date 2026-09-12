@@ -88,4 +88,13 @@ describe("clip prompts", () => {
     }
     expect(keyArtPrompt(ev("politics"))).toMatch(/charts and graphs/i);
   });
+
+  it("prompt v2 (ticket 09): culture drops the printed camera token, and the suffix alone carries the no-text rule", () => {
+    expect(CHANNEL_PREFIX.culture).not.toMatch(/ENG press-pool/i);
+    expect(CHANNEL_PREFIX.culture).toMatch(/press camera/i);
+    expect(STYLE_SUFFIX).toContain("No captions, no logos.");
+    // keyArtPrompt no longer states the rule itself; the suffix is the only source of it.
+    const art = keyArtPrompt({ channelId: "sports", title: "T", premise: "P" } as EventRow);
+    expect(art.match(/No captions, no logos\./g)).toHaveLength(1);
+  });
 });
