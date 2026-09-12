@@ -34,15 +34,21 @@ const fromViem = (client: WalletClient): Signer => ({
   writeContract: (request) => client.writeContract(request),
 });
 
+/** No confirmation modal on any write: the bet is already confirmed by the button that placed it. */
+const silent = { uiOptions: { showWalletUIs: false } };
+
 /**
  * Privy wraps the permissionless client by spreading it and replacing `sendTransaction`, so its
- * `writeContract` still closes over the bare client and skips Privy's confirmation modal. Encoding
- * the call and sending it through the wrapper keeps the modal — and the paymaster — on every write.
+ * `writeContract` still closes over the bare client and skips the paymaster. Encoding the call and
+ * sending it through the wrapper keeps gas sponsored on every write.
  */
 const fromSmart = (client: SmartWalletClientType): Signer => ({
-  signMessage: ({ message }) => client.signMessage({ message }),
+  signMessage: ({ message }) => client.signMessage({ message }, silent),
   writeContract: (request) =>
-    client.sendTransaction({ to: request.address, data: encodeFunctionData(request), value: request.value }),
+    client.sendTransaction(
+      { to: request.address, data: encodeFunctionData(request), value: request.value },
+      silent,
+    ),
 });
 
 export type WalletState = {
@@ -160,7 +166,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           loginMethods: ["email"],
           defaultChain: chain,
           supportedChains: [chain],
-          embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
+          embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" }, showWalletUIs: false },
           appearance: { theme: "dark", accentColor: "#F0A72E" },
         }}
       >
