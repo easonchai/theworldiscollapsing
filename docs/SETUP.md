@@ -19,12 +19,13 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 | 11 | **World** developer app (app id, action, RP id, RP signing key) + **Selfie Check beta** + sandbox device | Selfie Check gating instead of the checkbox (World prize) | web `NEXT_PUBLIC_WORLD_APP_ID`, `NEXT_PUBLIC_WORLD_ACTION`, `WORLD_APP_ID`, `WORLD_RP_ID`, `WORLD_RP_SIGNING_KEY`, `GATE_MODE=world`, `NEXT_PUBLIC_GATE_MODE=world` | beta approval, unknown. Apply now |
 | 12 | **Chainlink CRE** login (`cre login` or `CRE_API_KEY`), deploy access, **Confidential Workflows beta** | simulate and deploy the reveal-key workflow (Chainlink prize) | `packages/cre/.env`; engine `BRANCH_SEAL=1`, `BRANCH_SEAL_ROOT`, `REVEAL_SECRET` | beta approval, unknown. Apply now |
 | 13 | A public URL for the laptop (Tailscale Funnel or cloudflared) | only for branch sealing + CRE with real video, because sealing needs the local media store and the CRE workflow must reach the engine | engine `MEDIA_BASE_URL` | minutes |
+| 14 | **Reactor** API key + credit | real `fast-h3` video (the default vendor once `REACTOR_API_KEY` is set; OpenRouter is the fallback) | engine `REACTOR_API_KEY`, `MAX_SPEND_USD` (set to the credit loaded) | minutes |
 
 ## Where this stands, 2026-09-10
 
 **Provisioned and exercised**: 1 OpenRouter (real authoring and real MiniMax clips, two events), 2 Vercel Blob (media serving from its public host), 3 Neon, 4 Base Sepolia deployer (contracts live, `Gate.owner()` confirmed), 5 Etherscan (all four contracts verified on Basescan), 6 resolver + treasury (three events created and resolved on chain), 7 Privy (allowed origins now include the production domain; the login modal opens there with a clean console, but no login has been completed), 8 Vercel (production deployment live), 9 Subgraph Studio (deployed, indexing, read by `/markets`). Addresses and URLs are in the root README's **Live** table.
 
-**Still missing**: 10 the gateway API key; 11 World Selfie Check beta; 12 CRE deploy access and the Confidential Workflows beta; 13 a public URL for the laptop, only needed for sealing.
+**Still missing**: 10 the gateway API key; 11 World Selfie Check beta; 12 CRE deploy access and the Confidential Workflows beta; 13 a public URL for the laptop, only needed for sealing; 14 Reactor credit: the sidecar and `reactor.ts` are wired up (`docs/RUNBOOK.md` section 7), but no paid session has run yet.
 
 ## Details
 
@@ -77,6 +78,12 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 - Apply for deploy access (`cre account access`) and, separately, the Confidential Workflows private beta (docs.chain.link/cre/account/confidential-workflows-access).
 - Fill `packages/cre/.env` from its `.env.example`; `SECRET_BRANCH_SEAL_ROOT` and `SECRET_REVEAL_SECRET` must equal the engine's `BRANCH_SEAL_ROOT` and `REVEAL_SECRET`. Full steps in `packages/cre/README.md`.
 
+### 14. Reactor
+
+- Get a Reactor API key and load credit before a real run. ADR 0002 puts the REAL-timing hackathon run at about $100, and Reactor bills $0.007 per session-second regardless of resolution (confirmed in ticket 09's paid probe). Set `MAX_SPEND_USD` to whatever credit you load; it is the same cumulative cap `World.spendUsd` already enforces for OpenRouter.
+- Set `REACTOR_API_KEY` in `apps/engine/.env`; that alone makes `reactor` the default `VIDEO_VENDOR` (set it explicitly to override). The sidecar venv and `REACTOR_PYTHON` are in `docs/RUNBOOK.md`, section 7.
+- Not yet exercised against a live account: everything in `reactor_sidecar.py` is built from the SDK's own source and the fast-h3 schema docs, not a paid probe (see the file's module docstring). `REACTOR_SIDECAR=fake` runs the same `reactor.ts` path against `fake_reactor.py` with no key and the budget off, for a dry run first.
+
 ## Secrets you generate yourself
 
 ```bash
@@ -96,7 +103,7 @@ printf '0x%s\n' "$(openssl rand -hex 32)"         # REVEAL_SECRET
 
 | Feature | Needs | Without it |
 |---|---|---|
-| Real event video and authoring | 1 + 2 (or 13) | ffmpeg test patterns, canned events, no cost |
+| Real event video and authoring | 1 (authoring always; also video unless 14 is set up) + 2 (or 13); 14 replaces 1's video path with Reactor | ffmpeg test patterns, canned events, no cost |
 | Testnet deployment | 3, 4, 5, 6 | everything runs on anvil |
 | Email login, embedded wallets | 7 | anvil dev wallet, local only |
 | Markets list, positions, authoring context | 9 | those two pages show "subgraph not configured"; authoring skips pool context |
