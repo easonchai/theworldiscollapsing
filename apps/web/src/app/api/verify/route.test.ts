@@ -1,6 +1,22 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { parseEther } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { publicClient } from "@/lib/chain";
+import { GAS_DRIP, publicClient } from "@/lib/chain";
+
+// The owner's wallet client is the only thing the route uses to spend, so it is the one fake.
+const sent: { to?: string; value?: bigint }[] = [];
+vi.mock("viem", async (importOriginal) => {
+  const viem = await importOriginal<typeof import("viem")>();
+  return {
+    ...viem,
+    createWalletClient: () => ({
+      sendTransaction: async (args: { to: string; value: bigint }) => {
+        sent.push(args);
+        return "0xdeadbeef";
+      },
+    }),
+  };
+});
 import { verifyGasCap } from "@/lib/limits";
 import { buildVerifyMessage } from "@/lib/verify-message";
 
@@ -30,10 +46,16 @@ const post = async (payload: Record<string, unknown>) =>
   POST(new Request("http://station.local/api/verify", { method: "POST", body: JSON.stringify(payload) }));
 
 /** Whether the gate says this address is already verified. Nothing here ever touches a chain. */
-const gateSays = (verified: boolean) =>
-  vi.spyOn(publicClient, "readContract").mockResolvedValue(verified as never);
+const gateSays = (verified: boolean, balance = parseEther("1")) => {
+  vi.spyOn(publicClient, "getBalance").mockResolvedValue(balance);
+  vi.spyOn(publicClient, "waitForTransactionReceipt").mockResolvedValue({ status: "success" } as never);
+  return vi.spyOn(publicClient, "readContract").mockResolvedValue(verified as never);
+};
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  sent.length = 0;
+});
 
 describe("POST /api/verify", () => {
   it("still requires a wallet signature", async () => {
@@ -54,14 +76,23 @@ describe("POST /api/verify", () => {
     const read = gateSays(true);
     const res = await post(await body());
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ verified: true, tx: null });
+    await expect(res.json()).resolves.toEqual({ verified: true, tx: null, gas: null });
     expect(read).toHaveBeenCalledWith(expect.objectContaining({ functionName: "verified" }));
+    expect(sent).toEqual([]);
+  });
+
+  it("drips gas into a verified wallet that cannot pay for its own faucet call", async () => {
+    gateSays(true, 0n);
+    const res = await post(await body());
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ verified: true, tx: null, gas: "0xdeadbeef" });
+    expect(sent).toEqual([{ to: account.address, value: GAS_DRIP }]);
   });
 
   it("stops spending gas once the hourly cap is used up", async () => {
     gateSays(false);
-    // Whoever got there first — 30 fresh addresses in an hour is the whole budget.
-    for (let i = 0; i < 30; i++) expect(verifyGasCap.take()).toBe(true);
+    // Whoever got there first — 30 transactions in an hour is the whole budget, drips included.
+    while (verifyGasCap.take());
     const res = await post(await body());
     expect(res.status).toBe(429);
     await expect(res.json()).resolves.toMatchObject({ verified: false });
