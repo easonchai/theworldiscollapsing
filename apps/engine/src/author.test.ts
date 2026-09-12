@@ -93,8 +93,9 @@ describe("author", () => {
       expect(sys).toContain(CHANNEL_STYLE[channelId]!);
       expect(sys).toContain("Never cinematic, never slow motion");
       expect(sys).toMatch(/real footage as broadcast on television, in real time/);
-      // graphics are allowed in frame now, but nothing may depend on reading them
-      expect(sys).toMatch(/nothing may depend on them being read/);
+      // v3 allowed graphics so long as nothing depended on reading them; v4 stops the shot text
+      // naming them at all, because a named logo beat the suffix that forbade it (ticket 29)
+      expect(sys).toMatch(/Never write text, or the things that carry it, into a shot/);
     }
   });
 
@@ -103,7 +104,7 @@ describe("author", () => {
     await author(politics).author({ ...CTX, channelId: "politics" });
     const sys: string = politics.calls[0]!.messages[0]!.content;
     expect(sys).toMatch(/CHARTS, GRAPHS, MAPS or GAUGES/);
-    expect(sys).toMatch(/chart, graph, map or gauge in shot in most studio shots/);
+    expect(sys).toMatch(/chart, graph, map or gauge on the studio screen in most studio shots/);
     expect(sys).toMatch(/global warming/i);
 
     const sports = chatFetch([good]);
@@ -220,6 +221,33 @@ describe("author", () => {
     const a = await author(f).author(CTX);
     expect(a.title).toBe("Eventual Recount");
     expect(a.outcomes).toEqual(["Option B holds", "Result stands", "Draw"]);
+  });
+
+  /**
+   * The v3 suffix told the video model "no logos" and lost, because the authored shot said
+   * "stage lights and award logo visible" and a named thing beats a constraint appended after it.
+   * The ban has to sit where the shot is written. Politics keeps its chart: the shape carries it.
+   */
+  it("forbids the shot text from naming anything that carries lettering (ticket 29, v4)", async () => {
+    for (const channelId of ["sports", "politics", "culture", "region"]) {
+      const f = chatFetch([good]);
+      await author(f).author({ ...CTX, channelId });
+      const sys: string = f.calls[0]!.messages[0]!.content;
+      for (const thing of ["logo", "sign", "banner", "step-and-repeat backdrop", "scoreboard", "hoarding"])
+        expect(sys, `${channelId}: ${thing}`).toMatch(new RegExp(`no ${thing}`, "i"));
+      expect(sys, channelId).toMatch(/renders any lettering as gibberish/);
+      expect(sys, `${channelId}: politics exception`).toMatch(/Politics is the only exception/);
+    }
+    // culture produced the worst failure, so its own house style says where to point the camera
+    expect(CHANNEL_STYLE.culture).toMatch(/Frame the people, never the backdrop behind them/);
+  });
+
+  it("asks for real names in the labels, not placeholders (ticket 29, v4)", async () => {
+    // The v3 prompt said "write the name of the thing only" and got back Nominee A / B / C, which
+    // fails the same rule by vagueness instead of by clutter. Nothing to strip, so it is asked for.
+    const f = chatFetch([good]);
+    await author(f).author(CTX);
+    expect(f.calls[0]!.messages[0]!.content).toMatch(/never a placeholder like "Nominee A"/);
   });
 
   it("leaves a shot list that is within the target alone", async () => {

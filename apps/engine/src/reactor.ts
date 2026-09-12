@@ -239,6 +239,11 @@ function runSidecar(
             first_media_t: msg.first_media_t,
             fetch_attempts: msg.fetch_attempts,
             recording_s: msg.recording_s,
+            // A retry happened and only the sidecar knows why, on stderr. Nothing keeps stderr on
+            // the success path, so ticket 26 (recording short, re-download) and ticket 24 (dropped
+            // connection) were indistinguishable in the 2026-09-12 log. Carried only when there is
+            // something to explain, because the tail is noisy.
+            ...((msg.fetch_attempts as number) > 1 ? { stderr_tail: stderrTail.slice(-1000) } : {}),
           });
           succeed({
             recording: msg.recording as string,

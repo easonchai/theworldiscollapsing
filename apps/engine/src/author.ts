@@ -21,7 +21,7 @@ Pacing: real time, live news.`,
   culture: `Culture.
 Subject: live coverage of an event as it happens — award stages, red carpets, concert stages, gallery openings, talent-show finals. Named artists, hosts and works that recur.
 Camera: an ENG press-pool camera — shoulder-held in the scrum, or a hard camera locked on the stage.
-On screen: the stage and its lighting exactly as it is, presenters, nominees, the audience, photographers.
+On screen: the stage and its lighting exactly as it is, presenters, nominees, the audience, photographers. Frame the people, never the backdrop behind them: a step-and-repeat board or an award logo renders as gibberish lettering and takes over the shot.
 Pacing: real time, as it happens.`,
   region: `Region: one coastal city state.
 Subject: local-news field reportage — the council chamber, harbour works, the seawall, the ferry, the market, storm damage, festivals, local disputes. The same landmarks, streets and councillors recur.
@@ -41,10 +41,12 @@ House style, every shot on every channel: this is real footage as broadcast on t
 Hard rules:
 - The first half MUST end level. No outcome may be foreshadowed, hinted at or made more likely by anything in it. A viewer who has seen the whole first half must still believe every outcome is possible.
 - Give exactly ${ctx.nOutcomes} outcomes. They are mutually exclusive and exhaustive: exactly one happens. Label them plainly, so nobody can misread which one they are betting on.
-- title and outcomes are read by a viewer next to their money. Write the name of the thing only. No numbering, no "Event ${ctx.seq}", no "Outcome 1", no prefix of any kind.
+- title and outcomes are read by a viewer next to their money. Write the name of the thing only. No numbering, no "Event ${ctx.seq}", no "Outcome 1", no prefix of any kind. Name the real people, clubs, parties and works of this world, the way the canon names them: "Jun Park wins the award", never a placeholder like "Nominee A", "Candidate B" or "the favourite".
 - One second-half shot list per outcome, in the same order as the outcomes. Each branch continues from the last frame of the first half.
 - Every shot is a video prompt of 6 to 15 seconds. Write one or two plain sentences, no paragraphs: start with the camera position of this channel, then what it sees. Short prompts render closer to what you asked for.
-- No dialogue, no captions, no subtitles. On-screen graphics — scoreboards, tickers, charts, lower thirds — may be in frame as broadcast furniture, but nothing may depend on them being read: rendered text comes out as gibberish. On politics, put a chart, graph, map or gauge in shot in most studio shots and say what it shows.
+- No dialogue, no captions, no subtitles.
+- Never write text, or the things that carry it, into a shot. No logo, no sign, no banner, no step-and-repeat backdrop, no scoreboard, no ticker, no lower third, no name card, no hoarding, no printed slogan on clothing. The video model renders any lettering as gibberish, and a shot that names one puts that gibberish in the middle of the frame. Write the people, the action and the light instead: what the camera is pointed at and what it is doing.
+- Politics is the only exception, and it is a shape, not words: put a chart, graph, map or gauge on the studio screen in most studio shots and say what it shows. A rising bar or a red zone on a map reads at a glance. The numbers on it do not have to be legible.
 - The first-half shot seconds must total ${ctx.firstHalfSec} seconds (within 10%).
 - Each branch's shot seconds must total ${ctx.secondHalfSec} seconds (within 10%).
 - cards: 1 or 2 studio cards, the graphics the broadcast cuts to between first-half clips. Each has afterShot (the 0-based index of the first-half shot it follows, so it must be smaller than the number of first-half shots), a title under 48 characters, and exactly two short stat lines, also under 48 characters. Write them as a studio would: a heading and two numbers or facts about this event.
