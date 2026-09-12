@@ -140,6 +140,10 @@ const workDir = path.join(mediaDir, ".work");
 const swept = await sweepWorkDir(workDir);
 if (swept.dirs) log("swept work dir", { dirs: swept.dirs, bytes: swept.bytes });
 
+// Declared here rather than beside the signal handlers below: a live Reactor session has to carry
+// the signal so shutdown can close it and true up its reservation (ticket 31).
+const ac = new AbortController();
+
 let author = stubAuthor;
 let render: Render = stubRender({
   workDir,
@@ -194,6 +198,9 @@ if (!stubMode) {
       workDir,
       store: media,
       budget,
+      firstHalfSec: timing.firstHalfMs / 1000,
+      secondHalfSec: timing.secondHalfMs / 1000,
+      signal: ac.signal,
       log,
     });
   } else {
@@ -252,15 +259,20 @@ const deps: Deps = {
     : undefined,
 };
 
-const ac = new AbortController();
 /**
  * A channel sees the abort only between steps, and a step can be mid-sleep for a 60 s half or a
  * 15-minute render poll. Waiting that long with nothing on stdout reads as a hung engine and invites
  * `kill -9`, which orphans the node grandchild pnpm/tsx spawned — still driving the chain, the
  * database and the spend counter. So: say it, then leave. Every step is idempotent against chain
  * state, so the next start resumes where this one stopped.
+ *
+ * 8 s, not the 3 s this held until ticket 31, and the extra 5 s buys exactly one thing: a live
+ * Reactor session now sees the abort, and the worst case for closing it is SIGTERM, 3 s, SIGKILL,
+ * 2 s to reap, and then one true-up charge to persist. Exiting at 3 s landed inside that window and
+ * left the session's up-front reservation on World.spendUsd with nothing behind it. This is still
+ * far short of letting a channel finish a step, which is the thing the paragraph above refuses.
  */
-const SHUTDOWN_GRACE_MS = 3_000;
+const SHUTDOWN_GRACE_MS = 8_000;
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     if (ac.signal.aborted) process.exit(1); // second signal: stop waiting for the channels

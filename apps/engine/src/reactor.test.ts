@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -34,6 +34,27 @@ rl.on("line", () => {
 async function writeScript(name: string, body: string): Promise<string> {
   const file = path.join(dir, name);
   await writeFile(file, `${AFTER_TWO_LINES}${body}\n  }\n});\n`);
+  return file;
+}
+
+/** Same, but first copies the `plan` line to `planFile`, so a test can assert what was enqueued. */
+async function writePlanCapturingScript(name: string, planFile: string, body: string): Promise<string> {
+  const file = path.join(dir, name);
+  await writeFile(
+    file,
+    `const readline = require("node:readline");
+const fs = require("node:fs");
+const rl = readline.createInterface({ input: process.stdin });
+let n = 0;
+rl.on("line", (line) => {
+  n++;
+  if (n === 2) {
+    fs.writeFileSync(${JSON.stringify(planFile)}, line);
+${body}
+  }
+});
+`,
+  );
   return file;
 }
 
@@ -574,6 +595,169 @@ describe("makeReactorRender", () => {
     expect(budget.spent()).toBeLessThanOrEqual(0.5);
     for (const s of spendLog) expect(s.totalUsd as number).toBeLessThanOrEqual(0.5);
   }, 20_000);
+
+  it("SIGTERM during a live session trues up what Reactor billed instead of stranding the reservation", async () => {
+    // Ticket 31: shutdown aborted the channels and hard-exited, but nothing reached the sidecar, so
+    // the session's up-front reservation was charged and never trued up. Four kills on 2026-09-12
+    // put $9.69 of phantom spend on World.spendUsd, more than the four rounds actually cost.
+    const sidecar = await writeScript(
+      "aborted.cjs",
+      `    console.log(JSON.stringify({ event: "ready" }));
+    setInterval(() => {}, 1000); // only the abort's SIGTERM should end this`,
+    );
+    const budget = recordingBudget();
+    const ac = new AbortController();
+    const render = makeReactorRender({
+      python: process.execPath,
+      sidecar,
+      sessions: 1,
+      workDir: path.join(dir, "work-abort"),
+      store: recordingStore(),
+      budget,
+      signal: ac.signal,
+      log: () => {},
+    });
+
+    const pending = render.render(ev);
+    await new Promise((r) => setTimeout(r, 800)); // long enough for the child to spawn and reach ready
+    ac.abort();
+
+    const caught = await pending.then(() => null, (e: unknown) => e);
+    expect(caught).toBeInstanceOf(SidecarError);
+    expect(caught).toHaveProperty("message", expect.stringMatching(/shutting down/));
+
+    // The whole point: `ready` had arrived, so the session really was billing, and what is left on
+    // the counter is that billing and nothing else.
+    const billedS = (caught as SidecarError).billedS;
+    expect(billedS).not.toBeNull();
+    const spent = budget.charges.reduce((n, c) => n + c.usd, 0);
+    expect(spent).toBeCloseTo(billedS! * 0.007, 6);
+    expect(spent).toBeGreaterThan(0);
+    expect(spent).toBeLessThan(RESERVED_USD); // a fraction of a second billed, not the 184 s reserved
+
+    // And a shutting-down engine never opens another session: produce() retries a failed render,
+    // which before this check reserved again inside the grace period and stranded that instead.
+    const before = budget.charges.length;
+    await expect(render.render(ev)).rejects.toThrow(/shutting down/);
+    expect(budget.charges).toHaveLength(before);
+  }, 20_000);
+
+  it("an abort during the download trues up from the disconnected billed_s, not the wall clock", async () => {
+    // The session stops billing at `disconnected` and the download that follows is free, so an
+    // abort partway through one must not charge it. Round D's region fetch ran 176.7 s, which is
+    // $1.24 of wall clock that Reactor never billed for.
+    const sidecar = await writeScript(
+      "abort-in-fetch.cjs",
+      `    console.log(JSON.stringify({ event: "ready" }));
+    console.log(JSON.stringify({ event: "segment", name: "first", start_t: 0, end_t: 10 }));
+    console.log(JSON.stringify({ event: "disconnected", billed_s: 20.5 }));
+    setInterval(() => {}, 1000); // "downloading" until the abort's SIGTERM`,
+    );
+    const budget = recordingBudget();
+    const ac = new AbortController();
+    const render = makeReactorRender({
+      python: process.execPath,
+      sidecar,
+      sessions: 1,
+      workDir: path.join(dir, "work-abort-fetch"),
+      store: recordingStore(),
+      budget,
+      signal: ac.signal,
+      log: () => {},
+    });
+
+    const pending = render.render(ev);
+    await new Promise((r) => setTimeout(r, 800));
+    ac.abort();
+    await expect(pending).rejects.toThrow(/shutting down/);
+
+    expect(budget.charges.reduce((n, c) => n + c.usd, 0)).toBeCloseTo(20.5 * 0.007, 6);
+  }, 20_000);
+
+  it("trims a plan that would run past the recording ceiling, never below a segment's airtime", async () => {
+    // Ticket 32: no recording has come back longer than 131.70905 s. Round D's region plan ran to
+    // 142.0 s, so its last branch published 10.31 s short while the event was marked READY.
+    const planFile = path.join(dir, "ceiling-plan.json");
+    const sidecar = await writePlanCapturingScript(
+      "ceiling.cjs",
+      planFile,
+      `    console.log(JSON.stringify({ event: "ready" }));
+    console.log(JSON.stringify({ event: "segment", name: "first", start_t: 0, end_t: 31 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-0", start_t: 31, end_t: 61 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-1", start_t: 61, end_t: 91 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-2", start_t: 91, end_t: 121 }));
+    console.log(JSON.stringify({ event: "done", recording: "/fake/session.mp4", billed_s: 121, fetch_s: 3 }));
+    process.exit(0);`,
+    );
+    // 33 s halves: the most the author's own 10% overrun lets through against a 30 s REAL target,
+    // and four of them come to 132 s, which is past the ceiling once a slow build stretches them.
+    const longScript: Authored = {
+      ...script,
+      outcomes: ["A", "B", "C"],
+      firstHalf: [11, 11, 11].map((seconds) => ({ prompt: "first", seconds })),
+      branches: [0, 1, 2].map((b) => [11, 11, 11].map((seconds) => ({ prompt: `branch ${b}`, seconds }))),
+      canonUpdates: [["A"], ["B"], ["C"]],
+    };
+    const longEv: EventRow = { ...ev, id: "0xreactorceiling", script: longScript } as EventRow;
+    const logged: Array<Record<string, unknown>> = [];
+    await makeReactorRender({
+      python: process.execPath,
+      sidecar,
+      sessions: 1,
+      workDir: path.join(dir, "work-ceiling"),
+      store: recordingStore(),
+      budget: recordingBudget(),
+      ffmpeg: recordingFfmpeg().run,
+      firstHalfSec: 30,
+      secondHalfSec: 30,
+      log: (m, extra) => void (m === "plan trimmed to the recording ceiling" && logged.push(extra ?? {})),
+    }).render(longEv);
+
+    const sent = JSON.parse(await readFile(planFile, "utf8")) as {
+      segments: { name: string; clips: { seconds: number }[] }[];
+    };
+    const segSec = (name: string) =>
+      sent.segments.find((s) => s.name === name)!.clips.reduce((n, c) => n + c.seconds, 0);
+    const total = sent.segments.reduce((n, s) => n + s.clips.reduce((m, c) => m + c.seconds, 0), 0);
+
+    // 131.7 s of ceiling divided by the 1.08x slowest measured build.
+    expect(total).toBeLessThanOrEqual(131.7 / 1.08);
+    expect(total).toBeLessThan(132); // it really was trimmed, not passed through
+    // Trimmed to the airtime and no further: a branch shorter than the second half is the dead air
+    // this ticket exists to prevent, so the trim stops there rather than taking the easiest seconds.
+    for (const name of ["first", "branch-0", "branch-1", "branch-2"]) expect(segSec(name)).toBeGreaterThanOrEqual(30);
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatchObject({ askedSec: 132, trimmedSec: total });
+  }, 20_000);
+
+  it("refuses a plan the ceiling cannot hold before any session opens", async () => {
+    // Five outcomes at a 30 s second half needs 180 s of recording before a single shot is written
+    // long. Nothing to trim, so the money must not be spent at all: the alternative is paying for a
+    // session whose last two branches are simply absent from the file.
+    const budget = recordingBudget();
+    const wideScript: Authored = {
+      ...script,
+      outcomes: ["A", "B", "C", "D", "E"],
+      firstHalf: [{ prompt: "first", seconds: 10 }],
+      branches: [0, 1, 2, 3, 4].map((b) => [{ prompt: `branch ${b}`, seconds: 30 }]),
+      canonUpdates: [["A"], ["B"], ["C"], ["D"], ["E"]],
+    };
+    const wideEv: EventRow = { ...ev, id: "0xreactorwide", script: wideScript } as EventRow;
+    const render = makeReactorRender({
+      python: process.execPath,
+      sidecar: path.join(dir, "unused-wide.cjs"), // never spawned: the plan is refused first
+      sessions: 1,
+      workDir: path.join(dir, "work-wide"),
+      store: recordingStore(),
+      budget,
+      firstHalfSec: 30,
+      secondHalfSec: 30,
+      log: () => {},
+    });
+
+    await expect(render.render(wideEv)).rejects.toThrow(/recording ceiling/);
+    expect(budget.charges).toHaveLength(0);
+  });
 
   it("SidecarError carries null billedS only when the error happens before ready", () => {
     const before = new SidecarError("x", null);

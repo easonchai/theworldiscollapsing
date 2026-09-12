@@ -1,4 +1,4 @@
-import { Authored, type Shot } from "./authored.js";
+import { Authored, MIN_SHOT_SEC, type Shot } from "./authored.js";
 import { eventIdFor, type Author, type AuthorCtx } from "./machine.js";
 import { SchemaError, type OpenRouter, type Reasoning } from "./openrouter.js";
 
@@ -109,9 +109,6 @@ async function previousPools(
   }
 }
 
-// Must match `Shot.seconds`'s floor in authored.ts: Reactor fast-h3 rejects anything under
-// 5.167 s, so trimming a shot down to 5 here would only move the failure to `enqueue`.
-const MIN_SHOT_SEC = 6;
 const OVERRUN = 1.1; // the tolerance the prompt asks for, enforced here because video is billed per second
 
 const totalSec = (shots: Shot[]): number => shots.reduce((n, s) => n + s.seconds, 0);
