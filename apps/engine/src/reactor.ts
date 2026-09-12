@@ -104,7 +104,7 @@ type SidecarResult = {
 
 /** Line-buffered JSON-per-line protocol client over one child process's stdio. */
 function runSidecar(
-  cfg: { python: string; sidecar: string },
+  cfg: { python: string; sidecar: string; log: (msg: string, extra?: Record<string, unknown>) => void },
   work: string,
   segments: PlanSegment[],
   deadlineMs: number,
@@ -197,8 +197,16 @@ function runSidecar(
           return;
         case "segment":
           segResults.set(msg.name as string, { start: msg.start_t as number, end: msg.end_t as number });
+          // The only record of where a segment sat in the session recording: the work directory is
+          // swept after the cut, so without this line the `-c copy` boundary error (spec section 10)
+          // cannot be measured after the fact.
+          cfg.log("sidecar segment", { work, name: msg.name, start_t: msg.start_t, end_t: msg.end_t });
           return;
         case "done":
+          // `first_media_t` says when the first frame existed, in the same clock the `segment`
+          // offsets use. The recording is media-backed, so if it starts at that frame rather than
+          // at `ready`, every `-ss` cut is shifted by it. Logged so the next run can measure which.
+          cfg.log("sidecar done", { work, billed_s: msg.billed_s, fetch_s: msg.fetch_s, first_media_t: msg.first_media_t });
           succeed({
             recording: msg.recording as string,
             billedS: msg.billed_s as number,
@@ -212,8 +220,13 @@ function runSidecar(
           // with our own wall clock since `ready`, which is what the sidecar's own billed_s measures.
           fail(`sidecar error at stage ${msg.stage}: ${msg.reason}`, msg.billed_s as number | undefined);
           return;
+        case "clip":
+          // Nothing to act on, but a clip's own build time is otherwise invisible to the engine:
+          // `billed_s` is the whole session, and this is the only per-clip number Reactor gives us.
+          cfg.log("sidecar clip", { work, id: msg.id, state: msg.state, t: msg.t });
+          return;
         default:
-          return; // "clip" progress events: nothing to act on but "segment"/"done"/"error"
+          return;
       }
     }
 
@@ -281,9 +294,26 @@ export function makeReactorRender(cfg: {
       try {
         await mkdir(dir, { recursive: true });
 
+        // The watchdog is also the spend ceiling for a session already running: nothing samples
+        // cost mid-session, so whatever the deadline allows, the true-up pays for. On 2026-09-12 a
+        // stalled DEMO session rode a 234 s deadline to $1.58 against a $1.35 cap. Bound it by the
+        // seconds the cap can still afford, so a hang cannot overrun the cap the way that one did.
+        // `spent()` already includes this session's estimate, which is why the estimate is added
+        // back: it is the session's own reservation, not someone else's spend.
+        const affordableSec = (cfg.budget.capUsd - cfg.budget.spent() + estimateUsd) / USD_PER_SEC;
+        const cappedMs = Math.max(1_000, Math.min(deadlineMs(estimateSec), Math.floor(affordableSec * 1000)));
+        if (cappedMs < deadlineMs(estimateSec)) {
+          cfg.log("session deadline bounded by budget", {
+            channelId: ev.channelId,
+            seq: ev.seq,
+            deadlineMs: cappedMs,
+            wouldHaveBeenMs: deadlineMs(estimateSec),
+          });
+        }
+
         let result: SidecarResult;
         try {
-          result = await runSidecar({ python: cfg.python, sidecar: cfg.sidecar }, dir, buildPlan(ev), deadlineMs(estimateSec));
+          result = await runSidecar({ python: cfg.python, sidecar: cfg.sidecar, log: cfg.log }, dir, buildPlan(ev), cappedMs);
         } catch (e) {
           const billedS = e instanceof SidecarError ? e.billedS : null;
           const trueUp = billedS === null ? -estimateUsd : billedS * USD_PER_SEC - estimateUsd;

@@ -167,6 +167,66 @@ describe("makeReactorRender", () => {
     expect(budget.charges[1]!.usd).toBeCloseTo(20.5 * 0.007 - ESTIMATE_USD, 6);
   }, 20_000);
 
+  it("bounds the watchdog by what the cap can still afford, so a hang cannot overrun it", async () => {
+    // A stalled session rode its 234 s watchdog to $1.58 against a $1.35 cap on 2026-09-12: nothing
+    // samples cost mid-session, so the deadline is the real ceiling. With a $0.35 cap the session
+    // can afford 50 s in total, well under the 2 x 32 + 120 = 184 s the clock alone would allow.
+    const sidecar = await writeScript(
+      "budget-bounded.cjs",
+      `    console.log(JSON.stringify({ event: "ready" }));
+    console.log(JSON.stringify({ event: "segment", name: "first", start_t: 0, end_t: 10 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-0", start_t: 10, end_t: 15 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-1", start_t: 15, end_t: 20 }));
+    console.log(JSON.stringify({ event: "done", recording: "/fake/session.mp4", billed_s: 20.5, fetch_s: 3.2 }));
+    process.exit(0);`,
+    );
+    const budget: Budget & { charges: unknown[] } = recordingBudget();
+    Object.assign(budget, { capUsd: 0.35 });
+    const logged: Array<Record<string, unknown>> = [];
+    await makeReactorRender({
+      python: process.execPath,
+      sidecar,
+      sessions: 1,
+      workDir: path.join(dir, "work-budget-deadline"),
+      store: recordingStore(),
+      budget,
+      ffmpeg: recordingFfmpeg().run,
+      log: (m, extra) => void (m === "session deadline bounded by budget" && logged.push(extra ?? {})),
+    }).render(ev);
+
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toMatchObject({ wouldHaveBeenMs: 184_000 });
+    // 0.35 / 0.007 is 49999.99... in binary, and the bound floors rather than rounds up so it can
+    // never admit a millisecond the cap cannot pay for.
+    expect(logged[0]!.deadlineMs as number).toBeCloseTo(50_000, -1);
+    expect(logged[0]!.deadlineMs as number).toBeLessThanOrEqual(50_000);
+  }, 20_000);
+
+  it("leaves the watchdog alone when the cap affords more than the clock allows", async () => {
+    const sidecar = await writeScript(
+      "budget-roomy.cjs",
+      `    console.log(JSON.stringify({ event: "ready" }));
+    console.log(JSON.stringify({ event: "segment", name: "first", start_t: 0, end_t: 10 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-0", start_t: 10, end_t: 15 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-1", start_t: 15, end_t: 20 }));
+    console.log(JSON.stringify({ event: "done", recording: "/fake/session.mp4", billed_s: 20.5, fetch_s: 3.2 }));
+    process.exit(0);`,
+    );
+    const logged: string[] = [];
+    await makeReactorRender({
+      python: process.execPath,
+      sidecar,
+      sessions: 1,
+      workDir: path.join(dir, "work-budget-roomy"),
+      store: recordingStore(),
+      budget: recordingBudget(), // unbounded cap
+      ffmpeg: recordingFfmpeg().run,
+      log: (m) => void logged.push(m),
+    }).render(ev);
+
+    expect(logged).not.toContain("session deadline bounded by budget");
+  }, 20_000);
+
   it("refuses to start a render that would cross the spend cap, before any session is acquired", async () => {
     const cappedBudget: Budget = {
       capUsd: 0.01,
