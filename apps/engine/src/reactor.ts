@@ -17,6 +17,10 @@ const USD_PER_SEC = 0.007;
 /** How long a sidecar gets to answer SIGTERM before SIGKILL, and then before we stop waiting. */
 const SIGKILL_AFTER_MS = 3_000;
 const REAP_GRACE_MS = 2_000;
+/** Spec section 10's own threshold for a single `-c copy` cut's boundary error. Ticket 32: a
+ * whole recording can fall short of the plan by more than that, and this is the number that
+ * decides whether it's worth saying so. */
+const RECORDING_SHORTFALL_THRESHOLD_S = 0.5;
 
 type PlanClip = {
   id: string;
@@ -107,6 +111,11 @@ type SidecarResult = {
    * them back, and an older sidecar that omits them just logs `undefined`. */
   fetchAttempts: number;
   recordingS: number | null;
+  /** Ticket 32: the plan's last segment `end_t` (already in `segResults` from the `segment`
+   * lines) minus `recordingS`. Positive means the recording came up short; zero or negative
+   * means it covered the plan. Null whenever `recordingS` is (no comparison is possible without
+   * it), same as that field's own "unknown" case. */
+  shortfallS: number | null;
   segments: Map<string, { start: number; end: number }>;
 };
 
@@ -249,7 +258,16 @@ function runSidecar(
           disconnectedBilledS = msg.billed_s as number;
           cfg.onDisconnected?.(disconnectedBilledS);
           return;
-        case "done":
+        case "done": {
+          const recordingS = (msg.recording_s as number | null) ?? null;
+          // Ticket 32: `done` fires even when the recording came up short (ticket 26's sidecar
+          // won't fail a paid session over it), and the engine already has both numbers needed
+          // to notice: the furthest segment end_t, sitting in segResults since the `segment`
+          // lines above, and recording_s right here. Furthest rather than last-in-plan so a
+          // single dropped `segment` line degrades the check instead of silencing it.
+          const ends = [...segResults.values()].map((s) => s.end);
+          const shortfallS = recordingS === null || !ends.length ? null : round(Math.max(...ends) - recordingS);
+
           // `first_media_t` says when the first frame existed, in the same clock the `segment`
           // offsets use. The recording is media-backed, so if it starts at that frame rather than
           // at `ready`, every `-ss` cut is shifted by it. Logged so the next run can measure which.
@@ -273,10 +291,12 @@ function runSidecar(
             billedS: msg.billed_s as number,
             fetchS: msg.fetch_s as number,
             fetchAttempts: msg.fetch_attempts as number,
-            recordingS: (msg.recording_s as number | null) ?? null,
+            recordingS,
+            shortfallS,
             segments: segResults,
           });
           return;
+        }
         case "error": {
           const stage = msg.stage as string | undefined;
           const reason = msg.reason as string | undefined;
@@ -449,6 +469,19 @@ export function makeReactorRender(cfg: {
           const trueUp = billedS === null ? -reservedUsd : billedS * USD_PER_SEC - reservedUsd;
           await cfg.budget.charge(trueUp, "reactor session true-up (error)");
           throw e;
+        }
+
+        // Ticket 32: a bettor whose outcome wins watches the branch that stops early, and until
+        // now nothing said so anywhere but the sidecar's own stderr. Its own line, not one more
+        // field on "rendered event" below, so a reader scanning a four-channel round's log can
+        // see which channels came back short and by how much.
+        if (result.shortfallS !== null && result.shortfallS > RECORDING_SHORTFALL_THRESHOLD_S) {
+          cfg.log("recording short of plan", {
+            channelId: ev.channelId,
+            seq: ev.seq,
+            recordingS: result.recordingS,
+            shortfallS: result.shortfallS,
+          });
         }
 
         // True up against what Reactor actually billed as soon as it's known, independent of

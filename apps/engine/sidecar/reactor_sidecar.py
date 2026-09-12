@@ -19,7 +19,7 @@ out (stdout, one JSON object per line):
   {"event":"segment","name":"first","start_t":9.1,"end_t":69.4}
   {"event":"disconnected","billed_s":250.4}
   {"event":"done","recording":"<work>/session.mp4","billed_s":250.4,"fetch_s":28.0,
-    "first_media_t":3.2,"fetch_attempts":1,"recording_s":250.6}
+    "first_media_t":3.2,"fetch_attempts":1,"recording_s":250.6,"recording_short_by_s":null}
   {"event":"error","stage":"clip"|"recording"|"fetch","reason":"..."}   (exit 1)
 
 `t` and every `*_t`/`billed_s`/`fetch_s` field is seconds since `ready`. We call
@@ -35,9 +35,16 @@ handle and JWT, both still valid after disconnect, before it reports `stage: "fe
 `TimeoutError` from the 202/Retry-After poll is not one of those retries and still reports `stage:
 "recording"` (issue 24). The recording is a fragmented MP4 still being assembled when the fetch
 starts, so after a successful download the sidecar ffprobes it against the last `segment`'s `end_t`
-and re-downloads until it is covered or `RECORDING_MAX_202_S` of waiting is spent; measured -0.55 s
-and -14.51 s short on two sessions on 2026-09-12 before this existed (issue 26). `fetch_attempts` and
-`recording_s` on `done` make both of these measurable without another paid run.
+and re-downloads until it is covered or `COMPLETENESS_BUDGET_S` of waiting is spent; measured -0.55 s
+and -14.51 s short on two sessions on 2026-09-12 before this existed (issue 26). That budget used to
+be the same number as the per-download `ready_timeout` handed to `download_clip`
+(`DOWNLOAD_READY_TIMEOUT_S` now), which made it impossible to raise one without the other; issue 32
+split them, because there is no fixed recording ceiling (a probe recorded 162.0 s, well past the
+131.70905 s that earlier looked like one) and the surviving suspect for a short tail is server-side
+assembly still running behind under a contended load, not a vendor limit. `REACTOR_COMPLETENESS_BUDGET_S`
+in the environment raises the budget per paid round with no rebuild -- exactly the experiment issue 32
+leaves open. `fetch_attempts`, `recording_s` and `recording_short_by_s` on `done` make all of this
+readable from the `done` lines alone, without grepping stderr.
 
 What the SDK actually does, read out of `reactor-sdk==1.5.0`'s own source
 (installed offline, `site-packages/reactor_sdk/*.py`, 2026-09-12 -- no live
@@ -83,11 +90,28 @@ import subprocess
 import sys
 import time
 
-RECORDING_MAX_202_S = 60.0
+DOWNLOAD_READY_TIMEOUT_S = 60.0  # per download_clip() call: how long one 202/Retry-After poll waits
 MAX_FETCH_ATTEMPTS = 3  # issue 24: a reset TCP connection is an ordinary event on a large CDN transfer
 FETCH_BACKOFF_S = (2.0, 4.0)  # between attempts 1->2 and 2->3
 COMPLETENESS_THRESHOLD_S = 0.5  # spec section 10's cut-error threshold
 COMPLETENESS_RETRY_SLEEP_S = 2.0  # ponytail: fixed poll interval, shorten if 202 assembly is faster than this
+
+# issue 32: ensure_recording_complete()'s own total wall-clock budget. Used to be the same constant as
+# DOWNLOAD_READY_TIMEOUT_S above (RECORDING_MAX_202_S), so raising one always lengthened the other;
+# split apart so the completeness budget can move without changing what one download_clip() call waits
+# for. 180.0s clears both contended fetches issue 32 measured against the old 60s budget -- culture's
+# 104.9s over 6 attempts, region's 176.7s over 3 -- so a paid four-channel round has enough room to
+# test whether more budget actually recovers the missing tail, per the ticket's open experiment.
+# REACTOR_COMPLETENESS_BUDGET_S overrides it per round with no rebuild (the engine spawns this with
+# its own environment, so the engine's .env reaches here); a missing or unparseable value falls back
+# to the default rather than crashing a paid session over a typo.
+DEFAULT_COMPLETENESS_BUDGET_S = 180.0
+try:
+    COMPLETENESS_BUDGET_S = float(
+        os.environ.get("REACTOR_COMPLETENESS_BUDGET_S", DEFAULT_COMPLETENESS_BUDGET_S)
+    )
+except (TypeError, ValueError):
+    COMPLETENESS_BUDGET_S = DEFAULT_COMPLETENESS_BUDGET_S
 
 EVENT_STATE_BY_SDK_NAME = {
     "clip_generated": "generated",
@@ -192,7 +216,7 @@ async def fetch_with_retry(reactor_module, recording_clip, mp4_path, jwt):
         log(f"fetch attempt {attempt}/{MAX_FETCH_ATTEMPTS}")
         try:
             await reactor_module.download_clip(
-                recording_clip, mp4_path, jwt=jwt, ready_timeout=RECORDING_MAX_202_S
+                recording_clip, mp4_path, jwt=jwt, ready_timeout=DOWNLOAD_READY_TIMEOUT_S
             )
             return attempt
         except TimeoutError:
@@ -242,10 +266,23 @@ def is_recording_short(measured_s, required_end_t, threshold_s=COMPLETENESS_THRE
     return (required_end_t - measured_s) > threshold_s
 
 
+def recording_short_by_s(measured_s, required_end_t, threshold_s=COMPLETENESS_THRESHOLD_S):
+    """How many seconds the final recording falls short of the last segment's
+    `end_t`, for the `done` event's `recording_short_by_s` key (issue 32: the
+    four-channel experiment needs this readable from `done` alone). `None`
+    whenever `is_recording_short` says it isn't short -- same threshold, same
+    None-input rule (ffprobe unavailable, or no segment ever emitted) -- so the
+    two never disagree.
+    """
+    if not is_recording_short(measured_s, required_end_t, threshold_s):
+        return None
+    return round(required_end_t - measured_s, 2)
+
+
 async def ensure_recording_complete(reactor_module, recording_clip, mp4_path, jwt, required_end_t):
     """After a successful download, re-downloads against the same handle
     until ffprobe says the file covers `required_end_t` or
-    `RECORDING_MAX_202_S` of waiting has passed (issue 26): the recording is a
+    `COMPLETENESS_BUDGET_S` of waiting has passed (issue 26): the recording is a
     fragmented MP4 still being assembled when the fetch starts, so the first
     download can land short. Never raises -- a short recording still yields
     most of the event, so the caller reports `done` either way. Returns
@@ -253,7 +290,7 @@ async def ensure_recording_complete(reactor_module, recording_clip, mp4_path, jw
     """
     measured = probe_duration_s(mp4_path)
     log(f"recording duration {measured}s, required at least {required_end_t}s")
-    deadline = time.monotonic() + RECORDING_MAX_202_S
+    deadline = time.monotonic() + COMPLETENESS_BUDGET_S
     attempts = 0
     while is_recording_short(measured, required_end_t) and time.monotonic() < deadline:
         attempts += 1
@@ -261,7 +298,7 @@ async def ensure_recording_complete(reactor_module, recording_clip, mp4_path, jw
         await asyncio.sleep(COMPLETENESS_RETRY_SLEEP_S)
         try:
             await reactor_module.download_clip(
-                recording_clip, mp4_path, jwt=jwt, ready_timeout=RECORDING_MAX_202_S
+                recording_clip, mp4_path, jwt=jwt, ready_timeout=DOWNLOAD_READY_TIMEOUT_S
             )
         except Exception as exc:
             log(f"completeness re-download failed, keeping what's on disk: {exc}")
@@ -487,7 +524,7 @@ async def run(reactor_module, start_cmd, plan_cmd):
         # module docstring item 5. `while_live` is left unset (None): the client
         # is already disconnected here, so `reactor.status` would read
         # "disconnected" and make the SDK's own while_live check fail a still-
-        # assembling playlist immediately instead of waiting out RECORDING_MAX_202_S.
+        # assembling playlist immediately instead of waiting out DOWNLOAD_READY_TIMEOUT_S.
         fetch_attempts = await fetch_with_retry(reactor_module, recording_clip, mp4_path, jwt)
     except TimeoutError as exc:
         emit({"event": "error", "stage": "recording", "reason": str(exc)})
@@ -514,6 +551,7 @@ async def run(reactor_module, start_cmd, plan_cmd):
     # whole fetch stage takes, and the re-downloads are part of that stage. Measuring only the first
     # download would report the 66.7 s culture fetch as fast while it waited out a short playlist.
     fetch_s = round(time.monotonic() - fetch_t0, 1)
+    short_by_s = recording_short_by_s(recording_s, max_end_t)  # issue 32: readable from `done` alone
 
     emit({
         "event": "done",
@@ -523,6 +561,7 @@ async def run(reactor_module, start_cmd, plan_cmd):
         "first_media_t": first_media_t,
         "fetch_attempts": fetch_attempts,
         "recording_s": recording_s,
+        "recording_short_by_s": short_by_s,
     })
     sys.exit(0)
 
@@ -597,6 +636,13 @@ def selftest():
     assert is_recording_short(30.28, 30.3) is False  # -0.02s keyframe jitter, under threshold
     assert is_recording_short(None, 30.3) is False  # ffprobe unavailable: never fail a session over it
     assert is_recording_short(30.0, None) is False  # no segment ever emitted: nothing to compare
+
+    # issue 32: recording_short_by_s on `done`, same round D numbers as issue 26's validation
+    assert recording_short_by_s(124.075717, 124.6) == 0.52  # culture seq 50, budget exhausted
+    assert recording_short_by_s(131.70905, 142.0) == 10.29  # region seq 47, budget exhausted
+    assert recording_short_by_s(131.70905, 131.4) is None  # sports/politics seq: full, not short
+    assert recording_short_by_s(None, 131.4) is None  # ffprobe unavailable: nothing to compare
+    assert recording_short_by_s(131.70905, None) is None  # no segment ever emitted: nothing to compare
 
     assert parse_ffprobe_duration("29.752000\n") == 29.752
     assert parse_ffprobe_duration("N/A\n") is None
