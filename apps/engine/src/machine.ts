@@ -138,7 +138,11 @@ export type Deps = {
 };
 
 // Authoring is charged at the real usage.cost afterwards; this only decides whether to start.
-const AUTHOR_ESTIMATE_USD = 1;
+// $0.10, not the $1 this held until 2026-09-12: gpt-5-mini authored a four-channel event for
+// $0.007, so $1 reserved 143x the real cost. On four channels that is $4 of headroom no event
+// ever spends, and it refused a REAL round the budget could comfortably afford. $0.10 still
+// leaves an order of magnitude over anything measured.
+const AUTHOR_ESTIMATE_USD = 0.1;
 
 export const eventIdFor = (channelId: string, seq: number): Hex => keccak256(toHex(`${channelId}:${seq}`));
 
@@ -260,6 +264,10 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
           return null;
         }
         ev = await d.store.update(ev.id, { renderAttempts: ev.renderAttempts + 1, error: String(e) });
+        // Every attempt gets a line: a paid session that fails costs money whether or not the
+        // retries go on to succeed, and until 2026-09-12 only the final failure was logged, so a
+        // cap that paused the retry hid the reason in the database.
+        d.log("render attempt failed", { channelId, seq: ev.seq, attempt: ev.renderAttempts, error: String(e) });
         if (ev.renderAttempts >= d.timing.maxRenderAttempts) {
           ev = await d.store.update(ev.id, { state: "SKIPPED" });
           d.log("render failed, event skipped", { channelId, seq: ev.seq, error: ev.error });
