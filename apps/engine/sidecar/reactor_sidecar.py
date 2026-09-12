@@ -79,6 +79,19 @@ EVENT_STATE_BY_SDK_NAME = {
 }
 
 
+def clip_id_of(data):
+    """The clip uuid out of a clip event's `data`, whichever shape it arrives in.
+
+    The `enqueue` reply nests it at `data.clip.clip_id`, so this read the flat `data.clip_id` for
+    clip events on the assumption they differed. Against live Reactor on 2026-09-12 the flat key
+    was absent and every clip event was dropped, so check both rather than pick a side.
+    """
+    nested = data.get("clip")
+    if isinstance(nested, dict) and nested.get("clip_id"):
+        return nested["clip_id"]
+    return data.get("clip_id") or data.get("id")
+
+
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
 
@@ -206,7 +219,6 @@ async def run(reactor_module, start_cmd, plan_cmd):
     ready_t0 = time.monotonic()
 
     try:
-        recording_clip = await reactor.request_recording()
         await reactor.send_command("set_autoplay", {"enabled": True})
     except Exception as exc:
         emit({"event": "error", "stage": "clip", "reason": f"post-ready setup failed: {exc}"})
@@ -219,6 +231,7 @@ async def run(reactor_module, start_cmd, plan_cmd):
     first_clip_idx_to_segment = {bounds[0]: name for name, bounds in seg_bounds.items()}
     last_clip_idx_to_segment = {bounds[1]: name for name, bounds in seg_bounds.items()}
     segment_start_t = {}
+    first_media_t = None
 
     uuid_to_clip = {}
     next_to_enqueue = 0
@@ -270,11 +283,24 @@ async def run(reactor_module, start_cmd, plan_cmd):
             if msg_type not in EVENT_STATE_BY_SDK_NAME:
                 continue
 
-            clip_uuid = data.get("clip_id")
+            clip_uuid = clip_id_of(data)
             clip = uuid_to_clip.get(clip_uuid)
             if clip is None:
-                log(f"{msg_type} for unknown clip uuid {clip_uuid!r}, ignoring")
-                continue
+                # Ignoring these used to mean the session stalled: `enqueue_next` only runs on a
+                # matched `clip_finished`, so an unreadable id deadlocks the queue at BUILD_LEAD
+                # clips and burns the whole watchdog deadline building nothing fetchable. That
+                # cost one 235 s session on 2026-09-12. Fail on the first miss instead, and put the
+                # payload in the reason so the real key is one run away, not one session away.
+                emit({
+                    "event": "error",
+                    "stage": "clip",
+                    "reason": (
+                        f"{msg_type} carried no clip id this sidecar can read "
+                        f"(uuid={clip_uuid!r}, known={sorted(uuid_to_clip)}): payload={data!r}"
+                    ),
+                })
+                await safe_disconnect(reactor)
+                sys.exit(1)
 
             t = round(time.monotonic() - ready_t0, 1)
             state = EVENT_STATE_BY_SDK_NAME[msg_type]
@@ -287,13 +313,26 @@ async def run(reactor_module, start_cmd, plan_cmd):
 
             idx = idx_of[clip.plan_id]
 
-            if msg_type == "clip_started" and idx in first_clip_idx_to_segment:
-                segment_start_t[first_clip_idx_to_segment[idx]] = t
+            if msg_type == "clip_started":
+                if first_media_t is None:
+                    first_media_t = t
+                if idx in first_clip_idx_to_segment:
+                    segment_start_t[first_clip_idx_to_segment[idx]] = t
 
             if msg_type == "clip_finished":
                 if idx in last_clip_idx_to_segment:
                     name = last_clip_idx_to_segment[idx]
-                    emit({"event": "segment", "name": name, "start_t": segment_start_t[name], "end_t": t})
+                    # `segment` offsets index into the recording, whose clock starts at the first
+                    # frame of media, not at `ready` -- measured 2026-09-12: with ready-relative
+                    # offsets the first three cuts matched on duration but held content 5.9 s late,
+                    # and the last branch ran off the end of a 46.4 s file and came out 3.49 s long.
+                    # Clip `t` stays ready-relative; that is the billing clock.
+                    emit({
+                        "event": "segment",
+                        "name": name,
+                        "start_t": round(segment_start_t[name] - first_media_t, 1),
+                        "end_t": round(t - first_media_t, 1),
+                    })
                 if idx == last_clip_index:
                     finished_last = True
                 else:
@@ -302,6 +341,18 @@ async def run(reactor_module, start_cmd, plan_cmd):
         raise
     except Exception as exc:
         emit({"event": "error", "stage": "clip", "reason": str(exc)})
+        await safe_disconnect(reactor)
+        sys.exit(1)
+
+    # `request_recording()` returns "a clip covering the entire session up to now", so it only
+    # exists once media does: calling it right after `ready` (as this did until 2026-09-12) asks
+    # for a clip covering nothing, and live Reactor refuses with
+    # "[INTERNAL_ERROR] recording error (INTERNAL_ERROR): no media generated yet".
+    # It has to be the last thing before disconnect, after the final clip.
+    try:
+        recording_clip = await reactor.request_recording()
+    except Exception as exc:
+        emit({"event": "error", "stage": "recording", "reason": f"request_recording failed: {exc}"})
         await safe_disconnect(reactor)
         sys.exit(1)
 
@@ -334,7 +385,13 @@ async def run(reactor_module, start_cmd, plan_cmd):
         reactor.close()
     fetch_s = round(time.monotonic() - fetch_t0, 1)
 
-    emit({"event": "done", "recording": mp4_path, "billed_s": billed_s, "fetch_s": fetch_s})
+    emit({
+        "event": "done",
+        "recording": mp4_path,
+        "billed_s": billed_s,
+        "fetch_s": fetch_s,
+        "first_media_t": first_media_t,
+    })
     sys.exit(0)
 
 
