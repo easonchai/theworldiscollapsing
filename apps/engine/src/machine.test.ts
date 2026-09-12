@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Hex } from "viem";
-import { outcomeFor } from "./drand.js";
+import { outcomeFor, PERIOD, SUSPENSE_GAP } from "./drand.js";
 import {
   DEMO,
   REAL,
@@ -373,10 +373,18 @@ describe("channel lifecycle", () => {
     expect(violations).toEqual([]);
   });
 
-  it("REAL pause covers the render cycle's overhang past air time", () => {
-    // ~9 s first build + halves + ~3 s teardown must fit inside txBuffer + halves + pause.
-    const cycleMs = 9_000 + REAL.firstHalfMs + 3 * REAL.secondHalfMs + 3_000;
-    expect(REAL.txBufferMs + REAL.firstHalfMs + REAL.secondHalfMs + REAL.pauseMs).toBeGreaterThanOrEqual(cycleMs);
+  it("REAL pause covers production as measured, not as estimated", () => {
+    // This used to assert against the estimate formula (9 s first build + halves + 3 s teardown),
+    // which said 132 s. Three consecutive REAL events on sports on 2026-09-12 took 217 s, 219 s and
+    // 221 s from betting open to stored media, so the formula was ~85 s optimistic and the pause it
+    // blessed left the wall dark for ~146 s an event (ticket 28). The measurement is the assertion
+    // now; if the pause is ever lowered again, this fails and says why.
+    const MEASURED_PRODUCTION_MS = 221_000;
+    // drand publishes SUSPENSE_GAP seconds past lock, so the wait between lock and reveal is that
+    // gap rounded up to the next beacon, plus the resolve transaction.
+    const drandSuspenseMs = Number(SUSPENSE_GAP + PERIOD) * 1_000;
+    const cycleMs = REAL.txBufferMs + REAL.firstHalfMs + drandSuspenseMs + REAL.secondHalfMs + REAL.pauseMs;
+    expect(cycleMs).toBeGreaterThanOrEqual(MEASURED_PRODUCTION_MS);
   });
 
   it("stays idle without viewers when not always-on", async () => {

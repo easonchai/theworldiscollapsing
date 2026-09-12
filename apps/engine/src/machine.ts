@@ -125,9 +125,23 @@ export const REAL: Timing = {
   txBufferMs: 15_000,
   firstHalfMs: 30_000,
   secondHalfMs: 30_000,
-  // A Reactor render cycle runs ~135s, longer than the ~105s of first+second half air time, so the
-  // pause between events has to cover the gap (ticket 10 / ADR 0002 amendment).
-  pauseMs: 60_000,
+  // Long enough that one channel can produce the next event without the wall going dark (ticket 28).
+  //
+  // 60_000 came from an estimate of a ~135 s render cycle. Three consecutive REAL events on sports
+  // on 2026-09-12 measured the real thing: production, from the moment an event opened for betting
+  // to the moment the next one was stored, ran 217 s to 221 s. The cycle it has to fit inside is
+  // txBuffer + firstHalf + drand suspense + secondHalf + pause, which was ~148 s, so every cycle
+  // fell ~73 s short and the wall went dark for 145 s to 147 s between events.
+  //
+  // 150_000 makes that cycle ~238 s, which covers the worst of the three with 17 s to spare. The
+  // cost is stated rather than hidden: each event now occupies ~238 s instead of ~148 s, so a
+  // channel airs fewer events an hour. That is the trade ticket 28 describes, taken deliberately
+  // because a lit wall matters more to the demo than event count.
+  //
+  // What this does NOT cover is four channels at once, where the same day measured production at
+  // 210 s to 400 s. That spread is download contention, not build time (the build held at 0.97x to
+  // 1.08x at every concurrency level), so a longer pause is the wrong instrument for it.
+  pauseMs: 150_000,
   idlePollMs: 10_000,
   renderRetryMs: 5_000,
   drandRetryMs: 2_000,
