@@ -15,6 +15,13 @@ Env:
                   `apps/engine/src/fake/openrouter.ts`'s `replay()`.
   FAKE_FAIL       A clip id: that clip emits "failed" and the sidecar exits 1
                   right after, so the engine's RENDER retry path can be soaked.
+  FAKE_SHORT_BY_S Seconds of tail to cut off the finished recording before
+                  reporting "done", so the engine's "recording short of plan"
+                  path (issue 32) can be rehearsed for $0. The file on disk is
+                  actually truncated, not just the reported numbers --
+                  `recording_s` and `recording_short_by_s` are read back off
+                  that truncated file, the same way the real sidecar reads
+                  them off ffprobe. Unset or 0 (default): no truncation.
 """
 import json
 import os
@@ -24,9 +31,12 @@ import subprocess
 import sys
 import time
 
+import reactor_sidecar
+
 FAKE_SPEED = float(os.environ.get("FAKE_SPEED", "20"))
 FAKE_MEDIA_DIR = os.environ.get("FAKE_MEDIA_DIR")
 FAKE_FAIL = os.environ.get("FAKE_FAIL")
+FAKE_SHORT_BY_S = float(os.environ.get("FAKE_SHORT_BY_S", "0"))
 RESOLUTION = "720p"  # ponytail: fixed; the protocol carries no per-session resolution to key on.
 SIZE = "1280x720"
 
@@ -137,6 +147,26 @@ def build_session_mp4(clips: list[dict], work_dir: str) -> str:
     return session_path
 
 
+def truncate_recording(session_path: str, target_s: float) -> float | None:
+    """FAKE_SHORT_BY_S: cuts `session_path` down to about `target_s` seconds,
+    in place. The engine cuts segments out of this file with ffmpeg, so
+    `recording_s` has to agree with what is actually on disk -- a number that
+    disagreed with the file would hide bugs rather than reproduce region's
+    real shortfall. Returns the file's actual duration per
+    `reactor_sidecar.probe_duration_s` (the same ffprobe read the real
+    sidecar trusts), not `target_s` itself, since `-c copy` lands on a packet
+    boundary near the cut point, not exactly on it.
+    """
+    truncated = session_path + ".short.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", session_path, "-t", str(target_s), "-c", "copy", truncated],
+        check=True,
+        capture_output=True,
+    )
+    os.replace(truncated, session_path)
+    return reactor_sidecar.probe_duration_s(session_path)
+
+
 def run(start_cmd: dict, plan_cmd: dict) -> None:
     work_dir = start_cmd["work"]
     os.makedirs(work_dir, exist_ok=True)
@@ -173,21 +203,33 @@ def run(start_cmd: dict, plan_cmd: dict) -> None:
     fetch_t0 = time.monotonic()
     try:
         session_path = build_session_mp4(clips, work_dir)
+        # No retries here (see module docstring): the fake's session.mp4 is built to exactly
+        # `billed_s` by construction, so that doubles as its own duration -- unless FAKE_SHORT_BY_S
+        # says to cut it short, in which case the file itself is truncated and re-measured with
+        # ffprobe below, the same read the real sidecar trusts over any requested number.
+        recording_s = billed_s
+        if FAKE_SHORT_BY_S > 0:
+            recording_s = truncate_recording(session_path, billed_s - FAKE_SHORT_BY_S)
     except subprocess.CalledProcessError as exc:
         reason = exc.stderr.decode() if exc.stderr else str(exc)
         emit({"event": "error", "stage": "fetch", "reason": reason})
         sys.exit(1)
     fetch_s = round(time.monotonic() - fetch_t0, 1)
 
+    # The last segment's end_t is exactly `billed_s` here: `t` only grows, so the final clip --
+    # always the last segment's last clip in flattened plan order -- carries the largest end_t.
+    # `reactor_sidecar.recording_short_by_s` is reused rather than reimplemented, so the fake's
+    # rule can't drift from the real sidecar's.
+    short_by_s = reactor_sidecar.recording_short_by_s(recording_s, billed_s)
+
     emit({
         "event": "done",
         "recording": session_path,
         "billed_s": billed_s,
         "fetch_s": fetch_s,
-        # No retries and no ffprobe here (see module docstring); the fake's session.mp4 is built to
-        # exactly `billed_s` by construction, so that doubles as its own duration.
         "fetch_attempts": 1,
-        "recording_s": billed_s,
+        "recording_s": recording_s,
+        "recording_short_by_s": short_by_s,
     })
     sys.exit(0)
 
@@ -223,6 +265,15 @@ def selftest() -> None:
     assert channel_of("Television news footage, fixed studio camera") == "politics"
     assert channel_of("Live sports broadcast footage, broadcast camera") == "sports"
     assert channel_of("something else entirely") == "any"
+
+    # FAKE_SHORT_BY_S (issue 32): `recording_short_by_s` is reactor_sidecar's own rule, reused
+    # rather than reimplemented, so the two can't drift. Region's real shortfall as the worked
+    # example: a 142.0s plan told to come back 10.3s short.
+    billed_s = 142.0
+    recording_s = round(billed_s - 10.3, 1)
+    assert reactor_sidecar.recording_short_by_s(recording_s, billed_s) == 10.3
+    # knob unset (recording_s == billed_s, today's default): never short
+    assert reactor_sidecar.recording_short_by_s(billed_s, billed_s) is None
 
     print("selftest OK", file=sys.stderr)
 
