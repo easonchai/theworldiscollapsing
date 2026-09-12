@@ -198,8 +198,6 @@ if (!stubMode) {
       workDir,
       store: media,
       budget,
-      firstHalfSec: timing.firstHalfMs / 1000,
-      secondHalfSec: timing.secondHalfMs / 1000,
       signal: ac.signal,
       log,
     });

@@ -2,9 +2,8 @@ import { execFile, spawn } from "node:child_process";
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { MIN_SHOT_SEC } from "./authored.js";
 import type { Budget } from "./budget.js";
-import { REAL, RenderFetchError, type EventRow, type Render } from "./machine.js";
+import { RenderFetchError, type EventRow, type Render } from "./machine.js";
 import { branchFileName, type MediaStore } from "./media.js";
 import { clipPrompt } from "./render.js";
 
@@ -18,31 +17,6 @@ const USD_PER_SEC = 0.007;
 /** How long a sidecar gets to answer SIGTERM before SIGKILL, and then before we stop waiting. */
 const SIGKILL_AFTER_MS = 3_000;
 const REAP_GRACE_MS = 2_000;
-
-/**
- * Ticket 32: the longest recording Reactor has ever handed back. 131.70905 s recurs byte-identically
- * across five paid rounds and four channels, and round D's region plan asked for 142.0 s and got
- * that same figure, so its last branch published 10.31 s short while the engine marked the event
- * READY. Re-downloading does not help: four attempts returned identical bytes, because the tail was
- * never recorded.
- *
- * Not yet confirmed by a deliberate over-long probe, which is the one paid session ticket 32 asks
- * for. Until that runs this is "the largest recording ever observed" rather than "the vendor's
- * documented limit", which is the safe direction to be wrong in.
- */
-const RECORDING_CEILING_S = 131.7;
-
-/**
- * A segment's `end_t` is wall clock from the first frame, not the seconds the plan asked for, so a
- * slow build stretches the recording past the plan. Ticket 25 measured the build between 0.94x and
- * 1.08x of real time over twelve sessions; round D's region halves were written at 33 s and recorded
- * 35.5 s, which is that 1.08x. A plan therefore has to fit under the ceiling at the slow end of the
- * range, not at its own nominal length.
- */
-const BUILD_RATE_MAX = 1.08;
-
-/** The most plan-seconds that still fit inside the ceiling when the build runs slow. */
-const MAX_PLAN_S = RECORDING_CEILING_S / BUILD_RATE_MAX;
 
 type PlanClip = {
   id: string;
@@ -85,35 +59,8 @@ function buildPlan(ev: EventRow): PlanSegment[] {
   return segments;
 }
 
-const segmentSec = (seg: PlanSegment): number => seg.clips.reduce((n, c) => n + c.seconds, 0);
-const planSec = (segs: PlanSegment[]): number => segs.reduce((n, s) => n + segmentSec(s), 0);
-
-/**
- * Ticket 32: shorten a plan that would run past `MAX_PLAN_S`, taking seconds off the end — the last
- * branch first, its last clip first — so what gets dropped is the part of the recording the ceiling
- * would have cut off anyway.
- *
- * No segment goes below `airtimeS`, the seconds it is actually on air. Everything a shot list writes
- * above its airtime is billed at $0.007/s and never watched, so that is the part to give up; below
- * it the viewer gets the dead air this ticket is about. Returns null when even the airtimes alone
- * cross the ceiling (a long `secondHalfMs`, or five outcomes), so the caller can refuse before a
- * paid session opens rather than discover it in a short file afterwards.
- */
-function trimToCeiling(segments: PlanSegment[], airtimeS: (name: string) => number): PlanSegment[] | null {
-  if (planSec(segments) <= MAX_PLAN_S) return segments;
-  const out = segments.map((s) => ({ ...s, clips: s.clips.map((c) => ({ ...c })) }));
-  for (let i = out.length - 1; i >= 0; i--) {
-    const seg = out[i]!;
-    for (let j = seg.clips.length - 1; j >= 0; j--) {
-      // Recomputed per clip: both terms shrink as clips give seconds up.
-      const spare = Math.min(segmentSec(seg) - airtimeS(seg.name), planSec(out) - MAX_PLAN_S);
-      if (spare <= 0) break;
-      const clip = seg.clips[j]!;
-      clip.seconds -= Math.max(0, Math.min(Math.ceil(spare), clip.seconds - MIN_SHOT_SEC));
-    }
-  }
-  return planSec(out) <= MAX_PLAN_S ? out : null;
-}
+const planSec = (segs: PlanSegment[]): number =>
+  segs.reduce((n, s) => n + s.clips.reduce((m, c) => m + c.seconds, 0), 0);
 
 /**
  * One permit per element of `REACTOR_SESSIONS`. Scoped to one `makeReactorRender` call rather than
@@ -386,14 +333,6 @@ export function makeReactorRender(cfg: {
   workDir: string;
   store: MediaStore;
   budget: Budget;
-  /**
-   * Seconds each segment is on air (`Timing.firstHalfMs` and `secondHalfMs`). Only the ticket 32
-   * ceiling trim reads them, as the floor it will not cut a segment below. They default to REAL,
-   * which is what every paid engine runs; DEMO's plans are a third of the ceiling, so the default
-   * cannot bite there either.
-   */
-  firstHalfSec?: number;
-  secondHalfSec?: number;
   /** Shutdown signal: a live session SIGTERMs and trues up instead of stranding its reservation. */
   signal?: AbortSignal;
   /** ponytail: ticket 14's boundary-error measurement on `-c copy` was never run (paid probe still
@@ -407,8 +346,6 @@ export function makeReactorRender(cfg: {
 }): Render {
   const sem = makeSemaphore(cfg.sessions);
   const ffmpeg = cfg.ffmpeg ?? (async (args: string[]) => void (await run("ffmpeg", args)));
-  const airtimeS = (name: string) =>
-    name === "first" ? (cfg.firstHalfSec ?? REAL.firstHalfMs / 1000) : (cfg.secondHalfSec ?? REAL.secondHalfMs / 1000);
   // estimateUsd / USD_PER_SEC is exactly estimateSec, so this restates the spec formula in seconds.
   const deadlineMs = cfg.deadlineMs ?? ((estimateSec: number) => (2 * estimateSec + 120) * 1000);
 
@@ -424,29 +361,11 @@ export function makeReactorRender(cfg: {
       // and this is what keeps that retry from doing exactly what the abort below just undid.
       if (cfg.signal?.aborted) throw new Error("engine shutting down, not opening a Reactor session");
 
-      const asked = buildPlan(ev);
-      // Ticket 32: Reactor stops recording at RECORDING_CEILING_S, and everything past it is simply
-      // absent from the file — round D's region event published its last branch 10.31 s short.
-      const segments = trimToCeiling(asked, airtimeS);
-      if (!segments) {
-        throw new Error(
-          `plan of ${planSec(asked)}s cannot be trimmed under the ${RECORDING_CEILING_S}s recording ceiling ` +
-            `without cutting a segment below its airtime; shorten the halves or the outcome count`,
-        );
-      }
-      if (segments !== asked) {
-        cfg.log("plan trimmed to the recording ceiling", {
-          channelId: ev.channelId,
-          seq: ev.seq,
-          askedSec: planSec(asked),
-          trimmedSec: planSec(segments),
-          maxPlanSec: round(MAX_PLAN_S),
-        });
-      }
+      const segments = buildPlan(ev);
 
       // The formula's "firstHalfSec + nOutcomes x secondHalfSec" is the plan's own seconds; summing
       // the clips that will actually be enqueued is that same quantity without assuming the branches
-      // are uniform, and it counts the trim above rather than the shot list before it.
+      // are uniform.
       const estimateSec = 9 + planSec(segments) + 3;
       const estimateUsd = estimateSec * USD_PER_SEC;
 

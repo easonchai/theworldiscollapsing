@@ -674,67 +674,22 @@ describe("makeReactorRender", () => {
     expect(budget.charges.reduce((n, c) => n + c.usd, 0)).toBeCloseTo(20.5 * 0.007, 6);
   }, 20_000);
 
-  it("trims a plan that would run past the recording ceiling, never below a segment's airtime", async () => {
-    // Ticket 32: no recording has come back longer than 131.70905 s. Round D's region plan ran to
-    // 142.0 s, so its last branch published 10.31 s short while the event was marked READY.
-    const planFile = path.join(dir, "ceiling-plan.json");
+  it("sends the plan at the length the author wrote, however long", async () => {
+    // Ticket 33: the 131.7 s ceiling this used to trim to does not exist. Ticket 32's paid probe
+    // recorded 162.042383 s, so a plan goes to the sidecar as written. Five outcomes at a 30 s
+    // second half is 160 s, the shape that used to be refused outright before a session opened.
+    const planFile = path.join(dir, "untrimmed-plan.json");
     const sidecar = await writePlanCapturingScript(
-      "ceiling.cjs",
+      "untrimmed.cjs",
       planFile,
       `    console.log(JSON.stringify({ event: "ready" }));
-    console.log(JSON.stringify({ event: "segment", name: "first", start_t: 0, end_t: 31 }));
-    console.log(JSON.stringify({ event: "segment", name: "branch-0", start_t: 31, end_t: 61 }));
-    console.log(JSON.stringify({ event: "segment", name: "branch-1", start_t: 61, end_t: 91 }));
-    console.log(JSON.stringify({ event: "segment", name: "branch-2", start_t: 91, end_t: 121 }));
-    console.log(JSON.stringify({ event: "done", recording: "/fake/session.mp4", billed_s: 121, fetch_s: 3 }));
+    console.log(JSON.stringify({ event: "segment", name: "first", start_t: 0, end_t: 10 }));
+    for (let b = 0; b < 5; b++) {
+      console.log(JSON.stringify({ event: "segment", name: "branch-" + b, start_t: 10 + b * 30, end_t: 40 + b * 30 }));
+    }
+    console.log(JSON.stringify({ event: "done", recording: "/fake/session.mp4", billed_s: 160, fetch_s: 3 }));
     process.exit(0);`,
     );
-    // 33 s halves: the most the author's own 10% overrun lets through against a 30 s REAL target,
-    // and four of them come to 132 s, which is past the ceiling once a slow build stretches them.
-    const longScript: Authored = {
-      ...script,
-      outcomes: ["A", "B", "C"],
-      firstHalf: [11, 11, 11].map((seconds) => ({ prompt: "first", seconds })),
-      branches: [0, 1, 2].map((b) => [11, 11, 11].map((seconds) => ({ prompt: `branch ${b}`, seconds }))),
-      canonUpdates: [["A"], ["B"], ["C"]],
-    };
-    const longEv: EventRow = { ...ev, id: "0xreactorceiling", script: longScript } as EventRow;
-    const logged: Array<Record<string, unknown>> = [];
-    await makeReactorRender({
-      python: process.execPath,
-      sidecar,
-      sessions: 1,
-      workDir: path.join(dir, "work-ceiling"),
-      store: recordingStore(),
-      budget: recordingBudget(),
-      ffmpeg: recordingFfmpeg().run,
-      firstHalfSec: 30,
-      secondHalfSec: 30,
-      log: (m, extra) => void (m === "plan trimmed to the recording ceiling" && logged.push(extra ?? {})),
-    }).render(longEv);
-
-    const sent = JSON.parse(await readFile(planFile, "utf8")) as {
-      segments: { name: string; clips: { seconds: number }[] }[];
-    };
-    const segSec = (name: string) =>
-      sent.segments.find((s) => s.name === name)!.clips.reduce((n, c) => n + c.seconds, 0);
-    const total = sent.segments.reduce((n, s) => n + s.clips.reduce((m, c) => m + c.seconds, 0), 0);
-
-    // 131.7 s of ceiling divided by the 1.08x slowest measured build.
-    expect(total).toBeLessThanOrEqual(131.7 / 1.08);
-    expect(total).toBeLessThan(132); // it really was trimmed, not passed through
-    // Trimmed to the airtime and no further: a branch shorter than the second half is the dead air
-    // this ticket exists to prevent, so the trim stops there rather than taking the easiest seconds.
-    for (const name of ["first", "branch-0", "branch-1", "branch-2"]) expect(segSec(name)).toBeGreaterThanOrEqual(30);
-    expect(logged).toHaveLength(1);
-    expect(logged[0]).toMatchObject({ askedSec: 132, trimmedSec: total });
-  }, 20_000);
-
-  it("refuses a plan the ceiling cannot hold before any session opens", async () => {
-    // Five outcomes at a 30 s second half needs 180 s of recording before a single shot is written
-    // long. Nothing to trim, so the money must not be spent at all: the alternative is paying for a
-    // session whose last two branches are simply absent from the file.
-    const budget = recordingBudget();
     const wideScript: Authored = {
       ...script,
       outcomes: ["A", "B", "C", "D", "E"],
@@ -743,21 +698,25 @@ describe("makeReactorRender", () => {
       canonUpdates: [["A"], ["B"], ["C"], ["D"], ["E"]],
     };
     const wideEv: EventRow = { ...ev, id: "0xreactorwide", script: wideScript } as EventRow;
-    const render = makeReactorRender({
+    const store = recordingStore();
+    await makeReactorRender({
       python: process.execPath,
-      sidecar: path.join(dir, "unused-wide.cjs"), // never spawned: the plan is refused first
+      sidecar,
       sessions: 1,
       workDir: path.join(dir, "work-wide"),
-      store: recordingStore(),
-      budget,
-      firstHalfSec: 30,
-      secondHalfSec: 30,
+      store,
+      budget: recordingBudget(),
+      ffmpeg: recordingFfmpeg().run,
       log: () => {},
-    });
+    }).render(wideEv);
 
-    await expect(render.render(wideEv)).rejects.toThrow(/recording ceiling/);
-    expect(budget.charges).toHaveLength(0);
-  });
+    const sent = JSON.parse(await readFile(planFile, "utf8")) as {
+      segments: { name: string; clips: { seconds: number }[] }[];
+    };
+    const total = sent.segments.reduce((n, s) => n + s.clips.reduce((m, c) => m + c.seconds, 0), 0);
+    expect(total).toBe(160);
+    expect(store.stored).toHaveLength(6);
+  }, 20_000);
 
   it("SidecarError carries null billedS only when the error happens before ready", () => {
     const before = new SidecarError("x", null);

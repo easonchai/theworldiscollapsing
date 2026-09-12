@@ -5,9 +5,9 @@ import { z } from "zod";
 /**
  * 6, not MiniMax's 5: Reactor fast-h3 refuses a shorter clip with
  * "seconds: 5.0 < ge(5.167)" (124 frames at 24 fps), and `seconds` is an integer.
- * 6 to 15 is inside both vendors' ranges, so one floor serves both. Exported because both places
- * that shorten a shot list — the author's target clamp and the render's ceiling trim — have to stop
- * here, and a second copy of the number would drift from this one.
+ * 6 to 15 is inside both vendors' ranges, so one floor serves both. Exported because the author's
+ * target clamp shortens shot lists and has to stop here, and a second copy of the number would
+ * drift from this one.
  */
 export const MIN_SHOT_SEC = 6;
 
