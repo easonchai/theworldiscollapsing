@@ -150,70 +150,72 @@ export function makeRender(cfg: {
     }
   }
 
-  async function renderList(ev: EventRow, shots: Shot[], res: Res, frameUrl: string, prefix: string, out: string) {
-    const clips = await pool(CONCURRENCY, shots, (s, i) => clip(ev, s, res, frameUrl, `${prefix}-${i}.mp4`));
-    await concat(clips, out);
-    return clips.length;
+  async function firstHalf(ev: EventRow): Promise<{ url: string; costUsd: number }> {
+    await mkdir(path.join(cfg.workDir, ev.id), { recursive: true });
+    const shots = ev.script.firstHalf;
+    // Refuse before the first clip rather than leave a half-rendered list behind.
+    cfg.budget.assertAffordable(listCost(shots, "480p") + cfg.imageCostUsd, "first half");
+    const ka = await keyArt(ev);
+
+    let costUsd = ka.costUsd;
+    const todo = shots.map((s, i) => ({ s, i })).filter(({ i }) => !(i === 0 && ka.clip0));
+    const clips = new Map<number, string>();
+    if (ka.clip0) clips.set(0, ka.clip0);
+    await pool(CONCURRENCY, todo, async ({ s, i }) => {
+      clips.set(i, await clip(ev, s, "480p", ka.url, `clip-${i}.mp4`));
+      costUsd += s.seconds * RATE["480p"];
+    });
+
+    const out = work(ev, "first.mp4");
+    await concat(shots.map((_, i) => clips.get(i)!), out);
+    // Branch clips continue from this frame, so the second half is visually continuous.
+    await lastFrame(out, work(ev, "last.png"));
+    const seconds = shots.reduce((n, s) => n + s.seconds, 0);
+    cfg.log("rendered first half", { channelId: ev.channelId, seq: ev.seq, clips: shots.length, seconds, usd: round(costUsd) });
+    return { url: await cfg.store.storeFile(ev.id, "first.mp4", out), costUsd };
+  }
+
+  // firstHalfCostUsd is passed through rather than read off the row: `produce` no longer updates the
+  // row between the two steps, so ev.costUsd is still whatever it was before this render started.
+  async function branches(ev: EventRow, firstHalfCostUsd: number): Promise<{ urls: string[]; costUsd: number }> {
+    const dir = path.join(cfg.workDir, ev.id);
+    await mkdir(dir, { recursive: true });
+    const seed = work(ev, "last.png");
+    await lastFrame(work(ev, "first.mp4"), seed).catch(() => {}); // idempotent; no-op if already extracted
+    const seedUrl = await cfg.store.storeFile(ev.id, "last.png", seed);
+
+    const lists = ev.script.branches;
+    const flat = lists.flatMap((shots, b) => shots.map((s, i) => ({ s, b, i })));
+    cfg.budget.assertAffordable(listCost(flat.map((f) => f.s), "768p"), "branches");
+    const paths = await pool(CONCURRENCY, flat, ({ s, b, i }) => clip(ev, s, "768p", seedUrl, `branch-${b}-${i}.mp4`));
+
+    const urls: string[] = [];
+    for (let b = 0; b < lists.length; b++) {
+      const out = work(ev, `branch-${b}.mp4`);
+      await concat(flat.map((f, k) => (f.b === b ? paths[k]! : null)).filter((p): p is string => !!p), out);
+      urls.push(await cfg.store.storeFile(ev.id, branchFileName(b), out));
+    }
+
+    const seconds = flat.reduce((n, f) => n + f.s.seconds, 0);
+    const costUsd = seconds * RATE["768p"];
+    cfg.log("rendered event", {
+      channelId: ev.channelId,
+      seq: ev.seq,
+      clips: ev.script.firstHalf.length + flat.length,
+      seconds: ev.script.firstHalf.reduce((n, s) => n + s.seconds, 0) + seconds,
+      usd: round(firstHalfCostUsd + costUsd),
+    });
+    // Every finished file is in the media store now; nothing reads this directory again. Without
+    // the sweep it keeps ~18 MB of clips per event forever.
+    await rm(dir, { recursive: true, force: true });
+    return { urls, costUsd };
   }
 
   return {
-    async firstHalf(ev) {
-      await mkdir(path.join(cfg.workDir, ev.id), { recursive: true });
-      const shots = ev.script.firstHalf;
-      // Refuse before the first clip rather than leave a half-rendered list behind.
-      cfg.budget.assertAffordable(listCost(shots, "480p") + cfg.imageCostUsd, "first half");
-      const ka = await keyArt(ev);
-
-      let costUsd = ka.costUsd;
-      const todo = shots.map((s, i) => ({ s, i })).filter(({ i }) => !(i === 0 && ka.clip0));
-      const clips = new Map<number, string>();
-      if (ka.clip0) clips.set(0, ka.clip0);
-      await pool(CONCURRENCY, todo, async ({ s, i }) => {
-        clips.set(i, await clip(ev, s, "480p", ka.url, `clip-${i}.mp4`));
-        costUsd += s.seconds * RATE["480p"];
-      });
-
-      const out = work(ev, "first.mp4");
-      await concat(shots.map((_, i) => clips.get(i)!), out);
-      // Branch clips continue from this frame, so the second half is visually continuous.
-      await lastFrame(out, work(ev, "last.png"));
-      const seconds = shots.reduce((n, s) => n + s.seconds, 0);
-      cfg.log("rendered first half", { channelId: ev.channelId, seq: ev.seq, clips: shots.length, seconds, usd: round(costUsd) });
-      return { url: await cfg.store.storeFile(ev.id, "first.mp4", out), costUsd };
-    },
-
-    async branches(ev) {
-      const dir = path.join(cfg.workDir, ev.id);
-      await mkdir(dir, { recursive: true });
-      const seed = work(ev, "last.png");
-      await lastFrame(work(ev, "first.mp4"), seed).catch(() => {}); // idempotent; no-op if already extracted
-      const seedUrl = await cfg.store.storeFile(ev.id, "last.png", seed);
-
-      const lists = ev.script.branches;
-      const flat = lists.flatMap((shots, b) => shots.map((s, i) => ({ s, b, i })));
-      cfg.budget.assertAffordable(listCost(flat.map((f) => f.s), "768p"), "branches");
-      const paths = await pool(CONCURRENCY, flat, ({ s, b, i }) => clip(ev, s, "768p", seedUrl, `branch-${b}-${i}.mp4`));
-
-      const urls: string[] = [];
-      for (let b = 0; b < lists.length; b++) {
-        const out = work(ev, `branch-${b}.mp4`);
-        await concat(flat.map((f, k) => (f.b === b ? paths[k]! : null)).filter((p): p is string => !!p), out);
-        urls.push(await cfg.store.storeFile(ev.id, branchFileName(b), out));
-      }
-
-      const seconds = flat.reduce((n, f) => n + f.s.seconds, 0);
-      const costUsd = seconds * RATE["768p"];
-      cfg.log("rendered event", {
-        channelId: ev.channelId,
-        seq: ev.seq,
-        clips: ev.script.firstHalf.length + flat.length,
-        seconds: ev.script.firstHalf.reduce((n, s) => n + s.seconds, 0) + seconds,
-        usd: round((ev.costUsd ?? 0) + costUsd),
-      });
-      // Every finished file is in the media store now; nothing reads this directory again. Without
-      // the sweep it keeps ~18 MB of clips per event forever.
-      await rm(dir, { recursive: true, force: true });
-      return { urls, costUsd };
+    async render(ev) {
+      const first = await firstHalf(ev);
+      const second = await branches(ev, first.costUsd);
+      return { firstHalfUrl: first.url, branchUrls: second.urls, costUsd: first.costUsd + second.costUsd };
     },
   };
 }

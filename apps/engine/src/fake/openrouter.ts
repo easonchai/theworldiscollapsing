@@ -25,7 +25,8 @@ export function planShots(total: number): number[] {
   return Array.from({ length: n }, (_, i) => Math.max(5, Math.min(15, base + (i < rem ? 1 : 0))));
 }
 
-// Outcome sets are 3 to 5 long, the shape Authored enforces (PRD: three to five markets).
+// Outcome sets are 3 or 4 long; authored() picks the one matching nOutcomes, or falls back to the
+// first set truncated or padded when neither length matches.
 const CHANNELS: Record<string, { title: (n: number) => string; premise: string; outcomes: string[][]; beat: string }> = {
   sports: {
     title: (n) => `Matchday ${n}: Harbour City vs Northgate`,
@@ -74,10 +75,18 @@ const FALLBACK = {
 
 let counter = 0;
 
-export function authored(channelId: string, firstHalfSec: number, secondHalfSec: number) {
+/** Truncates or pads (repeating the last entry, labeled) the first canned set to exactly `n` long. */
+function fitOutcomes(list: string[], n: number): string[] {
+  if (n <= list.length) return list.slice(0, n);
+  const out = [...list];
+  while (out.length < n) out.push(`${list[list.length - 1]} (extra ${out.length})`);
+  return out;
+}
+
+export function authored(channelId: string, firstHalfSec: number, secondHalfSec: number, nOutcomes = 3) {
   const ch = CHANNELS[channelId] ?? FALLBACK;
   const seq = ++counter;
-  const outcomes = ch.outcomes[seq % ch.outcomes.length]!;
+  const outcomes = ch.outcomes.find((o) => o.length === nOutcomes) ?? fitOutcomes(ch.outcomes[0]!, nOutcomes);
   const first = planShots(firstHalfSec);
   const second = planShots(secondHalfSec);
   return {
@@ -186,7 +195,8 @@ export function startFake(port: number): http.Server {
         const prompt = (body.messages ?? []).map((m: { content: string }) => m.content).join("\n");
         const channelId = /^Channel:\s*(\S+)/m.exec(prompt)?.[1] ?? "sports";
         const lengths = /first half (\d+)s, each branch (\d+)s/.exec(prompt);
-        const object = authored(channelId, Number(lengths?.[1] ?? 60), Number(lengths?.[2] ?? 60));
+        const nOutcomes = Number(/Give exactly (\d+) outcomes/.exec(prompt)?.[1] ?? 3);
+        const object = authored(channelId, Number(lengths?.[1] ?? 60), Number(lengths?.[2] ?? 60), nOutcomes);
         const missing = (schema.required ?? Object.keys(schema.properties)).filter(
           (k: string) => !(k in object) && k in schema.properties,
         );

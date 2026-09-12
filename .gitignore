@@ -13,3 +13,5 @@ packages/contracts/broadcast/**/dry-run
 packages/contracts/broadcast/**/31337
 .vercel
 .claude/worktrees/
+.scratch/
+env.txt

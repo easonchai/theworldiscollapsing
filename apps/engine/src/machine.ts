@@ -70,6 +70,7 @@ export type AuthorCtx = {
   /** Playback budgets from Timing: the shot lists must add up to these. */
   firstHalfSec: number;
   secondHalfSec: number;
+  nOutcomes: number;
 };
 
 export interface Author {
@@ -77,8 +78,8 @@ export interface Author {
 }
 
 export interface Render {
-  firstHalf(ev: EventRow): Promise<{ url: string; costUsd: number }>;
-  branches(ev: EventRow): Promise<{ urls: string[]; costUsd: number }>;
+  /** Renders and stores the whole event. Resolves only when every file is in the media store. */
+  render(ev: EventRow): Promise<{ firstHalfUrl: string; branchUrls: string[]; costUsd: number }>;
 }
 
 export type Timing = {
@@ -97,7 +98,9 @@ export const REAL: Timing = {
   txBufferMs: 15_000,
   firstHalfMs: 60_000,
   secondHalfMs: 60_000,
-  pauseMs: 30_000,
+  // A Reactor render cycle runs ~260s, longer than the ~165s of first+second half air time, so the
+  // pause between events has to cover the gap (ticket 10 / ADR 0002 amendment).
+  pauseMs: 120_000,
   idlePollMs: 10_000,
   renderRetryMs: 5_000,
   drandRetryMs: 2_000,
@@ -114,6 +117,7 @@ export type Deps = {
   author: Author;
   render: Render;
   timing: Timing;
+  nOutcomes: number;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   log: (msg: string, extra?: Record<string, unknown>) => void;
@@ -139,9 +143,6 @@ const AUTHOR_ESTIMATE_USD = 1;
 export const eventIdFor = (channelId: string, seq: number): Hex => keccak256(toHex(`${channelId}:${seq}`));
 
 const LIVE = new Set<State>(["BETTING", "LOCKED", "RESOLVE", "REVEAL", "CANON", "PAUSE"]);
-
-// In-flight branch renders, so RESOLVE never starts a second (paid) render of the same event.
-const inflightBranches = new Map<Hex, Promise<EventRow>>();
 
 export async function runChannel(channelId: string, d: Deps, signal: AbortSignal): Promise<void> {
   const open = await d.store.openEvents(channelId);
@@ -214,6 +215,7 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
         canon,
         firstHalfSec: d.timing.firstHalfMs / 1000,
         secondHalfSec: d.timing.secondHalfMs / 1000,
+        nOutcomes: d.nOutcomes,
       });
       ev = await d.store.insert({
         id: eventIdFor(channelId, seq),
@@ -243,9 +245,10 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
     }
     while (ev.state === "RENDER") {
       try {
-        const r = await d.render.firstHalf(ev);
+        const r = await d.render.render(ev);
         ev = await d.store.update(ev.id, {
-          firstHalfUrl: r.url,
+          firstHalfUrl: r.firstHalfUrl,
+          branchUrls: r.branchUrls,
           costUsd: (ev.costUsd ?? 0) + r.costUsd,
           state: "READY",
           error: null,
@@ -265,24 +268,11 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
         await d.sleep(d.timing.renderRetryMs);
       }
     }
-    if (!ev.branchUrls) void ensureBranches(ev, d).catch(() => {});
     return ev;
   } catch (e) {
     d.log("produce failed", { channelId, error: String(e) });
     return null;
   }
-}
-
-function ensureBranches(ev: EventRow, d: Deps): Promise<EventRow> {
-  let p = inflightBranches.get(ev.id);
-  if (!p) {
-    p = d.render
-      .branches(ev)
-      .then((r) => d.store.update(ev.id, { branchUrls: r.urls, costUsd: (ev.costUsd ?? 0) + r.costUsd }))
-      .finally(() => inflightBranches.delete(ev.id));
-    inflightBranches.set(ev.id, p);
-  }
-  return p;
 }
 
 async function step(ev: EventRow, d: Deps, onBetting: () => Promise<void>): Promise<EventRow> {
@@ -340,17 +330,6 @@ async function step(ev: EventRow, d: Deps, onBetting: () => Promise<void>): Prom
       d.log("resolved", { channelId: ev.channelId, seq: ev.seq, outcome, label: ev.outcomes[outcome], tx });
       // Money is settled above; video is best-effort. A missing branch shows as a card, never blocks payout.
       let branchUrls = ev.branchUrls;
-      if (!branchUrls) {
-        try {
-          // The row in hand predates the background render: wait for it if it is still running,
-          // otherwise read what it stored, and only render again if nothing was stored (it failed).
-          // Starting a second render here re-buys every branch clip and, when it fails, nulls the URLs.
-          const stored = inflightBranches.get(ev.id) ?? d.store.get(ev.id);
-          branchUrls = (await stored)?.branchUrls ?? (await ensureBranches(ev, d)).branchUrls;
-        } catch (e) {
-          d.log("branches unavailable at reveal", { seq: ev.seq, error: String(e) });
-        }
-      }
       // Sealed branches are ciphertext until a key is released; publish the winner's plaintext now
       // or the reveal plays a dead file.
       if (branchUrls && d.revealWinner) {

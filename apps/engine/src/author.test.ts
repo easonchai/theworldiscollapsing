@@ -3,7 +3,14 @@ import { CHANNEL_STYLE, makeAuthor } from "./author.js";
 import { makeOpenRouter, SchemaError } from "./openrouter.js";
 import { eventIdFor, type AuthorCtx } from "./machine.js";
 
-const CTX: AuthorCtx = { channelId: "sports", seq: 3, canon: ["Week 2: Northgate won."], firstHalfSec: 60, secondHalfSec: 60 };
+const CTX: AuthorCtx = {
+  channelId: "sports",
+  seq: 3,
+  canon: ["Week 2: Northgate won."],
+  firstHalfSec: 60,
+  secondHalfSec: 60,
+  nOutcomes: 3,
+};
 
 const shot = (seconds: number) => ({ prompt: "wide stadium shot", seconds });
 
@@ -20,8 +27,15 @@ const good = {
 };
 // one branch for three outcomes: fails Authored's refine
 const bad = { ...good, branches: [[shot(15)]] };
-// two markets is below the PRD's three-to-five floor
+// two outcomes: passes the schema (min 2) but is the wrong count against nOutcomes: 3
 const twoOutcomes = { ...good, outcomes: ["Home win", "Away win"], branches: [[shot(15)], [shot(15)]], canonUpdates: [["Home won."], ["Away won."]] };
+// four outcomes, the right count against nOutcomes: 4
+const good4 = {
+  ...good,
+  outcomes: ["Home win by 2+", "Home win by 1", "Away win", "Draw"],
+  branches: [[shot(15)], [shot(15)], [shot(15)], [shot(15)]],
+  canonUpdates: [["Home won big."], ["Home won."], ["Away won."], ["Level."]],
+};
 
 function chatFetch(objects: unknown[], reasoning: (string | null)[] = []) {
   const calls: any[] = [];
@@ -49,7 +63,7 @@ function chatFetch(objects: unknown[], reasoning: (string | null)[] = []) {
 const author = (f: { impl: typeof fetch }, subgraphUrl?: string) =>
   makeAuthor({
     or: makeOpenRouter({ baseUrl: "http://or", apiKey: "k", imageModel: "img", fetchImpl: f.impl }),
-    model: "openai/gpt-6-astra",
+    model: "openai/gpt-5-mini",
     reasoning: { effort: "medium" },
     subgraphUrl,
     fetchImpl: f.impl,
@@ -66,9 +80,9 @@ describe("author", () => {
     expect(prompt).toContain("Channel: sports");
     expect(prompt).toContain("Week 2: Northgate won.");
     expect(prompt).toContain("first half 60s, each branch 60s");
-    expect(prompt).toContain("Give 3 to 5 outcomes");
+    expect(prompt).toContain("Give exactly 3 outcomes");
     expect(prompt).toContain("cards: 1 or 2 studio cards");
-    expect(f.calls[0]!.model).toBe("openai/gpt-6-astra");
+    expect(f.calls[0]!.model).toBe("openai/gpt-5-mini");
   });
 
   it("gives every channel its house style and the never-cinematic rule", async () => {
@@ -100,11 +114,32 @@ describe("author", () => {
     expect(sportsSys).toMatch(/real time/i);
   });
 
-  it("rejects an event with only two markets, on every channel", async () => {
+  it("rejects an outcome count that is not N_OUTCOMES, on every channel", async () => {
     for (const channelId of ["sports", "politics", "culture", "region"]) {
       const f = chatFetch([twoOutcomes, twoOutcomes]);
-      await expect(author(f).author({ ...CTX, channelId })).rejects.toBeInstanceOf(SchemaError);
+      await expect(author(f).author({ ...CTX, channelId, nOutcomes: 3 })).rejects.toBeInstanceOf(SchemaError);
+
+      // three outcomes is a valid schema shape, but still the wrong count against nOutcomes: 4
+      const f4 = chatFetch([good, good]);
+      await expect(author(f4).author({ ...CTX, channelId, nOutcomes: 4 })).rejects.toBeInstanceOf(SchemaError);
     }
+  });
+
+  it("accepts a matching outcome count at nOutcomes: 4", async () => {
+    const f = chatFetch([good4]);
+    const a = await author(f).author({ ...CTX, nOutcomes: 4 });
+    expect(a.outcomes).toHaveLength(4);
+  });
+
+  it("retries once when the count is wrong, then succeeds with a matching count", async () => {
+    const f = chatFetch([good, good4]);
+    const a = await author(f).author({ ...CTX, nOutcomes: 4 });
+    expect(a.outcomes).toHaveLength(4);
+    expect(f.calls).toHaveLength(2);
+    const retry = f.calls[1]!.messages.at(-1);
+    expect(retry.role).toBe("user");
+    expect(retry.content).toContain("rejected by the schema validator");
+    expect(retry.content).toContain("expected exactly 4 outcomes, got 3");
   });
 
   it("rejects a studio card that points past the first half", async () => {
@@ -141,7 +176,7 @@ describe("author", () => {
     const f = chatFetch([overlong]);
     const a = await makeAuthor({
       or: makeOpenRouter({ baseUrl: "http://or", apiKey: "k", imageModel: "img", fetchImpl: f.impl }),
-      model: "openai/gpt-6-astra",
+      model: "openai/gpt-5-mini",
       log: (_m, extra) => void logged.push(extra ?? {}),
     }).author({ ...CTX, firstHalfSec: 15, secondHalfSec: 10 });
 

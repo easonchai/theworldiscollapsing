@@ -40,7 +40,7 @@ House style, every shot on every channel: this is real footage as broadcast on t
 
 Hard rules:
 - The first half MUST end level. No outcome may be foreshadowed, hinted at or made more likely by anything in it. A viewer who has seen the whole first half must still believe every outcome is possible.
-- Give 3 to 5 outcomes. They are mutually exclusive and exhaustive: exactly one happens. Label them plainly, so nobody can misread which one they are betting on.
+- Give exactly ${ctx.nOutcomes} outcomes. They are mutually exclusive and exhaustive: exactly one happens. Label them plainly, so nobody can misread which one they are betting on.
 - One second-half shot list per outcome, in the same order as the outcomes. Each branch continues from the last frame of the first half.
 - Every shot is a video prompt of 5 to 15 seconds. Write one or two plain sentences, no paragraphs: start with the camera position of this channel, then what it sees. Short prompts render closer to what you asked for.
 - No dialogue, no captions, no subtitles. On-screen graphics — scoreboards, tickers, charts, lower thirds — may be in frame as broadcast furniture, but nothing may depend on them being read: rendered text comes out as gibberish. On politics, put a chart, graph, map or gauge in shot in most studio shots and say what it shows.
@@ -169,6 +169,9 @@ export function makeAuthor(cfg: {
             return kept;
           };
           const a = { ...r.object, reasoning: r.reasoning ?? r.object.reasoning };
+          if (a.outcomes.length !== ctx.nOutcomes) {
+            throw new SchemaError(`expected exactly ${ctx.nOutcomes} outcomes, got ${a.outcomes.length}`);
+          }
           const firstHalf = fit(a.firstHalf, ctx.firstHalfSec, "firstHalf");
           return {
             ...a,

@@ -11,7 +11,7 @@ const CHAT = {
   id: "chatcmpl-123",
   object: "chat.completion",
   created: 1677652288,
-  model: "openai/gpt-6-astra",
+  model: "openai/gpt-5-mini",
   choices: [
     {
       index: 0,
@@ -58,7 +58,7 @@ describe("openrouter client", () => {
   it("sends a strict json_schema with require_parameters and parses object, reasoning and usage", async () => {
     const f = fakeFetch([CHAT]);
     const r = await client(f).chatJson("Thing", Schema, [{ role: "user", content: "go" }], {
-      model: "openai/gpt-6-astra",
+      model: "openai/gpt-5-mini",
       reasoning: { effort: "medium" },
     });
     expect(r.object).toEqual({ a: "hi", n: 2 });

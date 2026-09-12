@@ -2,7 +2,7 @@ import { billsRealMoney, makeBudget, unlimited } from "./budget.js";
 import path from "node:path";
 import type { Address, Hex } from "viem";
 import { fetchRound } from "./drand.js";
-import { env, flag } from "./env.js";
+import { env, flag, intEnv } from "./env.js";
 import { DEMO, REAL, runChannel, type Deps, type Render } from "./machine.js";
 import { makeChain } from "./chain.js";
 import { makePrisma } from "db";
@@ -39,8 +39,9 @@ process.on("exit", releasePid);
 const mediaStoreKind = env("MEDIA_STORE", "local") === "blob" ? "blob" : "local";
 // Events older than the newest MEDIA_KEEP per channel have their published media deleted; the wall
 // only ever replays the newest DONE event and the channel page lists recent history.
-const mediaKeep = Number(env("MEDIA_KEEP", "20"));
-if (!Number.isInteger(mediaKeep) || mediaKeep < 1) throw new Error("MEDIA_KEEP must be a positive integer");
+const mediaKeep = intEnv("MEDIA_KEEP", "20", 1, Infinity);
+// Branches rendered per event; fed to the author, createEvent and (later) the session estimate.
+const nOutcomes = intEnv("N_OUTCOMES", "3", 2, 5);
 const plainMedia = makeMediaStore({
   store: mediaStoreKind,
   dir: mediaDir,
@@ -167,6 +168,7 @@ const deps: Deps = {
   author,
   render,
   timing,
+  nOutcomes,
   now: Date.now,
   sleep,
   log,

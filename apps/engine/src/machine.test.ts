@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Hex } from "viem";
 import { outcomeFor } from "./drand.js";
-import { DEMO, eventIdFor, runChannel, type Chain, type Deps, type EventRow, type Store, type Timing } from "./machine.js";
+import { DEMO, REAL, eventIdFor, runChannel, type Chain, type Deps, type EventRow, type Store, type Timing } from "./machine.js";
 import { stubAuthor } from "./stubs.js";
 
 const SIG =
@@ -124,10 +124,14 @@ function harness(over: Partial<Deps> & { fc?: ReturnType<typeof fakeChain> } = {
     drand: { fetchRound: async (round) => ({ round, signature: SIG }) },
     author: stubAuthor,
     render: {
-      firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
-      branches: async (ev) => ({ urls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`), costUsd: 2 }),
+      render: async (ev) => ({
+        firstHalfUrl: `first:${ev.seq}`,
+        branchUrls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`),
+        costUsd: 3,
+      }),
     },
     timing: T,
+    nOutcomes: 3,
     ...clock,
     log: () => {},
     alwaysOn: true,
@@ -240,14 +244,13 @@ describe("channel lifecycle", () => {
     let attempts = 0;
     const h = harness({
       render: {
-        firstHalf: async (ev) => {
+        render: async (ev) => {
           if (ev.seq === 1) {
             attempts++;
             throw new Error("boom");
           }
-          return { url: `first:${ev.seq}`, costUsd: 1 };
+          return { firstHalfUrl: `first:${ev.seq}`, branchUrls: ev.outcomes.map(() => "b"), costUsd: 3 };
         },
-        branches: async (ev) => ({ urls: ev.outcomes.map(() => "b"), costUsd: 2 }),
       },
     });
     const store = await h.run((s) => doneCount(s) >= 1);
@@ -260,7 +263,7 @@ describe("channel lifecycle", () => {
 
   it("backs off exponentially while every production fails", async () => {
     const h = harness({
-      render: { firstHalf: async () => { throw new Error("vendor down"); }, branches: async () => ({ urls: [], costUsd: 0 }) },
+      render: { render: async () => { throw new Error("vendor down"); } },
     });
     const t0 = h.clock.now();
     await h.run((s) => rows(s).filter((r) => r.state === "SKIPPED").length >= 5);
@@ -268,52 +271,34 @@ describe("channel lifecycle", () => {
     expect(h.clock.now() - t0).toBeGreaterThanOrEqual(30 * T.idlePollMs);
   });
 
-  it("still resolves and reveals when branch rendering fails", async () => {
+  it("an event reaches READY only with every branch stored", async () => {
+    // The render resolves only once both URL sets are ready, so nothing partial is ever persisted.
     const h = harness({
       render: {
-        firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
-        branches: async () => { throw new Error("vendor down"); },
-      },
-    });
-    const store = await h.run((s) => doneCount(s) >= 1);
-    const ev = rows(store)[0];
-    expect(ev.state).toBe("DONE");
-    expect(ev.branchUrls).toBeNull();
-    expect(h.fc.calls.filter((c) => c.startsWith("resolve:")).length).toBe(1);
-  });
-
-  it("reveals branches that finished in the background without rendering or paying twice", async () => {
-    // Seen on Base Sepolia: the LOCKED→RESOLVE row is read while the branch render is still running,
-    // the render lands during the resolve tx, and the row's stale null `branchUrls` then started a
-    // second (paid) render that failed and persisted null over the URLs already stored.
-    const clock = fakeClock();
-    const fc = fakeChain(clock);
-    const resolveNow = fc.chain.resolve;
-    fc.chain.resolve = async (id, sig) => {
-      await new Promise((r) => setImmediate(r)); // a real tx takes a while
-      return resolveNow(id, sig);
-    };
-    const renders = new Map<Hex, number>();
-    const h = harness({
-      fc,
-      ...clock,
-      render: {
-        firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
-        branches: async (ev) => {
-          renders.set(ev.id, (renders.get(ev.id) ?? 0) + 1);
-          while (h.store.rows.get(ev.id)?.state !== "RESOLVE") {
-            if (h.ac.signal.aborted) throw new Error("aborted"); // the prefetched next event never resolves
-            await new Promise((r) => setImmediate(r));
-          }
-          return { urls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`), costUsd: 2 };
+        render: async (ev) => {
+          await new Promise((r) => setImmediate(r));
+          await new Promise((r) => setImmediate(r));
+          return {
+            firstHalfUrl: `first:${ev.seq}`,
+            branchUrls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`),
+            costUsd: 3,
+          };
         },
       },
     });
-    const store = await h.run((s) => doneCount(s) >= 1);
-    const ev = rows(store)[0];
-    expect(ev.branchUrls).toEqual(ev.outcomes.map((_, i) => `branch:1:${i}`));
-    expect(ev.costUsd).toBe(3);
-    expect(renders.get(ev.id)).toBe(1);
+    const readyOrLater = new Set<EventRow["state"]>(["READY", "BETTING", "LOCKED", "RESOLVE", "REVEAL", "CANON", "PAUSE", "DONE"]);
+    const violations: EventRow[] = [];
+    const origHook = h.store.hook;
+    h.store.hook = (row) => {
+      if (readyOrLater.has(row.state) && row.branchUrls === null) violations.push(row);
+      origHook(row);
+    };
+    await h.run((s) => doneCount(s) >= 1);
+    expect(violations).toEqual([]);
+  });
+
+  it("REAL pause is 120 s", () => {
+    expect(REAL.pauseMs).toBe(120_000);
   });
 
   it("stays idle without viewers when not always-on", async () => {
@@ -352,8 +337,11 @@ describe("channel lifecycle", () => {
     const seen: Array<[number, string]> = [];
     const h = harness({
       render: {
-        firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
-        branches: async (ev) => ({ urls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}.enc`), costUsd: 2 }),
+        render: async (ev) => ({
+          firstHalfUrl: `first:${ev.seq}`,
+          branchUrls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}.enc`),
+          costUsd: 3,
+        }),
       },
       revealWinner: async (ev, outcome) => {
         seen.push([outcome, ev.id]);

@@ -22,8 +22,10 @@ export const Authored = z
   .object({
     title: z.string().min(1),
     premise: z.string().min(1),
-    // PRD: three to five markets per event. Two is a coin flip, not a spread.
-    outcomes: z.array(z.string().min(1)).min(3).max(5),
+    // PRD: three to five markets per event, but author.ts now enforces the exact count from
+    // N_OUTCOMES, which is strictly tighter than this floor — and the knob documents 2 as a legal
+    // value, so the schema floor drops to 2 to admit it.
+    outcomes: z.array(z.string().min(1)).min(2).max(5),
     firstHalf: z.array(Shot).min(1), // must end level: no outcome foreshadowed
     branches: z.array(z.array(Shot).min(1)), // one second half per outcome
     cards: z.array(Card).min(1).max(2),
