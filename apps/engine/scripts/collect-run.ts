@@ -17,6 +17,12 @@ import { makePrisma } from "db";
 import type { Authored, Shot } from "../src/authored.js";
 import { clipPrompt } from "../src/render.js";
 
+// Same as `index.ts` and `bettor.ts`: without this, DATABASE_URL is empty and the first query dies
+// on ECONNREFUSED, which is a poor way to greet someone collecting a round they have already paid for.
+try {
+  process.loadEnvFile();
+} catch {}
+
 const run = promisify(execFile);
 
 /** Reactor fast-h3, the same constant `reactor.ts` bills against. */
