@@ -29,13 +29,27 @@ export const CHANNEL_PREFIX: Record<string, string> = {
 const DEFAULT_PREFIX = "Live television broadcast footage, broadcast camera, real-time speed:";
 /**
  * MiniMax has no negative-prompt field, so the constraints ride in the prompt as plain statements.
- * "No captions, no logos" lives here (ticket 09 prompt v2) so every clip carries it once, and
- * `keyArtPrompt` no longer repeats it.
+ * Every clip carries these once and `keyArtPrompt` no longer repeats them.
+ *
+ * v3, ticket 29: "No captions, no logos" was read as a rule about overlays, so scene text survived
+ * on every channel and fast-h3 rendered it as nonsense letterforms — a gold awards screen reading
+ * CHENNIU DORSTAWS RAPOOI was the brightest object in the culture clip. The rule now names what the
+ * camera sees. "Too small, too distant or too oblique" rather than "out of focus" or "blurred" on
+ * purpose: those two ask for a soft image, which is a different and worse picture. Signage stays in
+ * frame, because politics needs a chart on the studio screen and the shape is what carries it.
  */
 export const STYLE_SUFFIX =
-  "Real-time speed. No slow motion. Not cinematic. No film look. Natural light as it is. No captions, no logos.";
-/** Prompts over ~2000 chars are risky on MiniMax and short ones follow better; this is the ceiling. */
-const MAX_PROMPT = 600;
+  "Real-time speed. No slow motion. Not cinematic. No film look. Natural light as it is. " +
+  "Signs, screens and hoardings may be in frame, but lettering on them is too small, too distant " +
+  "or too oblique to read. No readable words anywhere in frame. No captions, no subtitles, " +
+  "no broadcaster watermark, no logos.";
+/**
+ * Prompts over ~2000 chars are risky on MiniMax and short ones follow better; this is the ceiling.
+ * 800, not 600: the v3 suffix is 195 chars longer than v2, and at 600 the shot text is what pays for
+ * it — a two-sentence shot would start getting sliced mid-word. This leaves the shot the same room
+ * it had before the suffix grew.
+ */
+const MAX_PROMPT = 800;
 
 /**
  * The prompt actually sent to the video model: channel house style, the authored shot, the universal

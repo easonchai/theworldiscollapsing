@@ -200,6 +200,28 @@ describe("author", () => {
     expect(logged[3]).toMatchObject({ where: "branch 2", targetSec: 10, beforeSec: 21 });
   });
 
+  it("strips the prompt's own numbering out of the title and the outcomes (ticket 29)", async () => {
+    // The exact shapes two of the four REAL events came back with on 2026-09-12.
+    const labelled = {
+      ...good,
+      title: "Event 43 — National Film Gala",
+      outcomes: ["Outcome 1 — Harbour City win", "Outcome 2: Away win", "outcome 3. Draw"],
+    };
+    const f = chatFetch([labelled]);
+    const a = await author(f).author(CTX);
+    expect(a.title).toBe("National Film Gala");
+    expect(a.outcomes).toEqual(["Harbour City win", "Away win", "Draw"]);
+    // asked for as well as enforced, so the model usually gets it right without the strip
+    expect(f.calls[0]!.messages[0]!.content).toContain('No numbering, no "Event 3", no "Outcome 1"');
+  });
+
+  it("leaves a title alone when the leading word is part of its name", async () => {
+    const f = chatFetch([{ ...good, title: "Eventual Recount", outcomes: ["Option B holds", "Result stands", "Draw"] }]);
+    const a = await author(f).author(CTX);
+    expect(a.title).toBe("Eventual Recount");
+    expect(a.outcomes).toEqual(["Option B holds", "Result stands", "Draw"]);
+  });
+
   it("leaves a shot list that is within the target alone", async () => {
     const f = chatFetch([good]);
     const a = await author(f).author(CTX); // good is exactly 60s / 15s per branch against 60s targets

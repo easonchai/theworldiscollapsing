@@ -41,6 +41,7 @@ House style, every shot on every channel: this is real footage as broadcast on t
 Hard rules:
 - The first half MUST end level. No outcome may be foreshadowed, hinted at or made more likely by anything in it. A viewer who has seen the whole first half must still believe every outcome is possible.
 - Give exactly ${ctx.nOutcomes} outcomes. They are mutually exclusive and exhaustive: exactly one happens. Label them plainly, so nobody can misread which one they are betting on.
+- title and outcomes are read by a viewer next to their money. Write the name of the thing only. No numbering, no "Event ${ctx.seq}", no "Outcome 1", no prefix of any kind.
 - One second-half shot list per outcome, in the same order as the outcomes. Each branch continues from the last frame of the first half.
 - Every shot is a video prompt of 6 to 15 seconds. Write one or two plain sentences, no paragraphs: start with the camera position of this channel, then what it sees. Short prompts render closer to what you asked for.
 - No dialogue, no captions, no subtitles. On-screen graphics — scoreboards, tickers, charts, lower thirds — may be in frame as broadcast furniture, but nothing may depend on them being read: rendered text comes out as gibberish. On politics, put a chart, graph, map or gauge in shot in most studio shots and say what it shows.
@@ -113,6 +114,22 @@ const OVERRUN = 1.1; // the tolerance the prompt asks for, enforced here because
 const totalSec = (shots: Shot[]): number => shots.reduce((n, s) => n + s.seconds, 0);
 
 /**
+ * The prompt's own scaffolding leaks into the two strings a bettor reads next to their money:
+ * two of the four REAL events came back as `Outcome 1 — Harbour City win` and
+ * `Event 43 — National Film Gala` (ticket 29). Stripped here rather than asked for again, for the
+ * same reason the shot lengths are: the model is inconsistent about it across calls.
+ *
+ * The separator is required, so a title that merely starts with one of these words survives
+ * ("Option B", "Eventual Recount"). A string that is nothing but scaffolding is left alone.
+ */
+const SCAFFOLD = /^\s*(?:outcome|option|result|event|episode|part)\b\s*#?\d*\s*[-–—:.)]\s*/i;
+
+function unlabel(s: string): string {
+  const out = s.replace(SCAFFOLD, "").trim();
+  return out.length ? out : s.trim();
+}
+
+/**
  * The model treats the target durations as a suggestion — a real probe against gpt-6-astra returned
  * 26 s of first half against a 15 s target and branches of 22/16/20 s against 10 s. Video is billed
  * per second, so the target has to be enforced in code, not in the prompt: trim the last shot down
@@ -177,6 +194,8 @@ export function makeAuthor(cfg: {
           const firstHalf = fit(a.firstHalf, ctx.firstHalfSec, "firstHalf");
           return {
             ...a,
+            title: unlabel(a.title),
+            outcomes: a.outcomes.map(unlabel),
             firstHalf,
             branches: a.branches.map((b, i) => fit(b, ctx.secondHalfSec, `branch ${i}`)),
             // Dropping trailing shots can orphan a card's cue; keep it on the last shot that survived.
