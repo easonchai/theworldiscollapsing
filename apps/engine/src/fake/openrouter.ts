@@ -49,9 +49,11 @@ const CHANNELS: Record<string, { title: (n: number) => string; premise: string; 
   culture: {
     title: (n) => `Awards night ${n}: Best Picture`,
     premise: "Three nominees, the envelope is still sealed.",
+    // Real names, not "Nominee A": the author prompt forbids placeholders (ticket 29) and a local
+    // soak is only representative if the canned labels look like what the model now returns.
     outcomes: [
-      ["Nominee A", "Nominee B", "Nominee C"],
-      ["Nominee A", "Nominee B", "Nominee C", "Nominee D", "No award given"],
+      ["Lina Cho wins", "Marta Ruiz wins", "Kei Nakamura wins"],
+      ["Lina Cho wins", "Marta Ruiz wins", "Kei Nakamura wins", "Aria Solace wins", "No award given"],
     ],
     beat: "press-pool camera in the photographers' pen, hard camera locked on the stage",
   },
@@ -72,6 +74,13 @@ const FALLBACK = {
   outcomes: [["Yes", "No", "Neither"]],
   beat: "wide establishing shot",
 };
+
+/**
+ * The scorebug is sports-only and needs one final per outcome, so it is derived from whichever
+ * canned outcome set was picked rather than written next to one of them.
+ */
+const finalFor = (o: string): string =>
+  /two or more/i.test(o) ? "3 - 1" : /^harbour/i.test(o) ? "2 - 1" : /^northgate/i.test(o) ? "1 - 2" : "1 - 1";
 
 let counter = 0;
 
@@ -100,6 +109,7 @@ export function authored(channelId: string, firstHalfSec: number, secondHalfSec:
     cards: [{ afterShot: 0, title: `${channelId} desk`, stats: [`${outcomes.length} markets open`, "Level at the break"] }],
     ticker: [`${channelId} desk live`, "Pools open until lock", "Level at the break"],
     canonUpdates: outcomes.map((o) => [`${ch.title(seq)}: ${o}.`]),
+    score: channelId === "sports" ? { sides: ["HAR", "NOR"], atBreak: "1 - 1", atEnd: outcomes.map(finalFor) } : null,
     reasoning: `Fake showrunner: picked ${outcomes.length} outcomes for ${channelId} #${seq}; the first half runs ${firstHalfSec}s and stays level so no branch is foreshadowed.`,
   };
 }

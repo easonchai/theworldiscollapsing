@@ -88,6 +88,7 @@ const script: Authored = {
   cards: [{ afterShot: 0, title: "Card", stats: ["a", "b"] }],
   ticker: ["ticker"],
   canonUpdates: [["A won"], ["B won"]],
+  score: null,
   reasoning: "test",
 };
 

@@ -42,6 +42,33 @@ function StudioCard({ event, now }: { event: EventPublic; now: number | null }) 
   );
 }
 
+/**
+ * The scorebug, top-right so it clears the UMD in the opposite corner. Sports only, because that is
+ * the only channel with a scoreline.
+ *
+ * This is the one fact on the picture a viewer has to be able to read, and it is page text rather
+ * than pixels for a measured reason: fast-h3 cannot draw letterforms. Three culture renders came
+ * back with gibberish on every sign in shot, so a score generated into the video would read as
+ * nonsense to the person whose money is on it. Everything the model draws may be gibberish; this
+ * cannot be.
+ */
+function Scorebug({ event }: { event: EventPublic }) {
+  const score = event.score;
+  if (!score) return null;
+  return (
+    <div className="absolute top-0 right-0 z-10 flex items-center gap-2 border-b border-l border-line bg-black px-2 py-1 whitespace-nowrap">
+      <span className="font-mono text-[10px] leading-none font-medium tracking-[0.18em] text-bone uppercase">
+        {score.sides[0]}
+      </span>
+      <span className="num text-[12px] leading-none text-amber">{score.score}</span>
+      <span className="font-mono text-[10px] leading-none font-medium tracking-[0.18em] text-bone uppercase">
+        {score.sides[1]}
+      </span>
+      <span className="tag">{score.final ? "full time" : "half"}</span>
+    </div>
+  );
+}
+
 /** True once hydrated: time-dependent markup must match the server render until then. */
 const neverChanges = () => () => {};
 const useMounted = () =>
@@ -75,6 +102,8 @@ function Screen({ event, now, mounted }: { event: EventPublic; now: number; moun
       <Link href={`/c/${event.channelId}`} className="absolute top-0 left-0 z-10">
         <Umd channelId={event.channelId} name={event.channelId} state={event.state} />
       </Link>
+
+      <Scorebug event={event} />
 
       {locked ? (
         <div className="absolute inset-0 z-20 grid place-items-center bg-vac/80">

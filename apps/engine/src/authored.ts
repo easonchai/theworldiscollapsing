@@ -21,6 +21,32 @@ export const Card = z.object({
   stats: z.array(z.string().min(1).max(48)).min(2).max(2),
 });
 
+/**
+ * The scorebug the broadcast keeps in the corner. Optional, and in practice sports-only: a football
+ * match has a scoreline, an award ceremony does not.
+ *
+ * It exists because the video model cannot draw letterforms. Three renders of the culture channel
+ * came back with gibberish on every sign and backdrop, so anything a bettor has to READ is page
+ * text, never pixels — the same reason `Card` is an overlay. The lengths are short because this is
+ * a corner graphic, not a sentence.
+ *
+ * `atEnd` holds one final per outcome and so is the same class of secret as `branchUrls`: it never
+ * leaves the server whole. `toPublic` in web sends the one that has already resolved, or the break
+ * score, and nothing else.
+ */
+export const Score = z.object({
+  /**
+   * The two competitors as scorebug codes, e.g. ["HAR", "NOR"]. Exactly two, enforced in Authored's
+   * refine rather than as a tuple here: a tuple compiles to `prefixItems`, which OpenAI structured
+   * outputs rejects outright with "array schema items is not an object", failing the whole call.
+   */
+  sides: z.array(z.string().min(1).max(4)),
+  /** The score at the end of the first half, which the hard rules require to be level. */
+  atBreak: z.string().min(1).max(12),
+  /** One final score per outcome, in the same order as `outcomes`. */
+  atEnd: z.array(z.string().min(1).max(12)).min(2).max(5),
+});
+
 export const Authored = z
   .object({
     title: z.string().min(1),
@@ -34,14 +60,24 @@ export const Authored = z
     cards: z.array(Card).min(1).max(2),
     ticker: z.array(z.string()),
     canonUpdates: z.array(z.array(z.string())), // per outcome, applied on resolution
+    /**
+     * Nullable, not optional: `strictify` in openrouter.ts lists every property in `required`,
+     * which is what `strict: true` demands, so an "optional" field is one the model must still
+     * emit. Asking a non-sports channel to omit it is therefore an instruction it cannot follow.
+     * Null is a shape it can actually return, and `makeAuthor` decides the channel anyway.
+     */
+    score: Score.nullable(),
     reasoning: z.string().optional(),
   })
   .refine(
     (a) => a.branches.length === a.outcomes.length && a.canonUpdates.length === a.outcomes.length,
     "one branch and one canon update list per outcome",
   )
+  .refine((a) => !a.score || a.score.atEnd.length === a.outcomes.length, "one final score per outcome")
+  .refine((a) => !a.score || a.score.sides.length === 2, "a scorebug has exactly two sides")
   .refine((a) => a.cards.every((c) => c.afterShot < a.firstHalf.length), "every card's afterShot must index a first-half shot");
 
 export type Authored = z.infer<typeof Authored>;
 export type Shot = z.infer<typeof Shot>;
 export type Card = z.infer<typeof Card>;
+export type Score = z.infer<typeof Score>;

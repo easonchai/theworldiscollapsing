@@ -11,7 +11,9 @@ import { branchFileName, type MediaStore } from "./media.js";
 const shot = (prompt: string) => ({ prompt, seconds: 6 });
 
 // Outcome lists are exactly N_OUTCOMES long, truncated or padded from the canned 3-outcome set below.
-const CANNED: Record<string, (seq: number) => Authored> = {
+// No `score`: the outcome count is padded here, and a scorebug's finals are one per outcome, so a
+// canned one would go out of step. The fake vendor is the path that exercises the scorebug locally.
+const CANNED: Record<string, (seq: number) => Omit<Authored, "score">> = {
   sports: (seq) => ({
     title: `Matchday ${seq}: Manchester United vs Chelsea`,
     premise: "League fixture at Old Trafford. Level at half time.",
@@ -85,6 +87,8 @@ export const stubAuthor: Author = {
     const a = make(seq);
     return {
       ...a,
+      // The stub author never writes a scoreline; the field is required so it is stated, not omitted.
+      score: null,
       outcomes: fitTo(a.outcomes, nOutcomes, (o, i) => `${o} (extra ${i})`),
       branches: fitTo(a.branches, nOutcomes, (b) => b),
       canonUpdates: fitTo(a.canonUpdates, nOutcomes, (c) => c),

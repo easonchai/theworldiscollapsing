@@ -29,7 +29,7 @@ const CANON: Record<string, string[]> = {
 
 const TEXTY = /\b(logo|logos|sign|signs|signage|banner|banners|backdrop|step-and-repeat|scoreboard|ticker|lower third|name card|hoarding|placard|marquee|nameplate|caption|text|lettering|words?)\b/i;
 
-for (const channelId of ["culture", "sports", "region", "politics"]) {
+for (const channelId of process.argv.slice(2).length ? process.argv.slice(2) : ["culture", "sports", "region", "politics"]) {
   const a = await author.author({
     channelId,
     seq: 44,
@@ -41,6 +41,7 @@ for (const channelId of ["culture", "sports", "region", "politics"]) {
   console.log(`\n=== ${channelId} ===`);
   console.log(`title:    ${a.title}`);
   console.log(`outcomes: ${JSON.stringify(a.outcomes)}`);
+  console.log(`score:    ${a.score ? `${a.score.sides.join(" v ")} | break ${a.score.atBreak} | finals ${JSON.stringify(a.score.atEnd)}` : "none"}`);
   for (const s of a.firstHalf) console.log(`  first  ${s.seconds}s ${TEXTY.test(s.prompt) ? "[TEXTY]" : "       "} ${s.prompt}`);
   a.branches.forEach((b, i) => b.forEach((s) => console.log(`  br${i}    ${s.seconds}s ${TEXTY.test(s.prompt) ? "[TEXTY]" : "       "} ${s.prompt}`)));
 }

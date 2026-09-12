@@ -51,6 +51,7 @@ Hard rules:
 - Each branch's shot seconds must total ${ctx.secondHalfSec} seconds (within 10%).
 - cards: 1 or 2 studio cards, the graphics the broadcast cuts to between first-half clips. Each has afterShot (the 0-based index of the first-half shot it follows, so it must be smaller than the number of first-half shots), a title under 48 characters, and exactly two short stat lines, also under 48 characters. Write them as a studio would: a heading and two numbers or facts about this event.
 - ticker: 3 to 6 short broadcast strap lines, under 60 characters each.
+${ctx.channelId === "sports" ? `- score: the scorebug the broadcast keeps in the corner of the picture. sides is the two competitors as scorebug codes of 3 or 4 letters, drawn from their names the way a broadcaster shortens them (Harbour City becomes HAR). atBreak is the score at the end of the first half and it must be level, because the first half gives nothing away. atEnd is one final score per outcome, in the same order as outcomes, and each one must follow from atBreak and from that outcome: the branch where Harbour City win cannot end level. Write scores only, like "1 - 1" and "2 - 1", never words. This is the one thing on the picture a viewer actually reads, because it is drawn as page text rather than generated as video, so get it right.\n` : `- score: null. Only sports has a scoreline.\n`}
 - canonUpdates: one list per outcome, 1 to 3 flat factual sentences stating what became true in the world if that outcome happens. They are appended to the world log and every later event reads them.
 - reasoning: two or three sentences on how this event follows from the canon and why the first half gives nothing away.
 
@@ -196,6 +197,11 @@ export function makeAuthor(cfg: {
           const firstHalf = fit(a.firstHalf, ctx.firstHalfSec, "firstHalf");
           return {
             ...a,
+            // The schema offers `score` to every channel, so the model fills it in whatever the
+            // prompt says: a probe came back with a region scorebug reading "City v Harb" and
+            // finals in Chinese. Only sports has a scoreline, and that is decided here rather
+            // than asked for, the same way the shot lengths and the outcome labels are.
+            score: ctx.channelId === "sports" ? a.score : null,
             title: unlabel(a.title),
             outcomes: a.outcomes.map(unlabel),
             firstHalf,

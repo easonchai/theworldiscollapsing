@@ -23,6 +23,7 @@ const good = {
   cards: [{ afterShot: 1, title: "Half time", stats: ["Possession 51-49", "Shots 4-4"] }],
   ticker: ["Sold out"],
   canonUpdates: [["Home won."], ["Away won."], ["Level."]],
+  score: null,
   reasoning: "inline",
 };
 // one branch for three outcomes: fails Authored's refine
@@ -248,6 +249,44 @@ describe("author", () => {
     const f = chatFetch([good]);
     await author(f).author(CTX);
     expect(f.calls[0]!.messages[0]!.content).toMatch(/never a placeholder like "Nominee A"/);
+  });
+
+  /**
+   * The scorebug is what a bettor reads while the picture plays, and it is page text because the
+   * video model cannot draw letterforms. Sports only: an award stage has no scoreline.
+   */
+  it("asks sports for a scorebug and nobody else", async () => {
+    const sports = chatFetch([good]);
+    await author(sports).author({ ...CTX, channelId: "sports" });
+    const sys: string = sports.calls[0]!.messages[0]!.content;
+    expect(sys).toMatch(/- score: the scorebug/);
+    expect(sys).toMatch(/atBreak is the score at the end of the first half and it must be level/);
+    expect(sys).toMatch(/one final score per outcome, in the same order as outcomes/);
+
+    // Asked for, and then enforced: the schema offers `score` on every channel and a live probe
+    // came back with a region scorebug reading "City v Harb" with finals in Chinese characters.
+    const score = { sides: ["CTY", "HRB"], atBreak: "1 - 1", atEnd: ["2 - 1", "1 - 2", "1 - 1"] };
+    for (const channelId of ["politics", "culture", "region"]) {
+      const f = chatFetch([{ ...good, score }]);
+      const a = await author(f).author({ ...CTX, channelId });
+      expect(f.calls[0]!.messages[0]!.content, channelId).toMatch(/- score: null\. Only sports/);
+      expect(a.score, channelId).toBeNull();
+    }
+  });
+
+  it("accepts a scorebug with one final per outcome and rejects a short list", async () => {
+    const score = { sides: ["HAR", "NOR"], atBreak: "1 - 1", atEnd: ["2 - 1", "1 - 2", "1 - 1"] };
+    const a = await author(chatFetch([{ ...good, score }])).author(CTX);
+    expect(a.score).toEqual(score);
+
+    // two finals against three outcomes would leave the scorebug blank on one branch
+    const short = { ...good, score: { ...score, atEnd: ["2 - 1", "1 - 2"] } };
+    await expect(author(chatFetch([short, short])).author(CTX)).rejects.toBeInstanceOf(SchemaError);
+
+    // sides is a plain array, not a tuple, because a tuple compiles to prefixItems and OpenAI
+    // structured outputs rejects the whole request. The count is enforced here instead.
+    const oneSide = { ...good, score: { ...score, sides: ["HAR"] } };
+    await expect(author(chatFetch([oneSide, oneSide])).author(CTX)).rejects.toBeInstanceOf(SchemaError);
   });
 
   it("leaves a shot list that is within the target alone", async () => {

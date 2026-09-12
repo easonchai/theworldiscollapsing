@@ -18,6 +18,7 @@ const row = (over: Partial<Event> = {}): Event =>
         { prompt: "midfield battle", seconds: 7 },
       ],
       cards: [{ afterShot: 1, title: "Half time", stats: ["Possession 51-49", "Shots 2-2"] }],
+      score: { sides: ["UTD", "CHE"], atBreak: "1 - 1", atEnd: ["2 - 1", "1 - 2", "1 - 1"] },
     },
     reasoning: "thinking",
     firstHalfUrl: "http://media/first.mp4",
@@ -59,6 +60,34 @@ describe("toPublic", () => {
 
   it("withholds the branch when the outcome is not known yet", () => {
     expect(toPublic(row({ state: "REVEAL", outcome: null })).winningBranchUrl).toBeNull();
+  });
+
+  /**
+   * The scorebug is the one thing on the picture a viewer reads, because the video model renders
+   * lettering as gibberish. It is also one final score per outcome, which is the same secret as the
+   * branch urls: "1 - 2" in the response says Northgate won before the round publishes.
+   */
+  it("shows the level break score and never the finals, before reveal", () => {
+    for (const state of ["RENDER", "READY", "BETTING", "LOCKED", "RESOLVE"]) {
+      const pub = toPublic(row({ state, outcome: 1 }));
+      expect(pub.score).toEqual({ sides: ["UTD", "CHE"], score: "1 - 1", final: false });
+      expect(JSON.stringify(pub), state).not.toContain("2 - 1");
+      expect(JSON.stringify(pub), state).not.toContain("1 - 2");
+    }
+  });
+
+  it("shows the final of the outcome that happened, once resolved", () => {
+    const pub = toPublic(row({ state: "DONE", outcome: 1, revealTime: new Date() }));
+    expect(pub.score).toEqual({ sides: ["UTD", "CHE"], score: "1 - 2", final: true });
+    // the two finals that did not happen stay on the server
+    expect(JSON.stringify(pub)).not.toContain("2 - 1");
+  });
+
+  it("has no scorebug on a channel that never authored one", () => {
+    expect(toPublic(row({ channelId: "culture", script: { ticker: [] } })).score).toBeNull();
+    // and a malformed one is dropped rather than half-rendered
+    expect(toPublic(row({ script: { score: { sides: ["ONE"], atBreak: "1 - 1", atEnd: [] } } })).score).toBeNull();
+    expect(toPublic(row({ script: { score: { sides: ["A", "B"], atEnd: [] } } })).score).toBeNull();
   });
 
   it("cues studio cards in seconds of first-half playback", () => {
