@@ -262,6 +262,51 @@ describe("makeReactorRender", () => {
     expect(budget.charges[1]!.usd).toBeGreaterThan(-ESTIMATE_USD);
   }, 20_000);
 
+  it("SIGKILLs a sidecar that ignores SIGTERM, and holds the session slot until it is really gone", async () => {
+    // A sidecar wedged in the SDK's native FFI ignores SIGTERM. It still holds a Reactor session
+    // billing by the second, so the slot must not be handed to the next event before it dies.
+    const sidecar = await writeScript(
+      "ignores-sigterm.cjs",
+      `    process.on("SIGTERM", () => {});
+    console.log(JSON.stringify({ event: "ready" }));
+    setInterval(() => {}, 1000);`,
+    );
+    const render = makeReactorRender({
+      python: process.execPath,
+      sidecar,
+      sessions: 1,
+      workDir: path.join(dir, "work-sigkill"),
+      store: recordingStore(),
+      budget: recordingBudget(),
+      deadlineMs: () => 500,
+      log: () => {},
+    });
+
+    const started = Date.now();
+    await expect(render.render(ev)).rejects.toThrow(/deadline/);
+    // Settling had to wait out SIGKILL_AFTER_MS (3 s) on top of the 500 ms deadline, rather than
+    // rejecting the moment SIGTERM went unanswered.
+    expect(Date.now() - started).toBeGreaterThan(3_000);
+
+    // The slot is free again, so the next render runs instead of blocking forever.
+    const ok = await writeScript(
+      "quick-done.cjs",
+      `    console.log(JSON.stringify({ event: "ready" }));
+    console.log(JSON.stringify({ event: "error", stage: "connect", reason: "no session" }));
+    process.exit(1);`,
+    );
+    const second = makeReactorRender({
+      python: process.execPath,
+      sidecar: ok,
+      sessions: 1,
+      workDir: path.join(dir, "work-sigkill-2"),
+      store: recordingStore(),
+      budget: recordingBudget(),
+      log: () => {},
+    });
+    await expect(second.render(ev)).rejects.toThrow(/no session/);
+  }, 30_000);
+
   it("SidecarError carries null billedS only when the error happens before ready", () => {
     const before = new SidecarError("x", null);
     const after = new SidecarError("y", 5);

@@ -14,6 +14,9 @@ import { clipPrompt } from "./render.js";
 const run = promisify(execFile);
 /** Reactor's fast-h3 rate, confirmed in ticket 09's paid probe: $0.007 per billed second. */
 const USD_PER_SEC = 0.007;
+/** How long a sidecar gets to answer SIGTERM before SIGKILL, and then before we stop waiting. */
+const SIGKILL_AFTER_MS = 3_000;
+const REAP_GRACE_MS = 2_000;
 
 type PlanClip = {
   id: string;
@@ -109,30 +112,56 @@ function runSidecar(
   return new Promise((resolve, reject) => {
     const child = spawn(cfg.python, [cfg.sidecar], { stdio: ["pipe", "pipe", "pipe"] });
     let readyAt: number | null = null;
-    let settled = false;
+    let outcome: { ok: true; value: SidecarResult } | { ok: false; error: SidecarError } | null = null;
     let stderrTail = "";
     const segResults = new Map<string, { start: number; end: number }>();
 
     const withStderr = (message: string) => (stderrTail ? `${message} | sidecar stderr: ${stderrTail.slice(-2000)}` : message);
 
-    function fail(message: string, billedSOverride?: number) {
-      if (settled) return;
-      settled = true;
+    /**
+     * Settle only once the child is really gone. A live sidecar holds a real Reactor session
+     * billing $0.007 a second, and the caller frees its session slot the moment this promise
+     * settles, so handing back early lets a zombie bill outside the REACTOR_SESSIONS count and
+     * push the account past its 5-session cap.
+     */
+    let delivered = false;
+    function deliver() {
+      if (delivered || !outcome) return;
+      delivered = true;
       clearTimeout(deadlineTimer);
-      const billedS = readyAt === null ? null : (billedSOverride ?? (Date.now() - readyAt) / 1000);
+      clearTimeout(killTimer);
+      clearTimeout(reapTimer);
+      if (outcome.ok) resolve(outcome.value);
+      else reject(outcome.error);
+    }
+
+    let killTimer: NodeJS.Timeout | undefined;
+    let reapTimer: NodeJS.Timeout | undefined;
+    function stopChild() {
       try {
         child.kill("SIGTERM");
       } catch {
         // already gone
       }
-      reject(new SidecarError(withStderr(message), billedS));
+      // SIGTERM is a request. A sidecar wedged inside the SDK's native FFI will not answer it.
+      killTimer = setTimeout(() => void child.kill("SIGKILL"), SIGKILL_AFTER_MS);
+      // And if even that leaves nothing to reap, stop waiting rather than stall the channel.
+      reapTimer = setTimeout(deliver, SIGKILL_AFTER_MS + REAP_GRACE_MS);
+      killTimer.unref?.();
+      reapTimer.unref?.();
+    }
+
+    function fail(message: string, billedSOverride?: number) {
+      if (outcome) return;
+      const billedS = readyAt === null ? null : (billedSOverride ?? (Date.now() - readyAt) / 1000);
+      outcome = { ok: false, error: new SidecarError(withStderr(message), billedS) };
+      stopChild();
     }
 
     function succeed(v: SidecarResult) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(deadlineTimer);
-      resolve(v);
+      if (outcome) return;
+      outcome = { ok: true, value: v };
+      // The sidecar exits on its own right after `done`; deliver when it does.
     }
 
     // Spec section 6: SIGTERM at 2x the estimate's seconds plus 120s of wall clock, treated as an error.
@@ -189,7 +218,8 @@ function runSidecar(
     }
 
     child.on("exit", (code, signal) => {
-      if (!settled) fail(`sidecar exited unexpectedly (code ${code}, signal ${signal})`);
+      if (!outcome) fail(`sidecar exited unexpectedly (code ${code}, signal ${signal})`);
+      deliver();
     });
 
     child.stdin.write(`${JSON.stringify({ cmd: "start", model: "reactor/fast-h3", work, ready_timeout_s: 60 })}\n`);
