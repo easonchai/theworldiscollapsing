@@ -24,6 +24,10 @@ model Event {
   premise        String
   outcomes       Json // string[] labels, index = outcome index
   script         Json // full authored object: shot lists, ticker, canon updates
+  // vendor:timing that authored this event, e.g. "reactor:real", "fake:demo". Null predates this
+  // column (added 2026-09-12, ticket 21) and is genuinely unknown; the engine treats null the same
+  // as any other mismatch and skips rather than rendering it, since the whole point is to fail closed.
+  provenance     String?
   reasoning      String?
   firstHalfUrl   String?
   branchUrls     Json? // string[] by outcome index. NEVER serve before state >= REVEAL.

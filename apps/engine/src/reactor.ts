@@ -3,7 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import type { Budget } from "./budget.js";
-import type { EventRow, Render } from "./machine.js";
+import { RenderFetchError, type EventRow, type Render } from "./machine.js";
 import { branchFileName, type MediaStore } from "./media.js";
 import { clipPrompt } from "./render.js";
 
@@ -99,12 +99,24 @@ type SidecarResult = {
   recording: string;
   billedS: number;
   fetchS: number;
+  /** From the `done` line (ticket 24/27): how many download attempts the sidecar's retry took, and
+   * how long the finished recording measures. Carried through only for logging; nothing here reads
+   * them back, and an older sidecar that omits them just logs `undefined`. */
+  fetchAttempts: number;
+  recordingS: number | null;
   segments: Map<string, { start: number; end: number }>;
 };
 
 /** Line-buffered JSON-per-line protocol client over one child process's stdio. */
 function runSidecar(
-  cfg: { python: string; sidecar: string; log: (msg: string, extra?: Record<string, unknown>) => void },
+  cfg: {
+    python: string;
+    sidecar: string;
+    log: (msg: string, extra?: Record<string, unknown>) => void;
+    /** Fired the instant the `disconnected` line arrives, so the caller can free the session slot
+     * before the download that follows (ticket 27) rather than holding it through `deliver()`. */
+    onDisconnected?: (billedS: number) => void;
+  },
   work: string,
   segments: PlanSegment[],
   deadlineMs: number,
@@ -112,7 +124,11 @@ function runSidecar(
   return new Promise((resolve, reject) => {
     const child = spawn(cfg.python, [cfg.sidecar], { stdio: ["pipe", "pipe", "pipe"] });
     let readyAt: number | null = null;
-    let outcome: { ok: true; value: SidecarResult } | { ok: false; error: SidecarError } | null = null;
+    // Set once the `disconnected` line arrives. From that instant the session is provably closed
+    // and billing has stopped, so it is the number to true up a fetch failure from (ticket 24):
+    // wall-clock-since-ready would otherwise include the whole retrying download.
+    let disconnectedBilledS: number | null = null;
+    let outcome: { ok: true; value: SidecarResult } | { ok: false; error: SidecarError | RenderFetchError } | null = null;
     let stderrTail = "";
     const segResults = new Map<string, { start: number; end: number }>();
 
@@ -202,24 +218,60 @@ function runSidecar(
           // cannot be measured after the fact.
           cfg.log("sidecar segment", { work, name: msg.name, start_t: msg.start_t, end_t: msg.end_t });
           return;
+        case "disconnected":
+          // The session is provably closed the instant this line arrives (disconnect stops
+          // billing before the download starts), which is what makes it safe to free the caller's
+          // session slot here and nowhere else: the long comment above `deliver` still holds for
+          // every other exit path, where a live sidecar can still be running up a bill.
+          disconnectedBilledS = msg.billed_s as number;
+          cfg.onDisconnected?.(disconnectedBilledS);
+          return;
         case "done":
           // `first_media_t` says when the first frame existed, in the same clock the `segment`
           // offsets use. The recording is media-backed, so if it starts at that frame rather than
           // at `ready`, every `-ss` cut is shifted by it. Logged so the next run can measure which.
-          cfg.log("sidecar done", { work, billed_s: msg.billed_s, fetch_s: msg.fetch_s, first_media_t: msg.first_media_t });
+          // `fetch_attempts`/`recording_s` are new fields (ticket 24); an older sidecar that omits
+          // them just logs `undefined` here, same as any other missing protocol field.
+          cfg.log("sidecar done", {
+            work,
+            billed_s: msg.billed_s,
+            fetch_s: msg.fetch_s,
+            first_media_t: msg.first_media_t,
+            fetch_attempts: msg.fetch_attempts,
+            recording_s: msg.recording_s,
+          });
           succeed({
             recording: msg.recording as string,
             billedS: msg.billed_s as number,
             fetchS: msg.fetch_s as number,
+            fetchAttempts: msg.fetch_attempts as number,
+            recordingS: (msg.recording_s as number | null) ?? null,
             segments: segResults,
           });
           return;
-        case "error":
-          // The real protocol never carries billed_s on an error event (only `done` does). We check
-          // for it anyway as a defensive, forward-compatible fallback; when absent we approximate
-          // with our own wall clock since `ready`, which is what the sidecar's own billed_s measures.
-          fail(`sidecar error at stage ${msg.stage}: ${msg.reason}`, msg.billed_s as number | undefined);
+        case "error": {
+          const stage = msg.stage as string | undefined;
+          const reason = msg.reason as string | undefined;
+          if (stage === "fetch") {
+            // The build finished and Reactor was fully paid for; only the download failed (ticket
+            // 24: a reset connection burned a second $0.92 session and then couldn't afford it, so
+            // politics aired nothing on 2026-09-12). A re-render cannot help, so this must surface
+            // as something other than the SidecarError produce() retries.
+            if (outcome) return;
+            // Prefer the disconnected line's billed_s: it is exactly what Reactor charged, where
+            // wall-clock-since-ready would include the whole retrying download and overstate it.
+            const billedS = disconnectedBilledS ?? (readyAt === null ? 0 : (Date.now() - readyAt) / 1000);
+            outcome = { ok: false, error: new RenderFetchError(withStderr(`sidecar error at stage fetch: ${reason}`), billedS) };
+            stopChild();
+            return;
+          }
+          // The real protocol never carries billed_s on a non-fetch error event (only `done` and
+          // `disconnected` do). We check for it anyway as a defensive, forward-compatible fallback;
+          // when absent we approximate with our own wall clock since `ready`, which is what the
+          // sidecar's own billed_s measures.
+          fail(`sidecar error at stage ${stage}: ${reason}`, msg.billed_s as number | undefined);
           return;
+        }
         case "clip":
           // Nothing to act on, but a clip's own build time is otherwise invisible to the engine:
           // `billed_s` is the whole session, and this is the only per-clip number Reactor gives us.
@@ -283,40 +335,83 @@ export function makeReactorRender(cfg: {
       const estimateUsd = estimateSec * USD_PER_SEC;
 
       cfg.budget.assertAffordable(estimateUsd, "reactor session");
-      await cfg.budget.charge(estimateUsd, "reactor session");
+
+      // Ticket 20: reserving the estimate and truing up after the session left the real ceiling
+      // on a session's cost as the watchdog deadline, since nothing samples spend mid-session. A
+      // stalled DEMO session rode a 234 s deadline to $1.58 against a $1.35 cap on 2026-09-12, and
+      // it got worse under concurrency: on the four-channel REAL round the same day, each session
+      // computed its bound from spent() as it stood at its own start, and another session's true-up
+      // landed later and made that bound too generous by exactly the true-up's size. World.spendUsd
+      // finished at $6.563 against a $6.50 cap. Reserving the worst case up front instead of the
+      // estimate, and refunding the difference on true-up, commits the money before any session
+      // starts, so a later true-up can no longer invalidate a bound another session already used.
+      //
+      // spent() here does not yet include this session (nothing has been charged for it yet), so
+      // the cap can still afford exactly capUsd - spent() more. Unlike the superseded formula,
+      // there is no "+ estimateUsd" term to add back: this session has not reserved anything yet
+      // for that term to be undoing.
+      const affordableSec = (cfg.budget.capUsd - cfg.budget.spent()) / USD_PER_SEC;
+      const cappedMs = Math.max(1_000, Math.min(deadlineMs(estimateSec), Math.floor(affordableSec * 1000)));
+      if (cappedMs < deadlineMs(estimateSec)) {
+        cfg.log("session deadline bounded by budget", {
+          channelId: ev.channelId,
+          seq: ev.seq,
+          deadlineMs: cappedMs,
+          wouldHaveBeenMs: deadlineMs(estimateSec),
+        });
+      }
+      // The worst case that bounded deadline permits, billed at the full USD_PER_SEC rate.
+      // assertAffordable above already guarantees capUsd - spent() >= estimateUsd, so
+      // affordableSec >= estimateSec, which is always far past the 1s floor above; the floor can
+      // therefore never push reservedUsd past what assertAffordable already gated on, and no
+      // separate refusal check is needed here.
+      const reservedUsd = (cappedMs / 1000) * USD_PER_SEC;
+
+      // No await between reading spent() (in affordableSec above) and this charge: charge()
+      // updates `spent` synchronously before its own first await, and Node is single-threaded, so
+      // a reservation computed and charged in one synchronous run cannot be interleaved by another
+      // channel's session. That gap is exactly what let the four concurrent REAL sessions overshoot
+      // the cap above. This looks like a removable line; it is the whole fix, so do not add one.
+      await cfg.budget.charge(reservedUsd, "reactor session reserve");
 
       const waitStart = Date.now();
       const release = await sem.acquire();
-      const waitedMs = Date.now() - waitStart;
+      const acquiredAt = Date.now();
+      const waitedMs = acquiredAt - waitStart;
       if (waitedMs > 1000) cfg.log("session slot wait", { channelId: ev.channelId, seq: ev.seq, waitedMs });
+
+      // Ticket 27: freed the moment the sidecar's `disconnected` line arrives (see the comment in
+      // runSidecar), instead of being held through the download that follows. The `finally` call
+      // below stays as the backstop for a sidecar that never emits the line (the fake, an old
+      // sidecar, a crash before disconnect); it is a no-op there since makeSemaphore's release
+      // guards on `released`, but it still records when the slot was actually freed.
+      let slotReleasedAt: number | null = null;
+      function releaseSlot() {
+        if (slotReleasedAt === null) slotReleasedAt = Date.now();
+        release();
+      }
 
       const dir = path.join(cfg.workDir, ev.id);
       try {
         await mkdir(dir, { recursive: true });
 
-        // The watchdog is also the spend ceiling for a session already running: nothing samples
-        // cost mid-session, so whatever the deadline allows, the true-up pays for. On 2026-09-12 a
-        // stalled DEMO session rode a 234 s deadline to $1.58 against a $1.35 cap. Bound it by the
-        // seconds the cap can still afford, so a hang cannot overrun the cap the way that one did.
-        // `spent()` already includes this session's estimate, which is why the estimate is added
-        // back: it is the session's own reservation, not someone else's spend.
-        const affordableSec = (cfg.budget.capUsd - cfg.budget.spent() + estimateUsd) / USD_PER_SEC;
-        const cappedMs = Math.max(1_000, Math.min(deadlineMs(estimateSec), Math.floor(affordableSec * 1000)));
-        if (cappedMs < deadlineMs(estimateSec)) {
-          cfg.log("session deadline bounded by budget", {
-            channelId: ev.channelId,
-            seq: ev.seq,
-            deadlineMs: cappedMs,
-            wouldHaveBeenMs: deadlineMs(estimateSec),
-          });
-        }
-
         let result: SidecarResult;
         try {
-          result = await runSidecar({ python: cfg.python, sidecar: cfg.sidecar, log: cfg.log }, dir, buildPlan(ev), cappedMs);
+          result = await runSidecar(
+            { python: cfg.python, sidecar: cfg.sidecar, log: cfg.log, onDisconnected: releaseSlot },
+            dir,
+            buildPlan(ev),
+            cappedMs,
+          );
         } catch (e) {
-          const billedS = e instanceof SidecarError ? e.billedS : null;
-          const trueUp = billedS === null ? -estimateUsd : billedS * USD_PER_SEC - estimateUsd;
+          // RenderFetchError also carries a real billedS (never null: the fetch stage is only
+          // reached after `ready` and disconnect), so a fetch failure trues up the same way a
+          // build failure does rather than refunding money Reactor actually charged.
+          const billedS = e instanceof SidecarError ? e.billedS : e instanceof RenderFetchError ? e.billedS : null;
+          // Trues up against what was actually reserved, not the estimate: under the new ordering
+          // reservedUsd is usually well above the estimate, so a failure that billed little is
+          // now usually a large refund rather than a small top-up.
+          const trueUp = billedS === null ? -reservedUsd : billedS * USD_PER_SEC - reservedUsd;
           await cfg.budget.charge(trueUp, "reactor session true-up (error)");
           throw e;
         }
@@ -324,7 +419,7 @@ export function makeReactorRender(cfg: {
         // True up against what Reactor actually billed as soon as it's known, independent of
         // whether the local cut/store steps below succeed.
         const usd = result.billedS * USD_PER_SEC;
-        await cfg.budget.charge(usd - estimateUsd, "reactor session true-up");
+        await cfg.budget.charge(usd - reservedUsd, "reactor session true-up");
 
         const firstSeg = result.segments.get("first");
         if (!firstSeg) throw new Error("sidecar finished without a 'first' segment offset");
@@ -341,18 +436,27 @@ export function makeReactorRender(cfg: {
           branchUrls.push(await cfg.store.storeFile(ev.id, branchFileName(i), out));
         }
 
+        // slotReleasedAt is already set here whenever `disconnected` fired (well before this line,
+        // since cut/store above only run after the whole download finished); Date.now() is a proxy
+        // for the rare sidecar that never emits it, in which case the slot is about to be freed by
+        // the `finally` below anyway. Ticket 27: this is the number that shows whether a slot wait
+        // is attributable to a download, which `fetch_s` alone conflated.
+        const slotHeldMs = (slotReleasedAt ?? Date.now()) - acquiredAt;
         cfg.log("rendered event", {
           channelId: ev.channelId,
           seq: ev.seq,
           billed_s: result.billedS,
           fetch_s: result.fetchS,
+          fetch_attempts: result.fetchAttempts,
+          recording_s: result.recordingS,
+          slotHeldMs,
           usd: round(usd),
           estimateUsd: round(estimateUsd),
         });
         return { firstHalfUrl, branchUrls, costUsd: usd };
       } finally {
         await rm(dir, { recursive: true, force: true }).catch(() => {});
-        release();
+        releaseSlot();
       }
     },
   };

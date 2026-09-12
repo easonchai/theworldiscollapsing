@@ -7,7 +7,7 @@ import { DEMO, REAL, runChannel, type Deps, type Render } from "./machine.js";
 import { makeChain } from "./chain.js";
 import { makePrisma } from "db";
 import { makeAuthor } from "./author.js";
-import { makeMediaStore, pruneEventMedia, startMediaServer } from "./media.js";
+import { makeMediaStore, pruneEventMedia, startMediaServer, sweepWorkDir } from "./media.js";
 import { makeOpenRouter } from "./openrouter.js";
 import { claimPidFile } from "./pidfile.js";
 import { makeReactorRender } from "./reactor.js";
@@ -124,8 +124,21 @@ if (videoVendor === "reactor" && channels.length > reactorSessions) {
   );
 }
 
+// What this engine stamps on every event it authors, and the only provenance it will resume and
+// render (machine.ts runChannel). Reactor's fake sidecar is a free loopback, not the real vendor, so
+// it gets its own "fake" provenance rather than being lumped in with a real Reactor engine — that
+// mix-up is exactly what ticket 21 (2026-09-12) was about: a paid engine resumed and rendered an
+// event a free fake-sidecar soak had authored, opening a real billed Reactor session over a canned script.
+const provenanceVendor = videoVendor === "reactor" ? (reactorSidecarKind === "fake" ? "fake" : "reactor") : videoVendor;
+const provenance = `${provenanceVendor}:${timing === DEMO ? "demo" : "real"}`;
+
 // Intermediate clips and stills never leave the engine box; only finished files go through the media store.
 const workDir = path.join(mediaDir, ".work");
+// A directory here at boot belongs to no live session, since the pidfile above already guarantees
+// this is the only engine touching MEDIA_DIR. render()'s own sweep runs in a `finally`, which a
+// signal skips, so this is the one place that also catches SIGKILL, a panic and a power cut (ticket 22).
+const swept = await sweepWorkDir(workDir);
+if (swept.dirs) log("swept work dir", { dirs: swept.dirs, bytes: swept.bytes });
 
 let author = stubAuthor;
 let render: Render = stubRender({
@@ -211,6 +224,7 @@ const deps: Deps = {
   render,
   timing,
   nOutcomes,
+  provenance,
   now: Date.now,
   sleep,
   log,
@@ -265,6 +279,7 @@ deps.log("engine start", {
   demo: timing === DEMO,
   alwaysOn: deps.alwaysOn,
   mediaStore: mediaStoreKind,
+  provenance, // events authored under any other provenance are skipped on resume, not rendered (ticket 21)
 });
 await Promise.all(channels.map((c) => runChannel(c, deps, ac.signal)));
 mediaServer?.close();

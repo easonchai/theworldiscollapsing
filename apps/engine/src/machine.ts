@@ -25,6 +25,14 @@ export type EventRow = {
   premise: string;
   outcomes: string[];
   script: Authored;
+  /**
+   * vendor:timing that authored this event, e.g. "reactor:real", "fake:demo". Null predates the
+   * column (ticket 21, 2026-09-12) and is genuinely unknown. Checked on resume in runChannel so a
+   * paid engine never renders what a different vendor or timing mode wrote. Optional (rather than
+   * required) only so fixtures in other files that don't exercise provenance need not set it; every
+   * row the store or produce() actually hands back always carries it, as string or null.
+   */
+  provenance?: string | null;
   reasoning: string | null;
   firstHalfUrl: string | null;
   branchUrls: string[] | null;
@@ -82,6 +90,25 @@ export interface Render {
   render(ev: EventRow): Promise<{ firstHalfUrl: string; branchUrls: string[]; costUsd: number }>;
 }
 
+/**
+ * Thrown by a `Render` when re-rendering cannot help: the video was fully built and paid for, and
+ * only retrieving the recording failed. Ticket 24 (2026-09-12): a reset TCP connection killed a
+ * download after the build had billed $1.032 in full; the engine's only recovery was re-rendering
+ * the whole event in a new paid session, which then hit the spend cap and aired nothing. produce()
+ * must skip on this error instead of retrying it like a build failure.
+ */
+export class RenderFetchError extends Error {
+  constructor(
+    message: string,
+    /** Seconds Reactor actually billed, from the sidecar's `disconnected` line. The true-up on
+     * this path charges real money already spent; it must not be refunded like a build failure. */
+    public readonly billedS: number,
+  ) {
+    super(message);
+    this.name = "RenderFetchError";
+  }
+}
+
 export type Timing = {
   txBufferMs: number; // headroom between sending createEvent and first-half start
   firstHalfMs: number;
@@ -118,6 +145,13 @@ export type Deps = {
   render: Render;
   timing: Timing;
   nOutcomes: number;
+  /**
+   * vendor:timing this running engine authors under, e.g. "reactor:real", "fake:demo" (ticket 21,
+   * 2026-09-12). Stamped on every event this engine inserts and checked against events found by
+   * openEvents on resume, so a real paid engine can never pick up and render what a free fake
+   * sidecar or a different timing mode wrote.
+   */
+  provenance: string;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   log: (msg: string, extra?: Record<string, unknown>) => void;
@@ -149,7 +183,31 @@ export const eventIdFor = (channelId: string, seq: number): Hex => keccak256(toH
 const LIVE = new Set<State>(["BETTING", "LOCKED", "RESOLVE", "REVEAL", "CANON", "PAUSE"]);
 
 export async function runChannel(channelId: string, d: Deps, signal: AbortSignal): Promise<void> {
-  const open = await d.store.openEvents(channelId);
+  const found = await d.store.openEvents(channelId);
+  // Ticket 21 (2026-09-12): a paid Reactor engine resumed and opened a real billed session over an
+  // event a free fake-sidecar soak had authored. RENDER/READY events are not on chain yet, so no
+  // bettor money is at stake; a provenance mismatch there (including unknown/null, from before this
+  // column existed) is skipped rather than rendered. BETTING or later already has real money (and
+  // maybe a tx) committed on chain, so those resume regardless of provenance — pulling one now would
+  // strand bettors, and the harm this ticket cares about is specifically paying to render a foreign
+  // script, not finishing an event that already went live.
+  const open: EventRow[] = [];
+  for (const ev of found) {
+    if (!LIVE.has(ev.state) && ev.provenance !== d.provenance) {
+      d.log("skipping event authored under a different provenance", {
+        channelId,
+        seq: ev.seq,
+        eventProvenance: ev.provenance ?? "unknown",
+        engineProvenance: d.provenance,
+      });
+      await d.store.update(ev.id, {
+        state: "SKIPPED",
+        error: `provenance mismatch: event=${ev.provenance ?? "unknown"} engine=${d.provenance}`,
+      });
+      continue;
+    }
+    open.push(ev);
+  }
   let live = open.find((e) => LIVE.has(e.state)) ?? null;
   const pending = open.find((e) => e.state === "RENDER" || e.state === "READY") ?? null;
   let next: Promise<EventRow | null> | null = pending ? produce(channelId, d, pending) : null;
@@ -230,6 +288,7 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
         premise: a.premise,
         outcomes: a.outcomes,
         script: a,
+        provenance: d.provenance,
         reasoning: a.reasoning ?? null,
         firstHalfUrl: null,
         branchUrls: null,
@@ -261,6 +320,20 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
         if (e instanceof SpendCapError) {
           // Not a render failure: leave the row in RENDER so it resumes once the cap is raised.
           d.log("spend cap reached; production paused", { channelId, seq: ev.seq, error: String(e) });
+          return null;
+        }
+        if (e instanceof RenderFetchError) {
+          // The clips all built and were fully paid for; only downloading the recording failed.
+          // Re-rendering would pay for the build a second time (ticket 24: that hit the spend cap
+          // and politics aired nothing on 2026-09-12), and a new session cannot make the old
+          // recording download any better. Skip rather than leaving the row in RENDER, which would
+          // just pay for the build again on the next resume.
+          ev = await d.store.update(ev.id, { state: "SKIPPED", error: String(e) });
+          d.log("build succeeded but the fetch failed; skipping instead of opening a second paid session", {
+            channelId,
+            seq: ev.seq,
+            error: String(e),
+          });
           return null;
         }
         ev = await d.store.update(ev.id, { renderAttempts: ev.renderAttempts + 1, error: String(e) });

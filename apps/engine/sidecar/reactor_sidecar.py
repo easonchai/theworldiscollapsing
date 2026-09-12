@@ -17,7 +17,9 @@ out (stdout, one JSON object per line):
   {"event":"error","stage":"connect","reason":"..."}
   {"event":"clip","id":"f0","state":"generated"|"started"|"finished"|"failed","t":12.3}
   {"event":"segment","name":"first","start_t":9.1,"end_t":69.4}
-  {"event":"done","recording":"<work>/session.mp4","billed_s":250.4,"fetch_s":28.0}
+  {"event":"disconnected","billed_s":250.4}
+  {"event":"done","recording":"<work>/session.mp4","billed_s":250.4,"fetch_s":28.0,
+    "first_media_t":3.2,"fetch_attempts":1,"recording_s":250.6}
   {"event":"error","stage":"clip"|"recording"|"fetch","reason":"..."}   (exit 1)
 
 `t` and every `*_t`/`billed_s`/`fetch_s` field is seconds since `ready`. We call
@@ -25,6 +27,17 @@ out (stdout, one JSON object per line):
 treat that same instant as t=0 for the recording too -- there is no engine-
 observable gap between the two. If a future SDK version makes that call slow
 or async, this assumption needs revisiting.
+
+`disconnected` fires right after `reactor.disconnect()` returns and before the download starts, so
+the engine can free its Reactor session slot the moment billing stops instead of holding it through
+the whole fetch (issue 27). A dropped download retries up to 3 times against the same recording
+handle and JWT, both still valid after disconnect, before it reports `stage: "fetch"`; a
+`TimeoutError` from the 202/Retry-After poll is not one of those retries and still reports `stage:
+"recording"` (issue 24). The recording is a fragmented MP4 still being assembled when the fetch
+starts, so after a successful download the sidecar ffprobes it against the last `segment`'s `end_t`
+and re-downloads until it is covered or `RECORDING_MAX_202_S` of waiting is spent; measured -0.55 s
+and -14.51 s short on two sessions on 2026-09-12 before this existed (issue 26). `fetch_attempts` and
+`recording_s` on `done` make both of these measurable without another paid run.
 
 What the SDK actually does, read out of `reactor-sdk==1.5.0`'s own source
 (installed offline, `site-packages/reactor_sdk/*.py`, 2026-09-12 -- no live
@@ -66,10 +79,15 @@ import asyncio
 import json
 import os
 import signal
+import subprocess
 import sys
 import time
 
 RECORDING_MAX_202_S = 60.0
+MAX_FETCH_ATTEMPTS = 3  # issue 24: a reset TCP connection is an ordinary event on a large CDN transfer
+FETCH_BACKOFF_S = (2.0, 4.0)  # between attempts 1->2 and 2->3
+COMPLETENESS_THRESHOLD_S = 0.5  # spec section 10's cut-error threshold
+COMPLETENESS_RETRY_SLEEP_S = 2.0  # ponytail: fixed poll interval, shorten if 202 assembly is faster than this
 
 EVENT_STATE_BY_SDK_NAME = {
     "clip_generated": "generated",
@@ -162,6 +180,99 @@ async def safe_disconnect(reactor):
         reactor.close()
 
 
+async def fetch_with_retry(reactor_module, recording_clip, mp4_path, jwt):
+    """Downloads the recording, retrying a dropped transfer against the same
+    handle and JWT (both stay valid after disconnect, see issue 24). A
+    TimeoutError from download_clip's own 202/Retry-After poll means the
+    recording itself never finished assembling, not a network blip, so it is
+    raised straight through instead of retried, and the caller still reports
+    it as `stage: "recording"`. Returns the number of download_clip calls made.
+    """
+    for attempt in range(1, MAX_FETCH_ATTEMPTS + 1):
+        log(f"fetch attempt {attempt}/{MAX_FETCH_ATTEMPTS}")
+        try:
+            await reactor_module.download_clip(
+                recording_clip, mp4_path, jwt=jwt, ready_timeout=RECORDING_MAX_202_S
+            )
+            return attempt
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            log(f"fetch attempt {attempt}/{MAX_FETCH_ATTEMPTS} failed: {exc}")
+            if attempt == MAX_FETCH_ATTEMPTS:
+                raise
+            await asyncio.sleep(FETCH_BACKOFF_S[attempt - 1])
+    raise AssertionError("unreachable")  # loop above always returns or raises
+
+
+def parse_ffprobe_duration(stdout_text):
+    """ffprobe's `-of csv=p=0` duration output, parsed to a float. None if it
+    doesn't parse (empty output, "N/A", a stray warning line) -- a confused
+    ffprobe should not fail a paid session (issue 26)."""
+    try:
+        return float(stdout_text.strip())
+    except (ValueError, AttributeError):
+        return None
+
+
+def probe_duration_s(path):
+    """The file's duration per ffprobe, or None if ffprobe is missing or its
+    output can't be read. ffprobe is already a hard dependency of this system
+    (the engine shells out to ffmpeg to cut segments), but a paid recording
+    should not be failed over a missing probe binary."""
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=10, check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        log(f"ffprobe unavailable, proceeding without a completeness check: {exc}")
+        return None
+    return parse_ffprobe_duration(result.stdout)
+
+
+def is_recording_short(measured_s, required_end_t, threshold_s=COMPLETENESS_THRESHOLD_S):
+    """True when the file falls short of the last segment's `end_t` by more
+    than `threshold_s` (issue 26). Never short when there is nothing to
+    compare: `measured_s` is None (ffprobe unavailable) or `required_end_t` is
+    None (no segment was ever emitted).
+    """
+    if measured_s is None or required_end_t is None:
+        return False
+    return (required_end_t - measured_s) > threshold_s
+
+
+async def ensure_recording_complete(reactor_module, recording_clip, mp4_path, jwt, required_end_t):
+    """After a successful download, re-downloads against the same handle
+    until ffprobe says the file covers `required_end_t` or
+    `RECORDING_MAX_202_S` of waiting has passed (issue 26): the recording is a
+    fragmented MP4 still being assembled when the fetch starts, so the first
+    download can land short. Never raises -- a short recording still yields
+    most of the event, so the caller reports `done` either way. Returns
+    (measured_duration_or_None, extra_download_clip_calls).
+    """
+    measured = probe_duration_s(mp4_path)
+    log(f"recording duration {measured}s, required at least {required_end_t}s")
+    deadline = time.monotonic() + RECORDING_MAX_202_S
+    attempts = 0
+    while is_recording_short(measured, required_end_t) and time.monotonic() < deadline:
+        attempts += 1
+        log(f"recording short of {required_end_t}s (have {measured}s), re-downloading (attempt {attempts})")
+        await asyncio.sleep(COMPLETENESS_RETRY_SLEEP_S)
+        try:
+            await reactor_module.download_clip(
+                recording_clip, mp4_path, jwt=jwt, ready_timeout=RECORDING_MAX_202_S
+            )
+        except Exception as exc:
+            log(f"completeness re-download failed, keeping what's on disk: {exc}")
+            break
+        measured = probe_duration_s(mp4_path)
+        log(f"recording duration after re-download: {measured}s")
+    if is_recording_short(measured, required_end_t):
+        log(f"completeness budget exhausted, recording still short: {measured}s vs {required_end_t}s")
+    return measured, attempts
+
+
 async def run(reactor_module, start_cmd, plan_cmd):
     """Runs the whole session lifecycle. `reactor_module` is the imported
     `reactor_sdk` module (passed in so `--selftest` never has to import it).
@@ -232,6 +343,7 @@ async def run(reactor_module, start_cmd, plan_cmd):
     last_clip_idx_to_segment = {bounds[1]: name for name, bounds in seg_bounds.items()}
     segment_start_t = {}
     first_media_t = None
+    max_end_t = None  # largest segment end_t emitted; issue 26 checks the download against this
 
     uuid_to_clip = {}
     next_to_enqueue = 0
@@ -327,11 +439,13 @@ async def run(reactor_module, start_cmd, plan_cmd):
                     # offsets the first three cuts matched on duration but held content 5.9 s late,
                     # and the last branch ran off the end of a 46.4 s file and came out 3.49 s long.
                     # Clip `t` stays ready-relative; that is the billing clock.
+                    end_t = round(t - first_media_t, 1)
+                    max_end_t = end_t if max_end_t is None else max(max_end_t, end_t)
                     emit({
                         "event": "segment",
                         "name": name,
                         "start_t": round(segment_start_t[name] - first_media_t, 1),
-                        "end_t": round(t - first_media_t, 1),
+                        "end_t": end_t,
                     })
                 if idx == last_clip_index:
                     finished_last = True
@@ -362,6 +476,8 @@ async def run(reactor_module, start_cmd, plan_cmd):
     jwt = reactor._jwt  # noqa: SLF001 -- verified against reactor_sdk 1.5.0's own client.py: no public getter exists
     await reactor.disconnect()
     billed_s = round(time.monotonic() - ready_t0, 1)
+    # issue 27: the engine frees its Reactor session slot on this line, before the download starts.
+    emit({"event": "disconnected", "billed_s": billed_s})
 
     fetch_t0 = time.monotonic()
     mp4_path = os.path.join(work_dir, "session.mp4")
@@ -372,17 +488,31 @@ async def run(reactor_module, start_cmd, plan_cmd):
         # is already disconnected here, so `reactor.status` would read
         # "disconnected" and make the SDK's own while_live check fail a still-
         # assembling playlist immediately instead of waiting out RECORDING_MAX_202_S.
-        await reactor_module.download_clip(
-            recording_clip, mp4_path, jwt=jwt, ready_timeout=RECORDING_MAX_202_S
-        )
+        fetch_attempts = await fetch_with_retry(reactor_module, recording_clip, mp4_path, jwt)
     except TimeoutError as exc:
         emit({"event": "error", "stage": "recording", "reason": str(exc)})
         sys.exit(1)
     except Exception as exc:
-        emit({"event": "error", "stage": "fetch", "reason": str(exc)})
+        emit({
+            "event": "error",
+            "stage": "fetch",
+            "reason": (
+                f"session built fine ({billed_s}s billed) but downloading the recording failed "
+                f"after {MAX_FETCH_ATTEMPTS} attempts: {exc}"
+            ),
+        })
         sys.exit(1)
     finally:
         reactor.close()
+
+    # issue 26: the playlist can still be assembling when the download above returns.
+    recording_s, extra_attempts = await ensure_recording_complete(
+        reactor_module, recording_clip, mp4_path, jwt, max_end_t
+    )
+    fetch_attempts += extra_attempts
+    # After the completeness wait, not before it: spec section 10 reads `fetch_s` as how long the
+    # whole fetch stage takes, and the re-downloads are part of that stage. Measuring only the first
+    # download would report the 66.7 s culture fetch as fast while it waited out a short playlist.
     fetch_s = round(time.monotonic() - fetch_t0, 1)
 
     emit({
@@ -391,6 +521,8 @@ async def run(reactor_module, start_cmd, plan_cmd):
         "billed_s": billed_s,
         "fetch_s": fetch_s,
         "first_media_t": first_media_t,
+        "fetch_attempts": fetch_attempts,
+        "recording_s": recording_s,
     })
     sys.exit(0)
 
@@ -454,6 +586,21 @@ def selftest():
     assert idx_of["f5"] < idx_of["b0-0"] < idx_of["b1-0"]
 
     assert set(EVENT_STATE_BY_SDK_NAME.values()) == {"generated", "started", "finished", "failed"}
+
+    # issue 24: fixed, bounded backoff between fetch attempts
+    assert FETCH_BACKOFF_S == (2.0, 4.0)
+    assert len(FETCH_BACKOFF_S) == MAX_FETCH_ATTEMPTS - 1
+
+    # issue 26: short exactly on the sessions the ticket measured, not on -c copy's normal jitter
+    assert is_recording_short(29.75, 30.3) is True  # real region branch-2: -0.55s
+    assert is_recording_short(20.79, 35.3) is True  # real culture branch-2: -14.51s
+    assert is_recording_short(30.28, 30.3) is False  # -0.02s keyframe jitter, under threshold
+    assert is_recording_short(None, 30.3) is False  # ffprobe unavailable: never fail a session over it
+    assert is_recording_short(30.0, None) is False  # no segment ever emitted: nothing to compare
+
+    assert parse_ffprobe_duration("29.752000\n") == 29.752
+    assert parse_ffprobe_duration("N/A\n") is None
+    assert parse_ffprobe_duration("") is None
 
     print("selftest OK", file=sys.stderr)
 

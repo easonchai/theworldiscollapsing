@@ -169,6 +169,7 @@ def run(start_cmd: dict, plan_cmd: dict) -> None:
             emit({"event": "segment", "name": name, "start_t": segment_start_t[name], "end_t": round(t, 1)})
 
     billed_s = round(t, 1)  # what a real 1.0x session would have billed, not our sped-up wall clock
+    emit({"event": "disconnected", "billed_s": billed_s})
     fetch_t0 = time.monotonic()
     try:
         session_path = build_session_mp4(clips, work_dir)
@@ -178,7 +179,16 @@ def run(start_cmd: dict, plan_cmd: dict) -> None:
         sys.exit(1)
     fetch_s = round(time.monotonic() - fetch_t0, 1)
 
-    emit({"event": "done", "recording": session_path, "billed_s": billed_s, "fetch_s": fetch_s})
+    emit({
+        "event": "done",
+        "recording": session_path,
+        "billed_s": billed_s,
+        "fetch_s": fetch_s,
+        # No retries and no ffprobe here (see module docstring); the fake's session.mp4 is built to
+        # exactly `billed_s` by construction, so that doubles as its own duration.
+        "fetch_attempts": 1,
+        "recording_s": billed_s,
+    })
     sys.exit(0)
 
 

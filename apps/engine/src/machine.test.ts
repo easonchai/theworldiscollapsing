@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { Hex } from "viem";
 import { outcomeFor } from "./drand.js";
-import { DEMO, REAL, eventIdFor, runChannel, type Chain, type Deps, type EventRow, type Store, type Timing } from "./machine.js";
+import {
+  DEMO,
+  REAL,
+  RenderFetchError,
+  eventIdFor,
+  runChannel,
+  type Chain,
+  type Deps,
+  type EventRow,
+  type Store,
+  type Timing,
+} from "./machine.js";
 import { stubAuthor } from "./stubs.js";
 
 const SIG =
@@ -132,6 +143,7 @@ function harness(over: Partial<Deps> & { fc?: ReturnType<typeof fakeChain> } = {
     },
     timing: T,
     nOutcomes: 3,
+    provenance: "reactor:real",
     ...clock,
     log: () => {},
     alwaysOn: true,
@@ -147,6 +159,47 @@ function harness(over: Partial<Deps> & { fc?: ReturnType<typeof fakeChain> } = {
 
 const rows = (s: FakeStore) => [...s.rows.values()].sort((a, b) => a.seq - b.seq);
 const doneCount = (s: FakeStore) => rows(s).filter((r) => r.state === "DONE").length;
+
+/**
+ * Drops an open (unfinished) event straight into the store, as a previous engine run would have left
+ * it, bypassing produce()/nextSeq so its provenance can be set independently of the running engine's.
+ * seq 42 (ticket 21's real example) keeps it clear of the seq-1-onward events runChannel authors itself.
+ */
+async function seedEvent(
+  store: FakeStore,
+  seq: number,
+  provenance: string | null,
+  state: EventRow["state"] = "RENDER",
+): Promise<EventRow> {
+  const a = await stubAuthor.author({ channelId: "sports", seq, canon: [], firstHalfSec: 2, secondHalfSec: 1, nOutcomes: 3 });
+  const row: EventRow = {
+    id: eventIdFor("sports", seq),
+    channelId: "sports",
+    seq,
+    state,
+    title: a.title,
+    premise: a.premise,
+    outcomes: a.outcomes,
+    script: a,
+    provenance,
+    reasoning: a.reasoning ?? null,
+    firstHalfUrl: null,
+    branchUrls: null,
+    lockTime: null,
+    drandRound: null,
+    startTime: null,
+    revealTime: null,
+    outcome: null,
+    signature: null,
+    createTx: null,
+    resolveTx: null,
+    costUsd: null,
+    renderAttempts: 0,
+    error: null,
+  };
+  store.rows.set(row.id, row);
+  return row;
+}
 
 describe("channel lifecycle", () => {
   it("runs create → resolve in order, after lock, and reaches DONE with canon applied", async () => {
@@ -261,6 +314,29 @@ describe("channel lifecycle", () => {
     expect(b.state).toBe("DONE");
   });
 
+  it("skips an event on a fetch failure without retrying or opening a second paid session", async () => {
+    // Ticket 24: the build was fully paid for and only the download failed, so re-rendering would
+    // pay for the build a second time. Unlike a plain render failure, this must not touch
+    // renderAttempts or retry, just skip straight away.
+    const callsBySeq = new Map<number, number>();
+    const h = harness({
+      render: {
+        render: async (ev) => {
+          callsBySeq.set(ev.seq, (callsBySeq.get(ev.seq) ?? 0) + 1);
+          if (ev.seq === 1) throw new RenderFetchError("sidecar error at stage fetch: connection reset", 147);
+          return { firstHalfUrl: `first:${ev.seq}`, branchUrls: ev.outcomes.map(() => "b"), costUsd: 3 };
+        },
+      },
+    });
+    const store = await h.run((s) => doneCount(s) >= 1);
+    const [a, b] = rows(store);
+    expect(a.state).toBe("SKIPPED");
+    expect(a.renderAttempts).toBe(0); // never treated as a build failure worth retrying
+    expect(a.error).toMatch(/fetch/);
+    expect(callsBySeq.get(1)).toBe(1); // exactly one render call, no retry
+    expect(b.state).toBe("DONE");
+  });
+
   it("backs off exponentially while every production fails", async () => {
     const h = harness({
       render: { render: async () => { throw new Error("vendor down"); } },
@@ -355,5 +431,53 @@ describe("channel lifecycle", () => {
     expect(seen).toEqual([[ev.outcome!, ev.id]]);
     expect(ev.branchUrls![ev.outcome!]).toBe(`branch:1:${ev.outcome}`);
     expect(ev.branchUrls!.filter((u) => u.endsWith(".enc"))).toHaveLength(ev.outcomes.length - 1);
+  });
+
+  // Ticket 21 (2026-09-12): a paid Reactor engine resumed and rendered an event a free fake-sidecar
+  // soak had authored, opening a real billed session over a canned script.
+  it("skips an event authored under a different provenance instead of paying to render it", async () => {
+    let rendered = false;
+    const h = harness({
+      provenance: "reactor:real",
+      render: {
+        render: async (ev) => {
+          rendered = true;
+          return { firstHalfUrl: `first:${ev.seq}`, branchUrls: [], costUsd: 3 };
+        },
+      },
+    });
+    await seedEvent(h.store, 42, "fake:demo");
+    const store = await h.run((s) => rows(s).some((r) => r.state === "SKIPPED"));
+    const ev = rows(store).find((r) => r.seq === 42)!;
+    expect(ev.state).toBe("SKIPPED");
+    expect(ev.error).toMatch(/provenance mismatch/);
+    expect(rendered).toBe(false);
+  });
+
+  it("resumes and renders an event whose provenance matches the running engine", async () => {
+    const renderedSeqs: number[] = [];
+    const h = harness({
+      provenance: "reactor:real",
+      render: {
+        render: async (ev) => {
+          renderedSeqs.push(ev.seq);
+          return { firstHalfUrl: `first:${ev.seq}`, branchUrls: ev.outcomes.map(() => "b"), costUsd: 3 };
+        },
+      },
+    });
+    await seedEvent(h.store, 42, "reactor:real");
+    const store = await h.run((s) => rows(s).some((r) => r.seq === 42 && r.state === "DONE"));
+    const ev = rows(store).find((r) => r.seq === 42)!;
+    expect(ev.state).toBe("DONE");
+    expect(renderedSeqs).toContain(42);
+  });
+
+  it("treats a pre-provenance row (null, unknown) as a mismatch and skips it", async () => {
+    const h = harness({ provenance: "reactor:real" });
+    await seedEvent(h.store, 42, null);
+    const store = await h.run((s) => rows(s).some((r) => r.state === "SKIPPED"));
+    const ev = rows(store).find((r) => r.seq === 42)!;
+    expect(ev.state).toBe("SKIPPED");
+    expect(ev.error).toMatch(/provenance mismatch/);
   });
 });
