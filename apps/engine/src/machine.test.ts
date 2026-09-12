@@ -297,8 +297,10 @@ describe("channel lifecycle", () => {
     expect(violations).toEqual([]);
   });
 
-  it("REAL pause is 120 s", () => {
-    expect(REAL.pauseMs).toBe(120_000);
+  it("REAL pause covers the render cycle's overhang past air time", () => {
+    // ~9 s first build + halves + ~3 s teardown must fit inside txBuffer + halves + pause.
+    const cycleMs = 9_000 + REAL.firstHalfMs + 3 * REAL.secondHalfMs + 3_000;
+    expect(REAL.txBufferMs + REAL.firstHalfMs + REAL.secondHalfMs + REAL.pauseMs).toBeGreaterThanOrEqual(cycleMs);
   });
 
   it("stays idle without viewers when not always-on", async () => {

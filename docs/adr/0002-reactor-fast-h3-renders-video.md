@@ -36,3 +36,11 @@ At REAL a channel-event is on air about 165 s but its session runs about 250 s w
 - **REAL `pauseMs` about 120 s** so the render cycle's ~95 s of extra gap is a declared pause, not dead air.
 - **Channel scaling is bounded by session slots.** Fee-funded growth (start with one channel, add one when the treasury fee covers a channel-event) is a later effort; until then `CHANNELS` is a static list of at most 4.
 - Session estimate for the spend cap: `(≈9 s first build + firstHalfMs + N_OUTCOMES × secondHalfMs + ≈3 s) × $0.007`; REAL, N=3 is about $1.75 by SDK timing.
+
+## Amendment 2026-09-12: REAL halves are 30 s, not 60 s
+
+Both REAL halves drop to 30 s. The numbers above were computed at 60 s and stay as the record of that decision; the current ones are:
+
+- Session about 132 s with N=3 (≈9 s build + 30 + 3 × 30 + ≈3 s), so about **$0.92** a channel-event instead of $1.76, and each extra outcome costs 30 s of billed playback.
+- On air about 105 s a channel-event, betting window 45 s, branches 90 s of playback.
+- **REAL `pauseMs` 60 s**, covering the render cycle's ~27 s overhang past air time with slack. `machine.test.ts` asserts the relation rather than the constant, so both survive a further timing change.

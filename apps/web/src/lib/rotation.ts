@@ -4,8 +4,8 @@ import type { EventPublic } from "./public";
  * What a channel page is showing: the event on air, and an event that resolved under the viewer
  * before the channel moved on.
  *
- * A channel rotates `current` the moment the engine starts the next event — 5 s after the reveal in
- * DEMO, 30 s in REAL (docs/CONTRACTS.md, Timing). A bettor who just won is reading their claim in
+ * A channel rotates `current` the moment the engine starts the next event, 5 s after the reveal in
+ * DEMO and 60 s in REAL (docs/CONTRACTS.md, Timing). A bettor who just won is reading their claim in
  * exactly that window, so the finished event is kept beside the new one until it is claimed or
  * dismissed rather than leaving the screen mid-click.
  */

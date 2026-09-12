@@ -195,7 +195,7 @@ Gas: `resolve` costs ~73k in trusted mode and ~221k with the verifier (`DrandVer
 
 ## Timing
 
-REAL: txBuffer 15 s, first half 60 s, second half 60 s, pause 30 s. DEMO: 3 / 15 / 10 / 5 s.
+REAL: txBuffer 15 s, first half 30 s, second half 30 s, pause 60 s. DEMO: 3 / 15 / 10 / 5 s.
 
 ## Local stack
 

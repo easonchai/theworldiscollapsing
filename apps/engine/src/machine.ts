@@ -96,11 +96,11 @@ export type Timing = {
 
 export const REAL: Timing = {
   txBufferMs: 15_000,
-  firstHalfMs: 60_000,
-  secondHalfMs: 60_000,
-  // A Reactor render cycle runs ~260s, longer than the ~165s of first+second half air time, so the
+  firstHalfMs: 30_000,
+  secondHalfMs: 30_000,
+  // A Reactor render cycle runs ~135s, longer than the ~105s of first+second half air time, so the
   // pause between events has to cover the gap (ticket 10 / ADR 0002 amendment).
-  pauseMs: 120_000,
+  pauseMs: 60_000,
   idlePollMs: 10_000,
   renderRetryMs: 5_000,
   drandRetryMs: 2_000,
