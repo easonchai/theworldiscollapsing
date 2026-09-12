@@ -4,7 +4,10 @@ import { z } from "zod";
 // Validated before any money (createEvent) or media (render) is committed.
 export const Shot = z.object({
   prompt: z.string().min(1),
-  seconds: z.number().int().min(5).max(15), // MiniMax H3 Max clip range
+  // 6, not MiniMax's 5: Reactor fast-h3 refuses a shorter clip with
+  // "seconds: 5.0 < ge(5.167)" (124 frames at 24 fps), and `seconds` is an integer.
+  // 6 to 15 is inside both vendors' ranges, so one floor serves both.
+  seconds: z.number().int().min(6).max(15),
 });
 
 /**

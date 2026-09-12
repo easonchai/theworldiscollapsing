@@ -169,7 +169,7 @@ describe("author", () => {
     const overlong = {
       ...good,
       firstHalf: [shot(10), shot(8), shot(8)], // 26s
-      branches: [[shot(12), shot(10)], [shot(8), shot(8)], [shot(15), shot(5)]], // 22 / 16 / 20s
+      branches: [[shot(12), shot(10)], [shot(8), shot(8)], [shot(15), shot(6)]], // 22 / 16 / 21s
       cards: [{ afterShot: 2, title: "Half time", stats: ["Possession 51-49", "Shots 4-4"] }],
     };
     const logged: Array<Record<string, unknown>> = [];
@@ -188,14 +188,16 @@ describe("author", () => {
       expect(b.length).toBeGreaterThanOrEqual(1);
     }
     for (const s of [...a.firstHalf, ...a.branches.flat()]) {
-      expect(s.seconds).toBeGreaterThanOrEqual(5);
+      // 6, not 5: Reactor fast-h3 rejects a clip under 5.167 s at `enqueue`, so a shot the
+      // clamp trimmed to 5 would cost a whole session to discover.
+      expect(s.seconds).toBeGreaterThanOrEqual(6);
       expect(s.seconds).toBeLessThanOrEqual(15);
     }
     for (const c of a.cards) expect(c.afterShot).toBeLessThan(a.firstHalf.length);
     // one log line per adjusted list, with the seconds before and after
     expect(logged).toHaveLength(4);
     expect(logged[0]).toMatchObject({ where: "firstHalf", targetSec: 15, beforeSec: 26 });
-    expect(logged[3]).toMatchObject({ where: "branch 2", targetSec: 10, beforeSec: 20 });
+    expect(logged[3]).toMatchObject({ where: "branch 2", targetSec: 10, beforeSec: 21 });
   });
 
   it("leaves a shot list that is within the target alone", async () => {

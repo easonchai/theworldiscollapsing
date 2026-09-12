@@ -42,7 +42,7 @@ Hard rules:
 - The first half MUST end level. No outcome may be foreshadowed, hinted at or made more likely by anything in it. A viewer who has seen the whole first half must still believe every outcome is possible.
 - Give exactly ${ctx.nOutcomes} outcomes. They are mutually exclusive and exhaustive: exactly one happens. Label them plainly, so nobody can misread which one they are betting on.
 - One second-half shot list per outcome, in the same order as the outcomes. Each branch continues from the last frame of the first half.
-- Every shot is a video prompt of 5 to 15 seconds. Write one or two plain sentences, no paragraphs: start with the camera position of this channel, then what it sees. Short prompts render closer to what you asked for.
+- Every shot is a video prompt of 6 to 15 seconds. Write one or two plain sentences, no paragraphs: start with the camera position of this channel, then what it sees. Short prompts render closer to what you asked for.
 - No dialogue, no captions, no subtitles. On-screen graphics — scoreboards, tickers, charts, lower thirds — may be in frame as broadcast furniture, but nothing may depend on them being read: rendered text comes out as gibberish. On politics, put a chart, graph, map or gauge in shot in most studio shots and say what it shows.
 - The first-half shot seconds must total ${ctx.firstHalfSec} seconds (within 10%).
 - Each branch's shot seconds must total ${ctx.secondHalfSec} seconds (within 10%).
@@ -105,7 +105,9 @@ async function previousPools(
   }
 }
 
-const MIN_SHOT_SEC = 5; // Shot's floor, and MiniMax's shortest clip
+// Must match `Shot.seconds`'s floor in authored.ts: Reactor fast-h3 rejects anything under
+// 5.167 s, so trimming a shot down to 5 here would only move the failure to `enqueue`.
+const MIN_SHOT_SEC = 6;
 const OVERRUN = 1.1; // the tolerance the prompt asks for, enforced here because video is billed per second
 
 const totalSec = (shots: Shot[]): number => shots.reduce((n, s) => n + s.seconds, 0);
