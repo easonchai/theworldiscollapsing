@@ -287,3 +287,22 @@ The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1))
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | deploying to Base Sepolia, real video, World mode, sealing |
 | [`docs/RESEARCH.md`](docs/RESEARCH.md) | verified vendor facts with sources |
 | [`docs/plan/`](docs/plan/) | what is left for each sponsor track |
+
+## Next: the world's hidden state in a TEE
+
+Not built. This is where a TEE earns its place, and why the one in the build today is small.
+
+Every outcome today is uniform, so the only secret in the system is what each ending looks like. Sealing that is a spoiler lock, as [What it does not prove](#what-it-does-not-prove) says: a viewer who watched every branch still could not know which one plays. The design we want gives the world something worth hiding, so that reading the broadcast is a skill and nobody can be an insider.
+
+- **Hidden state lives in the enclave.** The AI keeps writing the public story. Every entity it creates, a striker, a candidate, a council member, gets hidden numbers inside the TEE: fitness, morale, scandal risk. The model never sees them.
+- **The state evolves between events.** Each event, the enclave loads its encrypted state, checks it against a hash on chain, rolls hidden changes such as an injury or a feud, and writes the new state with its new hash. A CRE run keeps no memory between triggers, so the chain holds the fingerprint and an old copy of the state is refused.
+- **Odds come from that state and are committed before the first bet.** At `createEvent` the enclave commits a fingerprint of the event's outcome weights. Nobody outside the enclave knows them.
+- **Clues, not secrets.** The enclave hands the engine a few hints, for example "the striker's thigh is strapped", and the AI writes them into the broadcast and the commentary. An injured striker's side really is less likely to win.
+- **drand still rolls.** After the lock the enclave reveals the weights, `Arena` checks them against the fingerprint and maps the drand signature onto them. A side with a 25 % chance still wins a quarter of the time. The enclave knows the odds, never the result, so even a compromised enclave leaks odds, not outcomes.
+- **Seasons are auditable.** At the end of a season the enclave publishes the old hidden state, so anyone can check that the clues were honest.
+
+What has to change before it can ship:
+
+- **The void rule.** `Arena` treats `1/nOutcomes` as the true probability of a YES, and that ceiling is what stops a sweep of every outcome from paying. With weighted outcomes the ceiling has to be rebuilt, likely from the revealed weights.
+- **Provable enclave code.** A reproducible build of the enclave, its measurement published, and `Arena` accepting commitments only from that code. On CRE today the DON verifies the attestation, so part of that trust sits with Chainlink.
+- **Clues that survive the video.** Generated video does not reliably render a limp or a scoreboard, so every clue also goes into on-screen text and commentary.
