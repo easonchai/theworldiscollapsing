@@ -168,7 +168,7 @@ On Base mainnet (`NEXT_PUBLIC_CHAIN_ID=8453`) the faucet is gone and step three 
 
 Play money still has a real problem: a script can farm the faucet and one bot can fund both sides of every pool. `Gate.verified` is required by `MockUSDC.faucet` and `Arena.bet`, and the intended way to earn it is a World Selfie Check, one per address. `apps/web/src/components/world-verify.tsx` runs IDKit 4's `IDKitRequestWidget` with `selfieCheckLegacy`, signing the wallet address as the proof's signal. `apps/web/src/app/api/world/rp-context` signs the request context server-side. `apps/web/src/app/api/verify/route.ts` verifies the proof against World's v4 endpoint, refuses any proof whose `signal_hash` is not the hash of that address, and then writes `Gate.setVerified(address)` on chain. Selfie Check is used as the abuse-prevention signal that decides who can take play money and move pools.
 
-Ships off. `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world` turn it on once the app has Selfie Check access; the default `checkbox` mode is an 18+ self-attestation plus a wallet signature through the same route. What is left is in [`docs/plan/world-selfie-check.md`](docs/plan/world-selfie-check.md). What we would tell World about the docs, the skill and the MCP is in [`docs/WORLD-FEEDBACK.md`](docs/WORLD-FEEDBACK.md).
+Runs. `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world` select it; `checkbox` mode is an 18+ self-attestation plus a wallet signature through the same route. Verified end to end on Base Sepolia on 2026-09-13 with the production World App: scan, World verify, `setVerified` mined, faucet unlocked. Setup and what each screen means: [`docs/WORLD.md`](docs/WORLD.md). What we would tell World about the docs, the skill and the MCP is in [`docs/WORLD-FEEDBACK.md`](docs/WORLD-FEEDBACK.md).
 
 ### Sealing: Chainlink CRE
 
@@ -243,7 +243,7 @@ A full event in demo timing (bet, lock, resolve, reveal, claim) is about 35 seco
 
 ## Status
 
-The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1)) is 65 user stories; 63 of them are built and verified, on a local stack and on Base Sepolia with real authoring and real video. The other 2, stories 43 and 44, are World Selfie Check, which waits on beta access ([`docs/plan/world-selfie-check.md`](docs/plan/world-selfie-check.md)). The sponsor-track gaps are tickets in [`docs/plan/`](docs/plan/).
+The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1)) is 65 user stories, all built and verified, on a local stack and on Base Sepolia with real authoring, real video and a real Selfie Check. The remaining sponsor-track gaps are tickets in [`docs/plan/`](docs/plan/).
 
 | Area | Verified |
 |---|---|

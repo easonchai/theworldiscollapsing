@@ -107,7 +107,7 @@ export function VerifyFlow() {
         <p className="mt-2 text-[14px] text-dim">
           {GATE_MODE === "world"
             ? "World Selfie Check proves a live human is behind the address, so bots cannot farm the faucet."
-            : "Self-attestation stands in for Selfie Check while the beta flag is pending."}
+            : "Self-attestation stands in for Selfie Check in checkbox mode."}
         </p>
 
         <label className="mt-3 flex items-start gap-2 text-[14px] text-bone">

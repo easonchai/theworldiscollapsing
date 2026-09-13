@@ -72,7 +72,7 @@ Outcome derivation (B-long): `outcome = uint(keccak256(sig_R ‖ eventId)) % n`,
 |---|---|---|---|
 | The Graph — AI Tooling from-scratch $5k | `subgraphsSupportLevel: full` | No | **Build.** Subgraph MCP is the AI product: thegraph.com/docs/en/subgraphs/tooling/subgraph-mcp |
 | Privy — financial flow $2.5k | In default chain list (84532), zero config | No | **Build.** `@privy-io/react-auth`, ~4 steps |
-| World — Selfie Check $3.5k | Off-chain verify, no chain forced, standalone web OK (no mini-app) | **Yes** — beta feature flag + sandbox device request | Apply day 1. `@worldcoin/idkit` + `selfieCheckLegacy()` + `POST /v4/verify`. **Liveness/face-similarity, NOT age.** |
+| World — Selfie Check $3.5k | Off-chain verify, no chain forced, standalone web OK (no mini-app) | No in practice — the docs say "request access", but the app got Selfie Check with no request (ran 2026-09-13) | `@worldcoin/idkit` + `selfieCheckLegacy()` + `POST /v4/verify`. **Liveness/face-similarity, NOT age.** |
 | Chainlink — Confidential Workflow $2k | Base Sepolia supported (CLI ≥1.0.0) | **Yes** — deploy access gated AND Confidential Workflows invite-only private beta | Apply day 1. `@chainlink/cre-sdk`, `handlerInTee`, `TeeRuntime`. Simulate locally without approval. |
 | Hedera $15k, Arc $10k | other L1s | — | Rejected |
 | 1inch $7k, Uniswap $5k | AMM tooling | — | Rejected (contradicts parimutuel) |
@@ -288,7 +288,7 @@ CRE account this stops at `cre workflow build`.
 
 | Fact | Value | Source |
 |---|---|---|
-| Selfie Check | Liveness + facial similarity, "medium-assurance", credential id 11, 90-day validity, **access-gated beta** ("request access so the feature flag can be enabled for your app") | docs.world.org/world-id/credentials/11.md |
+| Selfie Check | Liveness + facial similarity, "medium-assurance", credential id 11, 90-day validity. The page says "request access so the feature flag can be enabled for your app"; this app got the credential with no request (ran 2026-09-13) | docs.world.org/world-id/credentials/11.md |
 | React API | `IDKitRequestWidget` / `useIDKitRequest`; props `app_id` (`app_${string}`), `action`, `rp_context`, `allow_legacy_proofs` (**required boolean**), `preset`, `open`, `onOpenChange`, `onSuccess`, `handleVerify?` | installed `@worldcoin/idkit/dist/index.d.ts` + docs.world.org/world-id/idkit/react.md |
 | Preset | `selfieCheckLegacy({ signal })` from `@worldcoin/idkit` | same |
 | `rp_context` | `{ rp_id, nonce, created_at, expires_at, signature }` — "should be generated and signed by your backend"; `signRequest({ signingKeyHex, action, ttl? })` from `@worldcoin/idkit/signing` returns `{ sig, nonce, createdAt, expiresAt }` | installed `@worldcoin/idkit-core/dist/index.d.ts`, `@worldcoin/idkit-server` |
@@ -300,9 +300,9 @@ CRE account this stops at `cre workflow build`.
 | Server-side check | `hashSignal(signal)` from `@worldcoin/idkit/hashing` → the 0x-hex field element the proof was made against; the docs offer it precisely so a backend can recompute the expected hash. The verify endpoint has no idea which address is asking, so **binding the proof to an address is the relying party's job**: compare every `responses[].signal_hash` with `hashSignal(address)` before honouring the proof | docs.world.org/world-id/idkit/javascript.md (`const signalHash = hashSignal("user-123")`), installed `hashing.js` |
 | `hashSignal` shape | Pure JS, no wasm: `keccak256(input) >> 8` as 32 bytes of 0x-hex. A `0x`-prefixed valid-hex signal is hashed **as bytes**, other strings as UTF-8 — so an EVM address hashes identically in either casing. Verified: `hashSignal("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")` = `hashSignal("0x70997970c51812dc3a010c7d01b50e0d17dc79c8")` = `0x0000314e565e0574cb412563df634608d76f5c59d9f817e85966100ec1d48005` | installed `@worldcoin/idkit-core@4.2.4/dist/hashing.js`, run in node |
 
-⚠ Nothing in the World path was ever executed: no app id, no RP id, no RP signing key. `WORLD_API_KEY` is kept in the env list but the v4 verify docs describe no authenticated header.
+The World path ran end to end on 2026-09-13 (production World App, Base Sepolia). One failure on the way: `invalid_rp_signature` from World App, which turned out to be a signing key that no longer matched the RP id on the portal; regenerating it fixed it. `WORLD_API_KEY` is kept in the env list but the v4 verify docs describe no authenticated header.
 
-⚠ Not verified: whether `developer.world.org/api/v4/verify` itself rejects a `signal_hash` that the proof was not made for. The ZK construction says it must (the signal is a public input), but no page states it and no key exists to test it — which is another reason the RP does the comparison itself rather than trusting the endpoint to. What the app sends is unchanged: the complete IDKit result, forwarded verbatim.
+⚠ Not verified: whether `developer.world.org/api/v4/verify` itself rejects a `signal_hash` that the proof was not made for. The ZK construction says it must (the signal is a public input), but no page states it and it was not tried — which is another reason the RP does the comparison itself rather than trusting the endpoint to. What the app sends is unchanged: the complete IDKit result, forwarded verbatim.
 
 ### Next.js 16.3.4
 

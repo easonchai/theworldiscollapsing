@@ -140,9 +140,9 @@ A healthy run logs no `recording short of plan`. That line means Reactor returne
 
 The likeliest deploy mistake is a `REACTOR_PYTHON` that points at an interpreter without the `reactor-sdk` wheel installed. The sidecar checks for that import before doing anything else and reports it over the protocol instead of a bare traceback: `sidecar error at stage connect: reactor-sdk is not installed for <interpreter path>: <import error>`. The interpreter path in that message is what Node actually spawned, so if it isn't the venv's `python3`, fix `REACTOR_PYTHON`. The event retries up to `maxRenderAttempts` (3) before the channel logs `render failed, event skipped` with that reason attached.
 
-## 8. World mode ⚠
+## 8. World mode
 
-Fill the `WORLD_*` and `NEXT_PUBLIC_WORLD_*` vars, set `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world` in Vercel, redeploy. `/verify` then shows the IDKit selfie-check widget; the proof is verified server-side at `POST /api/verify` before `Gate.setVerified`. Until beta access arrives the route returns 501 for world mode and the checkbox mode keeps working.
+Fill the `WORLD_*` and `NEXT_PUBLIC_WORLD_*` vars, set `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world` in Vercel, redeploy. `/verify` then shows the IDKit selfie-check widget; the proof is verified server-side at `POST /api/verify` before `Gate.setVerified`. Ran end to end against Base Sepolia on 2026-09-13. If World App answers `invalid_rp_signature`, the signing key in the env is not the one the portal holds for that RP id: regenerate, paste, redeploy. `docs/WORLD.md` has the rest.
 
 ## 9. Branch sealing and the CRE workflow ⚠
 

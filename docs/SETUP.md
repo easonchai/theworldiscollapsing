@@ -16,7 +16,7 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 | 8 | **Vercel** project | hosts `apps/web` | all web env vars, set in Vercel | minutes |
 | 9 | **Subgraph Studio** subgraph + deploy key | markets list, positions, authoring context, The Graph prize | web `NEXT_PUBLIC_SUBGRAPH_URL`, engine `SUBGRAPH_URL` | 30 min + indexing |
 | 10 | **The Graph gateway** API key | lets a judge query the subgraph through Subgraph MCP | none in the repo | minutes |
-| 11 | **World** developer app (app id, action, RP id, RP signing key) + **Selfie Check beta** + sandbox device | Selfie Check gating instead of the checkbox (World prize) | web `NEXT_PUBLIC_WORLD_APP_ID`, `NEXT_PUBLIC_WORLD_ACTION`, `WORLD_APP_ID`, `WORLD_RP_ID`, `WORLD_RP_SIGNING_KEY`, `GATE_MODE=world`, `NEXT_PUBLIC_GATE_MODE=world` | beta approval, unknown. Apply now |
+| 11 | **World** developer app (app id, action, RP id, RP signing key) | Selfie Check gating instead of the checkbox (World prize) | web `NEXT_PUBLIC_WORLD_APP_ID`, `NEXT_PUBLIC_WORLD_ACTION`, `WORLD_APP_ID`, `WORLD_RP_ID`, `WORLD_RP_SIGNING_KEY`, `GATE_MODE=world`, `NEXT_PUBLIC_GATE_MODE=world` | minutes |
 | 12 | **Chainlink CRE** login (`cre login` or `CRE_API_KEY`), deploy access, **Confidential Workflows beta** | simulate and deploy the reveal-key workflow (Chainlink prize) | `packages/cre/.env`; engine `BRANCH_SEAL=1`, `BRANCH_SEAL_ROOT`, `REVEAL_SECRET` | beta approval, unknown. Apply now |
 | 13 | A public URL for the laptop (Tailscale Funnel or cloudflared) | only for branch sealing + CRE with real video, because sealing needs the local media store and the CRE workflow must reach the engine | engine `MEDIA_BASE_URL` | minutes |
 | 14 | **Reactor** API key + credit | real `fast-h3` video (the default vendor once `REACTOR_API_KEY` is set; OpenRouter is the fallback) | engine `REACTOR_API_KEY`, `MAX_SPEND_USD` (set to the credit loaded) | minutes |
@@ -25,7 +25,9 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 
 **Provisioned and exercised**: 1 OpenRouter (real authoring and real MiniMax clips, two events), 2 Vercel Blob (media serving from its public host), 3 Neon, 4 Base Sepolia deployer (contracts live, `Gate.owner()` confirmed), 5 Etherscan (all four contracts verified on Basescan), 6 resolver + treasury (three events created and resolved on chain), 7 Privy (allowed origins now include the production domain; the login modal opens there with a clean console, but no login has been completed), 8 Vercel (production deployment live), 9 Subgraph Studio (deployed, indexing, read by `/markets`). Addresses and URLs are in the root README's **Live** table.
 
-**Still missing**: 10 the gateway API key; 11 World Selfie Check beta; 12 CRE deploy access and the Confidential Workflows beta; 13 a public URL for the laptop, only needed for sealing; 14 Reactor credit: the sidecar and `reactor.ts` are wired up (`docs/RUNBOOK.md` section 7), but no paid session has run yet.
+**Provisioned since**: 11 World (Selfie Check ran end to end on 2026-09-13, no access request needed).
+
+**Still missing**: 10 the gateway API key; 12 CRE deploy access and the Confidential Workflows beta; 13 a public URL for the laptop, only needed for sealing; 14 Reactor credit: the sidecar and `reactor.ts` are wired up (`docs/RUNBOOK.md` section 7), but no paid session has run yet.
 
 ## Details
 
@@ -74,8 +76,8 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 ### 11. World
 
 - developer.world.org → create app → app id; create an incognito action named `verify` (or set `NEXT_PUBLIC_WORLD_ACTION`); copy the RP id and the RP signing key that IDKit 4's `rp_context` must be signed with (`WORLD_RP_ID`, `WORLD_RP_SIGNING_KEY`, server only).
-- Request Selfie Check access (feature flag on your app) and a sandbox device. Both are access-gated. Ask in the ETHOnline Discord for a fast track.
-- Switch `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world`. Until then the checkbox mode (18+ self-attest + wallet signature) is what runs. `WORLD_API_KEY` is listed but unused; the v4 verify endpoint documents no auth header.
+- No access request was needed: Selfie Check worked on this app with the production World App on a phone.
+- Switch `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world`. `checkbox` mode (18+ self-attest + wallet signature) is the fallback. `WORLD_API_KEY` is listed but unused; the v4 verify endpoint documents no auth header.
 - Dashboard steps, the local switch-on and what each screen means: `docs/WORLD.md`.
 
 ### 12. Chainlink CRE
@@ -101,9 +103,8 @@ printf '0x%s\n' "$(openssl rand -hex 32)"         # REVEAL_SECRET
 
 ## Apply today, the answers take time
 
-1. World: Selfie Check feature flag + sandbox device for your app.
-2. Chainlink: CRE deploy access, then the Confidential Workflows beta.
-3. ETHOnline Discord: ask both sponsors for a hackathon fast track.
+1. Chainlink: CRE deploy access, then the Confidential Workflows beta.
+2. ETHOnline Discord: ask for a hackathon fast track.
 4. Confirm the submission cutoff on the ETHGlobal dashboard; the event page returned a 500 when it was last checked.
 
 ## What turns on when
@@ -114,6 +115,5 @@ printf '0x%s\n' "$(openssl rand -hex 32)"         # REVEAL_SECRET
 | Testnet deployment | 3, 4, 5, 6 | everything runs on anvil |
 | Email login, embedded wallets | 7 | anvil dev wallet, local only |
 | Markets list, positions, authoring context | 9 | those two pages show "subgraph not configured"; authoring skips pool context |
-| Selfie Check gating | 11 | checkbox self-attest + wallet signature, still on-chain gated |
 | Sealed branches released from a TEE | 12 + 13 | branches published in plaintext; still unreachable before reveal through the API, but guessable on the media server (see README known issues) |
 | Judges querying via Subgraph MCP | 9 + 10 | Studio playground |
