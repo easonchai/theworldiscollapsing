@@ -72,8 +72,15 @@ export function makeStore(
     async update(id, patch) {
       return toRow(await prisma.event.update({ where: { id }, data: data(patch) }));
     },
-    async canon(channelId, limit) {
-      const rows = await prisma.canon.findMany({ where: { channelId }, orderBy: { createdAt: "desc" }, take: limit });
+    async canon(channelId, limit, provenance) {
+      // Only this engine's own history. The fake author writes "Harbour City vs Northgate" seventy
+      // times over, and a real model told to keep the canon's names then keeps that fixture forever.
+      const own = await prisma.event.findMany({ where: { channelId, provenance }, select: { id: true } });
+      const rows = await prisma.canon.findMany({
+        where: { channelId, eventId: { in: own.map((e) => e.id) } },
+        orderBy: { createdAt: "desc" },
+        take: limit,
+      });
       return rows.reverse().map((r) => r.text);
     },
     /**

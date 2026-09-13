@@ -56,7 +56,8 @@ export interface Store {
   insert(row: EventRow): Promise<EventRow>;
   get(id: Hex): Promise<EventRow | null>;
   update(id: Hex, patch: Partial<EventRow>): Promise<EventRow>;
-  canon(channelId: string, limit: number): Promise<string[]>;
+  /** Only lines from events this engine's own provenance authored: a fake run's world is not ours. */
+  canon(channelId: string, limit: number, provenance: string): Promise<string[]>;
   appendCanon(channelId: string, eventId: Hex, lines: string[]): Promise<void>;
   lastSeenAt(): Promise<Date | null>;
 }
@@ -284,7 +285,7 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
     }
     if (!ev) {
       const seq = await d.store.nextSeq(channelId);
-      const canon = await d.store.canon(channelId, 50);
+      const canon = await d.store.canon(channelId, 50, d.provenance);
       const a = await d.author.author({
         channelId,
         seq,

@@ -56,16 +56,16 @@ const allKeys = req("keys", "BETTOR_KEYS")
   .filter(Boolean) as Hex[];
 const keys = allKeys.slice(0, Math.min(num("BETTORS", allKeys.length), allKeys.length));
 
-const MIN_USDC = num("BET_MIN_USDC", 1);
-const MAX_USDC = num("BET_MAX_USDC", 50);
+const MIN_USDC = num("BET_MIN_USDC", 25);
+const MAX_USDC = num("BET_MAX_USDC", 30);
 const INTERVAL_MS = num("BET_INTERVAL_MS", 3000);
 const FUND_MIN_ETH = process.env.FUND_MIN_ETH ?? "0.005";
 const FUND_ETH = process.env.FUND_ETH ?? "0.01";
 const SEED = num("BETTOR_SEED", Date.now() >>> 0);
 /** Stop betting this long before lockTime so nothing in flight lands on BettingClosed. */
 const MARGIN_MS = 3000;
-/** Faucet below this; MockUSDC hands out 1000 USDC a day. */
-const TOPUP_USDC = 200n * USDC;
+/** Faucet below this: a few bets' worth, since MockUSDC hands out 1000 USDC a day and no more. */
+const TOPUP_USDC = BigInt(MAX_USDC * 5) * USDC;
 const MAX_UINT = (1n << 256n) - 1n;
 
 const chain = chainId === baseSepolia.id ? baseSepolia : anvil;
