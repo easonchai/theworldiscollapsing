@@ -275,9 +275,18 @@ const deps: Deps = {
  * far short of letting a channel finish a step, which is the thing the paragraph above refuses.
  */
 const SHUTDOWN_GRACE_MS = 8_000;
+// One Ctrl-C arrives twice: the terminal signals the whole process group, then tsx relays the same
+// signal to its child about 30 ms later. Measured 2026-09-13; without this window the "second
+// signal" exit below fired on every Ctrl-C, skipped the grace and stranded a session's reservation.
+const SIGNAL_DEDUP_MS = 1_000;
+let firstSignalAt = 0;
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
-    if (ac.signal.aborted) process.exit(1); // second signal: stop waiting for the channels
+    if (ac.signal.aborted) {
+      if (Date.now() - firstSignalAt < SIGNAL_DEDUP_MS) return; // the relay of the signal already handled
+      process.exit(1); // a real second signal: stop waiting for the channels
+    }
+    firstSignalAt = Date.now();
     log("shutting down", { signal: sig, graceMs: SHUTDOWN_GRACE_MS });
     ac.abort();
     mediaServer?.close();
