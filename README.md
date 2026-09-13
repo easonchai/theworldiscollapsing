@@ -1,8 +1,12 @@
 # theworldiscollapsing
 
-An autonomous fictional universe broadcast as a wall of TV channels, with a provably random parimutuel casino attached to every event. Built for ETHOnline 2026. Testnet and play money only.
+**A world that grows forever. Bet on anything in it. Nobody knows the outcome, not even us.**
 
-**[▶ Demo video](docs/demo.mp4)** <!-- product demo, 27 s; swap for the submission cut (slides + product video) before judging --> · **[Live site](https://theworldiscollapsing.vercel.app)** · **[Contracts on Base Sepolia](#live-on-base-sepolia)**
+theworldiscollapsing is a world that never stops. An AI grows it event after event, forever. Matches get played, elections get called, awards get handed out, bills pass or fail, and every result becomes history that the next event builds on. Because something is always happening, there is always something to bet on, and every possible outcome of every event is its own market.
+
+Normal prediction markets can be gamed: someone learns the result first, someone can move it, or someone decides how it settles. Here nobody can do any of that, not the players, not the house, not us. Every outcome comes from a drand randomness round that is committed on chain before the first bet and does not exist until betting has closed. The AI builds the world but cannot choose how anything in it ends.
+
+Built for ETHOnline 2026. Play USDC on Base Sepolia, testnet only. **[▶ Demo video](docs/demo.mp4)** <!-- product demo, 27 s; swap for the submission cut (slides + product video) before judging --> · **[Live site](https://theworldiscollapsing.vercel.app)** · **[Contracts on Base Sepolia](#live-on-base-sepolia)**
 
 ## The product
 
@@ -172,7 +176,7 @@ Runs. `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world` select it; `checkbox` 
 
 ### Sealing: Chainlink CRE
 
-Every branch is rendered before betting opens and sits on a media server. The chain guarantees nobody can know the outcome, but a curious viewer could still fetch the branch files and watch all three endings early. With `BRANCH_SEAL=1` the engine publishes branches as AES-256-GCM ciphertext (`apps/engine/src/seal.ts`) and a CRE workflow holds the only key.
+Every branch is rendered before betting opens and sits on a media server. The chain guarantees nobody can know the outcome, but a curious viewer could still fetch the branch files and watch all three endings early. With sealing on (`BRANCH_SEAL=1`, off in the deployed env) the engine publishes branches as AES-256-GCM ciphertext (`apps/engine/src/seal.ts`) and a CRE confidential workflow holds the only key, releasing it for the winning branch alone. The losing endings are never released.
 
 `packages/cre/reveal-key/workflow.ts` registers `cre.handlerInTee` on an EVM log trigger for `Arena.Resolved`. Inside the enclave it reads the authoritative outcome back from the contract, pulls the seal root from `runtime.getSecrets`, derives `key_i = keccak256(root ‖ eventId ‖ i)` for the winning `i` only, and POSTs it to the engine's `/internal/reveal-key`. The seal root is the sensitive input; it never leaves the TEE, and the losing branches' keys are never derived. The engine's `seal.ts` has the byte-identical derivation, and the round trip is tested.
 
@@ -251,7 +255,7 @@ The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1))
 | Engine | 111 tests. A 10-minute soak over 4 channels, 80 events, 776 synthetic bets, engine and bettor each restarted mid-window with no duplicate events and no double claims. Real Reactor sessions, real Blob uploads, spend metered against `MAX_SPEND_USD` |
 | Web | 79 tests. Wall, channel, event, markets, positions and verify flows in a browser. Bet, lock, reveal, claim checked against on-chain numbers. Privy email login through to an embedded wallet on production |
 | Subgraph | 5 matchstick tests; pools, outcomes, claims and totals equal `cast` reads. Deployed to Studio, indexing Base Sepolia, read by `/markets` in production and by the engine's author |
-| CRE | compiles to WASM, 7 handler tests, engine seal/unseal round trip. Not yet simulated (ticket) |
+| CRE | compiles to WASM, 7 handler tests, engine seal/unseal round trip. Simulated end to end on 2026-09-13 (`cre workflow simulate --listen`, winning key released 120 ms after `Resolved`). Not deployed to a DON: deploy access and the Confidential Workflows beta are by request |
 
 ## Repo
 

@@ -1,5 +1,7 @@
 import { PositionsList } from "@/components/positions-list";
 
+export const metadata = { title: "Positions" };
+
 export default function PositionsPage() {
   return (
     <div>

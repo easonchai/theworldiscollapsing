@@ -3,6 +3,8 @@ import { VerifyFlow } from "@/components/verify-flow";
 import { ARENA, arenaAbi, publicClient } from "@/lib/chain";
 import { trustCopy } from "@/lib/trust";
 
+export const metadata = { title: "Verify" };
+
 export const dynamic = "force-dynamic";
 
 /** What resolution actually enforces, read from the deployment rather than assumed. */
