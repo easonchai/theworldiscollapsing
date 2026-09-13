@@ -26,7 +26,33 @@ export const chain = CHAIN_ID === 84532 ? baseSepolia : anvil;
 export const GAS_MIN = 500_000_000_000_000n; // 0.0005 ETH
 export const GAS_DRIP = 2_000_000_000_000_000n; // 0.002 ETH
 
-export const publicClient = createPublicClient({ chain, transport: http(RPC_URL) });
+/**
+ * `pools` and `stakes` are mappings to a fixed [NO, YES] array, so every market side is its own
+ * getter call (see `readMarket` in components/markets.tsx). Unbatched that is one HTTPS POST each:
+ * a four-channel wall at three outcomes issued 24 of them every 3 s, and an idle tab on the free
+ * dRPC tier ran to 1613 requests in about 13 minutes.
+ *
+ * `batch.multicall` aggregates the reads the wall issues in one tick (they all go out inside a
+ * single `Promise.all`) into one `eth_call` against Multicall3. Measured against Base Sepolia on
+ * 2026-09-13, one channel's tick at three outcomes:
+ *
+ *     no batching       6 POSTs, 6x eth_call        OK
+ *     transport batch   4 POSTs, batch[6] each      HTTP 500, and viem retried it 4x
+ *     multicall         1 POST,  1x eth_call        OK
+ *
+ * So deliberately not `http(RPC_URL, { batch: true })`. dRPC answers a JSON-RPC batch array with a
+ * 500, and the retry behind it makes that worse than sending nothing batched at all.
+ *
+ * Conditional because multicall needs a deployed aggregator. viem carries Multicall3's address for
+ * Base Sepolia; anvil 1.5.1 deploys none (checked, `eth_getCode` at the canonical address is empty)
+ * and viem's anvil chain declares no contracts at all, so local dev keeps one POST per read. That
+ * costs nothing: no local chain meters requests.
+ */
+export const publicClient = createPublicClient({
+  chain,
+  transport: http(RPC_URL),
+  ...("contracts" in chain && chain.contracts?.multicall3 ? { batch: { multicall: true } } : {}),
+});
 
 // ── drand evmnet (mirrors Arena.sol and apps/engine/src/drand.ts) ─────────────
 export const DRAND_GENESIS = 1727521075n;
