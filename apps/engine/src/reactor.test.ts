@@ -718,7 +718,7 @@ describe("makeReactorRender", () => {
     expect(store.stored).toHaveLength(6);
   }, 20_000);
 
-  it("logs the recording's shortfall against the plan's last segment when it comes up short (ticket 32)", async () => {
+  it("logs the recording's shortfall against the plan's last segment and refuses to air it (ticket 32)", async () => {
     // Round D's region branch, from ticket 32: the plan's last segment ended at 142.0 s but the
     // recording measured 131.70905 s. The sidecar still reports `done` (ticket 26) rather than
     // fail the paid session, so this has to be caught by comparing the two numbers, not by a
@@ -733,16 +733,25 @@ describe("makeReactorRender", () => {
     process.exit(0);`,
     );
     const logged: Array<Record<string, unknown>> = [];
-    await makeReactorRender({
+    const budget = recordingBudget();
+    const p = makeReactorRender({
       python: process.execPath,
       sidecar,
       sessions: 1,
       workDir: path.join(dir, "work-short-recording"),
       store: recordingStore(),
-      budget: recordingBudget(),
+      budget,
       ffmpeg: recordingFfmpeg().run,
       log: (m, extra) => void (m === "recording short of plan" && logged.push(extra ?? {})),
     }).render(ev);
+
+    // A 10 s hole is a whole shot, and the cut past the recording's end serves no frames: a
+    // fetch-class failure (the build is paid, a new session cannot help), so the machine skips it.
+    const caught = await p.catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(RenderFetchError);
+    expect((caught as RenderFetchError).billedS).toBe(142);
+    expect((caught as RenderFetchError).message).toMatch(/short of plan by 10\.29s/);
+    expect(budget.spent()).toBeCloseTo(142 * 0.007, 6); // trued up to what Reactor billed before the refusal
 
     expect(logged).toHaveLength(1);
     expect(logged[0]).toMatchObject({ channelId: "sports", seq: 1 });

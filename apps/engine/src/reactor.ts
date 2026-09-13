@@ -21,6 +21,10 @@ const REAP_GRACE_MS = 2_000;
  * whole recording can fall short of the plan by more than that, and this is the number that
  * decides whether it's worth saying so. */
 const RECORDING_SHORTFALL_THRESHOLD_S = 0.5;
+/** Past this the missing tail is a whole shot, not a cut error: sports 138 on 2026-09-13 came back
+ * 64 s short, the cut past the recording's end wrote two 4 s containers with no frames, and the
+ * chain put money on one of them. The event is not aired. */
+const MAX_AIRABLE_SHORTFALL_S = 3;
 
 type PlanClip = {
   id: string;
@@ -497,6 +501,12 @@ export function makeReactorRender(cfg: {
         // whether the local cut/store steps below succeed.
         const usd = result.billedS * USD_PER_SEC;
         await cfg.budget.charge(usd - reservedUsd, "reactor session true-up");
+
+        // The build is paid for either way and a second session cannot lengthen this recording, so
+        // this is a fetch-class failure: the machine skips the event rather than re-rendering it.
+        if (result.shortfallS !== null && result.shortfallS > MAX_AIRABLE_SHORTFALL_S) {
+          throw new RenderFetchError(`recording short of plan by ${result.shortfallS}s; not airing`, result.billedS);
+        }
 
         const firstSeg = result.segments.get("first");
         if (!firstSeg) throw new Error("sidecar finished without a 'first' segment offset");
