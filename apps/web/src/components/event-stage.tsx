@@ -5,6 +5,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { identOf } from "@/lib/channels";
 import { roundTime } from "@/lib/chain";
+import type { ChannelPublic } from "@/lib/data";
 import { cardAt } from "@/lib/playback";
 import { FINISHED, type EventPublic } from "@/lib/public";
 import { tickerLines } from "@/lib/ticker";
@@ -187,27 +188,40 @@ export function EventStage({
   const landsIn = event.drandRound ? roundAtMs(event.drandRound) - now : null;
 
   // The chain owns the clock: poll this event until it flips, then the player swaps source itself.
-  // Once it is finished, ask the server for whatever is on air now.
+  // Once it is finished, the only question left is whether the channel has moved on, so poll the
+  // channel list instead and refresh the moment it carries a different event. A one-shot refresh
+  // at the flip missed a next event that was still rendering when this one ended, and the page
+  // then sat on the archive until a reload.
   useEffect(() => {
+    let finished = FINISHED.has(event.state);
     const id = setInterval(() => {
+      if (finished) {
+        fetch("/api/channels")
+          .then((r) => (r.ok ? (r.json() as Promise<ChannelPublic[]>) : null))
+          .then((channels) => {
+            const current = channels?.find((c) => c.id === event.channelId)?.current;
+            if (!current || current.id === event.id) return;
+            // The refresh has to run before the clear: it re-renders the server component, which
+            // is what lets a channel page rotate to the next event.
+            router.refresh();
+            clearInterval(id);
+          })
+          .catch(() => {});
+        return;
+      }
       fetch(`/api/events/${event.id}`)
         .then((r) => (r.ok ? (r.json() as Promise<EventPublic>) : null))
         .then((e) => {
           if (!e) return;
           setEvent(e);
           onEvent?.(e);
-          if (FINISHED.has(e.state)) {
-            // The refresh has to run before the clear: it re-renders the server component, which
-            // is what lets a channel page rotate to the next event. Clearing first would strand
-            // the viewer on the archive.
-            router.refresh();
-            clearInterval(id);
-          }
+          finished = FINISHED.has(e.state);
         })
         .catch(() => {});
     }, 2000);
     return () => clearInterval(id);
-  }, [event.id, router, onEvent]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- event.state seeds `finished` once; the poll tracks it after
+  }, [event.id, event.channelId, router, onEvent]);
 
   return (
     <>
