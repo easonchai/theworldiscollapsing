@@ -2,7 +2,7 @@ import { billsRealMoney, makeBudget, unlimited } from "./budget.js";
 import path from "node:path";
 import type { Address, Hex } from "viem";
 import { fetchRound } from "./drand.js";
-import { env, flag, intEnv } from "./env.js";
+import { env, flag, intEnv, list } from "./env.js";
 import { DEMO, REAL, runChannel, type Deps, type Render } from "./machine.js";
 import { makeChain } from "./chain.js";
 import { makePrisma } from "db";
@@ -13,7 +13,7 @@ import { claimPidFile } from "./pidfile.js";
 import { makeReactorRender } from "./reactor.js";
 import { makeRender } from "./render.js";
 import { branchKey, parseRoot, revealBranch, sealingStore } from "./seal.js";
-import { makeStore } from "./store.js";
+import { CHANNELS, makeStore } from "./store.js";
 import { stubAuthor, stubRender } from "./stubs.js";
 
 try {
@@ -44,7 +44,11 @@ const mediaKeep = intEnv("MEDIA_KEEP", "20", 1, Infinity);
 // Branches rendered per event; fed to the author, createEvent and (later) the session estimate.
 const nOutcomes = intEnv("N_OUTCOMES", "3", 2, 5);
 // Declared here (rather than by Promise.all below) because the Reactor boot check needs it too.
-const channels = env("CHANNELS", "sports,politics,culture,region").split(",");
+const channels = list("CHANNELS", "sports,politics,culture,region");
+// Fail fast: a channel id CHANNELS names but store.ts has no house style for would air looking
+// unfinished, so the engine refuses to invent one rather than create it on demand.
+const unknownChannels = channels.filter((c) => !Object.hasOwn(CHANNELS, c));
+if (unknownChannels.length) throw new Error(`CHANNELS names ${unknownChannels.join(", ")}, which store.ts does not create`);
 const plainMedia = makeMediaStore({
   store: mediaStoreKind,
   dir: mediaDir,
