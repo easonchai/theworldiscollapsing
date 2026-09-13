@@ -6,7 +6,7 @@ theworldiscollapsing is a world that never stops. An AI grows it event after eve
 
 Normal prediction markets can be gamed: someone learns the result first, someone can move it, or someone decides how it settles. Here nobody can do any of that, not the players, not the house, not us. Every outcome comes from a drand randomness round that is committed on chain before the first bet and does not exist until betting has closed. The AI builds the world but cannot choose how anything in it ends.
 
-Built for ETHOnline 2026. Play USDC on Base Sepolia, testnet only. **[▶ Demo video](docs/demo.mp4)** <!-- product demo, 27 s; swap for the submission cut (slides + product video) before judging --> · **[Live site](https://theworldiscollapsing.vercel.app)** · **[Contracts on Base Sepolia](#live-on-base-sepolia)**
+Built for ETHOnline 2026. Play USDC on Base Sepolia, testnet only. **[▶ Demo video](docs/demo.mp4)** <!-- product demo, 27 s; swap for the submission cut (slides + product video) before judging --> · **[Live site](https://theworldiscollapsing.vercel.app)** · **[Presentation](https://canva.link/6sjulttu5flgme4)** · **[Contracts on Base Sepolia](#live-on-base-sepolia)**
 
 ## The product
 
