@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { identOf } from "@/lib/channels";
 import { roundTime } from "@/lib/chain";
 import { cardAt } from "@/lib/playback";
-import type { EventPublic } from "@/lib/public";
+import { FINISHED, type EventPublic } from "@/lib/public";
 import { tickerLines } from "@/lib/ticker";
 import { Chyron, Countdown, Digits, URGENT_MS, Umd, clock, useNow, usdc } from "./bits";
 import { ClaimButton, Markets, claimableOf, useMarkets, type MarketState } from "./markets";
@@ -185,7 +185,13 @@ export function EventStage({
           if (!e) return;
           setEvent(e);
           onEvent?.(e);
-          if (e.state === "DONE") router.refresh();
+          if (FINISHED.has(e.state)) {
+            // The refresh has to run before the clear: it re-renders the server component, which
+            // is what lets a channel page rotate to the next event. Clearing first would strand
+            // the viewer on the archive.
+            router.refresh();
+            clearInterval(id);
+          }
         })
         .catch(() => {});
     }, 2000);

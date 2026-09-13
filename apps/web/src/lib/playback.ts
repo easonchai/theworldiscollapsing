@@ -29,5 +29,8 @@ export function sourceFor(event: EventPublic): { src: string | null; t0: number 
   const revealed = REVEALED.has(event.state) && !!event.winningBranchUrl;
   const src = revealed ? event.winningBranchUrl : event.firstHalfUrl;
   if (event.state === "DONE") return { src, t0: null, archive: true };
+  // A reveal with no branch has nothing to show: the no-signal card, not the first half seeked
+  // past its own end.
+  if (REVEALED.has(event.state) && !event.winningBranchUrl) return { src: null, t0: null, archive: false };
   return { src, t0: revealed ? ms(event.revealTime) : ms(event.startTime), archive: false };
 }

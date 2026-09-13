@@ -37,6 +37,9 @@ export type EventPublic = {
 /** States in which the outcome is already public, so the winning branch may be served. */
 export const REVEALED = new Set(["REVEAL", "CANON", "PAUSE", "DONE"]);
 
+/** Nothing about this event changes again; a poll on it is a database read for no reason. */
+export const FINISHED = new Set(["DONE", "SKIPPED"]);
+
 const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
 
 /**

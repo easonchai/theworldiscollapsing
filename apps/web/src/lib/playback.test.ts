@@ -35,6 +35,22 @@ describe("sourceFor", () => {
     expect(sourceFor(e)).toEqual({ src: "http://media/branch-1.mp4", t0: null, archive: true });
   });
 
+  it("shows the no-signal card for a REVEAL with no branch, instead of freezing the first half", () => {
+    const e = event({ state: "REVEAL", winningBranchUrl: null, revealTime: "2026-09-09T10:01:00.000Z" });
+    expect(sourceFor(e)).toEqual({ src: null, t0: null, archive: false });
+  });
+
+  it("shows the no-signal card for CANON and PAUSE with no branch too", () => {
+    for (const state of ["CANON", "PAUSE"]) {
+      expect(sourceFor(event({ state, winningBranchUrl: null }))).toEqual({ src: null, t0: null, archive: false });
+    }
+  });
+
+  it("still replays the first half from the top for a DONE event with no branch", () => {
+    const e = event({ state: "DONE", winningBranchUrl: null });
+    expect(sourceFor(e)).toEqual({ src: "http://media/first.mp4", t0: null, archive: true });
+  });
+
   it("has no clock to follow when the time is missing", () => {
     expect(sourceFor(event({ startTime: null })).t0).toBeNull();
     expect(sourceFor(event({ state: "REVEAL", winningBranchUrl: "http://media/branch-0.mp4" })).t0).toBeNull();
