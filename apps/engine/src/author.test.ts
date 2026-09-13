@@ -100,7 +100,7 @@ describe("author", () => {
     }
   });
 
-  it("tells politics to put charts on the screen, and sports to shoot an actual match", async () => {
+  it("tells politics to put charts on the screen, and sports to shoot an MMA bout", async () => {
     const politics = chatFetch([good]);
     await author(politics).author({ ...CTX, channelId: "politics" });
     const sys: string = politics.calls[0]!.messages[0]!.content;
@@ -111,8 +111,9 @@ describe("author", () => {
     const sports = chatFetch([good]);
     await author(sports).author({ ...CTX, channelId: "sports" });
     const sportsSys: string = sports.calls[0]!.messages[0]!.content;
-    expect(sportsSys).toMatch(/an actual competition in progress/i);
-    expect(sportsSys).toMatch(/broadcast positions/i);
+    expect(sportsSys).toMatch(/an MMA fight card/);
+    expect(sportsSys).toMatch(/the fighter in red shorts/);
+    expect(sportsSys).toMatch(/KNOCKOUT written as one action in one shot/);
     expect(sportsSys).toMatch(/real time/i);
   });
 
@@ -260,8 +261,8 @@ describe("author", () => {
     await author(sports).author({ ...CTX, channelId: "sports" });
     const sys: string = sports.calls[0]!.messages[0]!.content;
     expect(sys).toMatch(/- score: the scorebug/);
-    expect(sys).toMatch(/atBreak is the score at the end of the first half and it must be level/);
-    expect(sys).toMatch(/one final score per outcome, in the same order as outcomes/);
+    expect(sys).toMatch(/atBreak is the score after round one and it must be "0 - 0"/);
+    expect(sys).toMatch(/one final per outcome, in the same order as outcomes/);
 
     // Asked for, and then enforced: the schema offers `score` on every channel and a live probe
     // came back with a region scorebug reading "City v Harb" with finals in Chinese characters.

@@ -20,7 +20,8 @@ const CLIP_ATTEMPTS = 3; // 1 try + 2 retries
 
 /** The footage type and camera of each channel, restated to the video model on every single clip. */
 export const CHANNEL_PREFIX: Record<string, string> = {
-  sports: "Live sports broadcast footage, broadcast camera, real-time speed:",
+  sports:
+    "Live MMA broadcast footage, cage-side broadcast camera, two fighters in a cage, one in red shorts and one in black shorts, real-time speed:",
   politics:
     "Television news footage, handheld news camera or fixed studio camera, real-time, charts and graphs on the studio screen where the shot is in a studio:",
   culture: "Live event television coverage, press camera, stage light as it is, real-time:",

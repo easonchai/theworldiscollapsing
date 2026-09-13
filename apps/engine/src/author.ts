@@ -8,11 +8,13 @@ import { SchemaError, type OpenRouter, type Reasoning } from "./openrouter.js";
  * the video vendor, prefixed again in `render.ts` (`clipPrompt`) so the style survives model drift.
  */
 export const CHANNEL_STYLE: Record<string, string> = {
-  sports: `Sports.
-Subject: an actual competition in progress — a football match, an MMA bout, a sprint final, a basketball game, a cycling stage, a tennis match. Named clubs, fighters and athletes who recur from event to event.
-Camera: broadcast positions — main side camera, tight follow, touchline, goal-line, cage-side, finish line.
-On screen: players in kit, officials, a full crowd, floodlights or daylight exactly as they are.
-Pacing: real time, at the speed the sport is actually played.`,
+  sports: `Sports: an MMA fight card. Every event is one bout between two named fighters who recur from card to card. The football league in the canon has finished for the season; ignore it as a subject.
+Subject: two fighters in a cage, a referee, the crowd. Nothing else is a sports event.
+Fighters on screen: one always wears RED shorts, the other always BLACK shorts. Every shot names them as "the fighter in red shorts" and "the fighter in black shorts", never by name, because the picture has no other way to tell them apart. Say in the reasoning which named fighter wears which.
+Camera: cage-side hard camera through the fence, or the overhead cage camera. Tight: the two fighters fill the frame and the referee is close.
+First half: round one, level. Both land, both are standing, nobody is hurt, the bell ends the round, they walk to their corners.
+Branches: round two, and the finish IS the branch. A win is a KNOCKOUT written as one action in one shot: "the fighter in red shorts lands a right hand and the fighter in black shorts falls to the canvas, the referee dives in and waves it off". Then one shot of the referee raising the winner's arm. A draw goes to the bell with both standing and the referee holding both arms up.
+Pacing: real time. One action per shot: a punch, a knockdown, a stoppage.`,
   politics: `Politics.
 Subject: what is happening in the world right now, mirrored into this fictional world — global warming and climate, elections, inflation, migration, strikes, summits, wars, pandemics, tech regulation. Named parties, ministers and crises that recur.
 Camera: a fixed studio camera, or a handheld news camera in the field.
@@ -51,7 +53,7 @@ Hard rules:
 - Each branch's shot seconds must total ${ctx.secondHalfSec} seconds (within 10%).
 - cards: 1 or 2 studio cards, the graphics the broadcast cuts to between first-half clips. Each has afterShot (the 0-based index of the first-half shot it follows, so it must be smaller than the number of first-half shots), a title under 48 characters, and exactly two short stat lines, also under 48 characters. Write them as a studio would: a heading and two numbers or facts about this event.
 - ticker: 3 to 6 short broadcast strap lines, under 60 characters each.
-${ctx.channelId === "sports" ? `- score: the scorebug the broadcast keeps in the corner of the picture. sides is the two competitors as scorebug codes of 3 or 4 letters, drawn from their names the way a broadcaster shortens them (Harbour City becomes HAR). atBreak is the score at the end of the first half and it must be level, because the first half gives nothing away. atEnd is one final score per outcome, in the same order as outcomes, and each one must follow from atBreak and from that outcome: the branch where Harbour City win cannot end level. Write scores only, like "1 - 1" and "2 - 1", never words. This is the one thing on the picture a viewer actually reads, because it is drawn as page text rather than generated as video, so get it right.\n` : `- score: null. Only sports has a scoreline.\n`}
+${ctx.channelId === "sports" ? `- score: the scorebug the broadcast keeps in the corner of the picture, counting rounds won. sides is the two fighters as scorebug codes of 3 or 4 letters, drawn from their surnames the way a broadcaster shortens them (Silva becomes SIL), red-shorts fighter first. atBreak is the score after round one and it must be "0 - 0", because the first half gives nothing away. atEnd is one final per outcome, in the same order as outcomes, and each one must follow from that outcome: "1 - 0" when the red-shorts fighter wins, "0 - 1" when the black-shorts fighter wins, "0 - 0" for a draw. Write scores only, never words. This is the one thing on the picture a viewer actually reads, because it is drawn as page text rather than generated as video, so get it right.\n` : `- score: null. Only sports has a scoreline.\n`}
 - canonUpdates: one list per outcome, 1 to 3 flat factual sentences stating what became true in the world if that outcome happens. They are appended to the world log and every later event reads them.
 - reasoning: two or three sentences on how this event follows from the canon and why the first half gives nothing away.
 
