@@ -192,7 +192,12 @@ function runSidecar(
     function succeed(v: SidecarResult) {
       if (outcome) return;
       outcome = { ok: true, value: v };
-      // The sidecar exits on its own right after `done`; deliver when it does.
+      // The sidecar is expected to exit on its own right after `done`; `child.on("exit")` below
+      // delivers as soon as it does. One that doesn't must not wedge the channel, so this arms
+      // the same SIGTERM/SIGKILL/reap path `stopChild()` uses for every other exit. Once
+      // `outcome` is set here, `fail()` is a no-op, so `deliver()` still resolves with this value
+      // however the child ends up gone.
+      stopChild();
     }
 
     // Spec section 6: SIGTERM at 2x the estimate's seconds plus 120s of wall clock, treated as an error.
@@ -216,6 +221,10 @@ function runSidecar(
     if (cfg.signal?.aborted) onAbort();
 
     child.on("error", (e) => fail(`failed to spawn sidecar: ${e.message}`));
+    // `child.on("error")` only covers spawn/kill failures, not stdio pipe errors. A sidecar that
+    // dies before reading its plan turns the write below into an EPIPE on this stream, and
+    // unhandled that is an uncaught exception that kills the whole engine.
+    child.stdin.on("error", (e) => fail(`sidecar stdin write failed: ${e.message}`));
     child.stderr.on("data", (c: Buffer) => {
       // otherwise a sidecar crash surfaces as a bare exit code with no clue why
       stderrTail = (stderrTail + c.toString()).slice(-4000);
