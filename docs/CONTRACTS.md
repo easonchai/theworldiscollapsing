@@ -69,7 +69,7 @@ All writes go through `publicClient.simulateContract` → `walletClient.writeCon
 
 ## Web env
 
-`NEXT_PUBLIC_CHAIN_ID` (31337 | 84532), `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_ARENA_ADDRESS`, `NEXT_PUBLIC_USDC_ADDRESS`, `NEXT_PUBLIC_GATE_ADDRESS`, `NEXT_PUBLIC_SUBGRAPH_URL?`, `NEXT_PUBLIC_PRIVY_APP_ID?`, `NEXT_PUBLIC_DEV_WALLET_KEY?`, `NEXT_PUBLIC_GATE_MODE` (world | checkbox), `NEXT_PUBLIC_WORLD_APP_ID?`, `NEXT_PUBLIC_WORLD_ACTION?`, `DATABASE_URL`, `GATE_OWNER_PRIVATE_KEY`, `GATE_MODE?` (server-side override of the gate mode), `WORLD_APP_ID?`, `WORLD_API_KEY?`, `WORLD_RP_ID?`, `WORLD_RP_SIGNING_KEY?`. Template: `apps/web/.env.local.example`; the real file is `apps/web/.env.local` (gitignored).
+`NEXT_PUBLIC_CHAIN_ID` (31337 | 84532 | 8453), `NEXT_PUBLIC_RPC_URL`, `NEXT_PUBLIC_ARENA_ADDRESS`, `NEXT_PUBLIC_USDC_ADDRESS`, `NEXT_PUBLIC_GATE_ADDRESS`, `NEXT_PUBLIC_SUBGRAPH_URL?`, `NEXT_PUBLIC_PRIVY_APP_ID?`, `NEXT_PUBLIC_DEV_WALLET_KEY?`, `NEXT_PUBLIC_GATE_MODE` (world | checkbox), `NEXT_PUBLIC_WORLD_APP_ID?`, `NEXT_PUBLIC_WORLD_ACTION?`, `DATABASE_URL`, `GATE_OWNER_PRIVATE_KEY`, `GATE_MODE?` (server-side override of the gate mode), `WORLD_APP_ID?`, `WORLD_API_KEY?`, `WORLD_RP_ID?`, `WORLD_RP_SIGNING_KEY?`. Template: `apps/web/.env.local.example`; the real file is `apps/web/.env.local` (gitignored).
 
 `apps/web` runs on **webpack**, not Turbopack (`next dev --webpack` / `next build --webpack` plus `experimental.extensionAlias`): Prisma 7 generates TypeScript that imports itself with `.js` specifiers, which Turbopack cannot resolve. Setting `importFileExtension = "ts"` on the `db` generator would let Turbopack back in.
 

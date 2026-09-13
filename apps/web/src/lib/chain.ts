@@ -1,5 +1,5 @@
 import { concatHex, createPublicClient, http, keccak256, type Address, type Hex } from "viem";
-import { anvil, baseSepolia } from "viem/chains";
+import { anvil, base, baseSepolia } from "viem/chains";
 import { arenaAbi } from "contracts/abi/Arena";
 import { gateAbi } from "contracts/abi/Gate";
 import { mockusdcAbi } from "contracts/abi/MockUSDC";
@@ -18,7 +18,9 @@ export const DEV_WALLET_KEY = process.env.NEXT_PUBLIC_DEV_WALLET_KEY ?? "";
 export const WORLD_APP_ID = process.env.NEXT_PUBLIC_WORLD_APP_ID ?? "";
 export const WORLD_ACTION = process.env.NEXT_PUBLIC_WORLD_ACTION ?? "verify";
 
-export const chain = CHAIN_ID === 84532 ? baseSepolia : anvil;
+export const chain = CHAIN_ID === 8453 ? base : CHAIN_ID === 84532 ? baseSepolia : anvil;
+/** Real money: the faucet is gone and the wallet is funded and emptied through Privy instead. */
+export const MAINNET = CHAIN_ID === 8453;
 
 // A Privy embedded wallet is born with no ETH, so `/api/verify` drips some from the gate owner
 // whenever a verified address falls below GAS_MIN. At Base Sepolia's ~0.006 gwei a faucet call

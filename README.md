@@ -156,9 +156,13 @@ The engine only knows its own database, and the wall tiles read `Arena` directly
 
 ### Wallets: Privy
 
-A viewer who lands on a TV wall does not have a wallet, and the betting window is 30 seconds. Privy turns an email into an embedded wallet on Base Sepolia in one OTP, and every contract write in the app goes through one `Signer` shape in `apps/web/src/components/wallet.tsx`, so the rest of the code does not know or care what signed. When the Privy dashboard has a paymaster configured, the same file fronts the embedded wallet with an ERC-4337 smart wallet (`useSmartWallets`) and the bettor never sees gas. When it does not, the embedded wallet pays its own gas and the verify step drips it enough ETH to start (`apps/web/src/app/api/verify/route.ts`, `dripGas`).
+A viewer who lands on a TV wall does not have a wallet, and the betting window is 30 seconds. Privy's smart account is the only wallet the app supports. There is no connect-wallet button, no seed phrase, no extension: a viewer signs in with email, Privy creates an embedded wallet, and an ERC-4337 smart wallet in front of it (`useSmartWallets`) signs every write with gas paid by the dashboard's paymaster. Every contract write goes through one `Signer` shape in `apps/web/src/components/wallet.tsx`, so the rest of the code does not know or care what signed. If the paymaster is off, the embedded wallet pays its own gas and the verify step drips it enough ETH to start (`apps/web/src/app/api/verify/route.ts`, `dripGas`).
 
 The financial flow that runs end to end on a Privy wallet: faucet 1,000 USDC, approve, bet on an outcome, claim the parimutuel payout after resolution. Every write simulates first and fails loudly on `receipt.status !== "success"`.
+
+On Base mainnet (`NEXT_PUBLIC_CHAIN_ID=8453`) the faucet is gone and step three of `/verify` becomes `apps/web/src/components/ramp.tsx`: Privy's funding modal (`useFundWallet`) takes a card, Apple Pay or a transfer from another wallet and lands USDC in the smart wallet, and a USDC transfer signed by the same wallet takes it out. A web2 user goes from email to a funded, gasless wallet without leaving the page. Funding is switched on in the Privy dashboard (`docs/SETUP.md`).
+
+![Privy's funding modal on the verify page: pay with card or receive funds, no chain picker, no gas](docs/images/privy-fund.png)
 
 ### Identity: World
 
@@ -179,7 +183,7 @@ Ships off. Compiled to WASM with 7 handler tests, not yet run through `cre workf
 | Sponsor | Used for | Code |
 |---|---|---|
 | The Graph | index of every `Arena` event; positions and markets pages; the previous event's pools in the authoring prompt | `packages/subgraph`, `apps/web/src/lib/subgraph.ts`, `apps/engine/src/author.ts:79-109` |
-| Privy | email login, embedded wallet, optional smart wallet with sponsored gas, one signer shape for every write | `apps/web/src/components/wallet.tsx` |
+| Privy | email login, embedded wallet, optional smart wallet with sponsored gas, one signer shape for every write; on mainnet, on-ramp into the wallet and USDC out of it | `apps/web/src/components/wallet.tsx`, `apps/web/src/components/ramp.tsx` |
 | World | Selfie Check bound to the wallet address, verified server-side, then `Gate.setVerified` on chain | `apps/web/src/components/world-verify.tsx`, `apps/web/src/app/api/world/rp-context`, `apps/web/src/app/api/verify` |
 | Chainlink CRE | confidential workflow derives and releases only the winning branch key after `Resolved` | `packages/cre/reveal-key/workflow.ts`, `apps/engine/src/seal.ts`, `apps/engine/src/media.ts` |
 | Base | the chain; all four contracts source-verified on Basescan | `packages/contracts`, `apps/engine/src/chain.ts`, `apps/web/src/lib/chain.ts` |
