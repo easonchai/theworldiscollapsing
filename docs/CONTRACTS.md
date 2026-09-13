@@ -201,7 +201,7 @@ Gas: `resolve` costs ~73k in trusted mode and ~221k with the verifier (`DrandVer
 
 ## Timing
 
-REAL: txBuffer 15 s, first half 30 s, second half 30 s, pause 60 s. DEMO: 3 / 15 / 10 / 5 s.
+REAL: txBuffer 15 s, first half 30 s, second half 30 s, pause 165 s. DEMO: 3 / 15 / 10 / 5 s. The betting window is txBuffer + first half, and the first-half video is authored to that full length (45 s REAL, 18 s DEMO) so the picture runs up to the lock.
 
 ## Local stack
 

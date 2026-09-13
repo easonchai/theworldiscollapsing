@@ -152,7 +152,7 @@ let author = stubAuthor;
 let render: Render = stubRender({
   workDir,
   store: media,
-  firstHalfSec: timing.firstHalfMs / 1000,
+  firstHalfSec: (timing.txBufferMs + timing.firstHalfMs) / 1000, // the whole betting window, as produce() authors it
   secondHalfSec: timing.secondHalfMs / 1000,
 });
 
