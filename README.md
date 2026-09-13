@@ -164,7 +164,7 @@ The financial flow that runs end to end on a Privy wallet: faucet 1,000 USDC, ap
 
 Play money still has a real problem: a script can farm the faucet and one bot can fund both sides of every pool. `Gate.verified` is required by `MockUSDC.faucet` and `Arena.bet`, and the intended way to earn it is a World Selfie Check, one per address. `apps/web/src/components/world-verify.tsx` runs IDKit 4's `IDKitRequestWidget` with `selfieCheckLegacy`, signing the wallet address as the proof's signal. `apps/web/src/app/api/world/rp-context` signs the request context server-side. `apps/web/src/app/api/verify/route.ts` verifies the proof against World's v4 endpoint, refuses any proof whose `signal_hash` is not the hash of that address, and then writes `Gate.setVerified(address)` on chain. Selfie Check is used as the abuse-prevention signal that decides who can take play money and move pools.
 
-Ships off. `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world` turn it on once the app has Selfie Check access; the default `checkbox` mode is an 18+ self-attestation plus a wallet signature through the same route. What is left is in [`docs/plan/world-selfie-check.md`](docs/plan/world-selfie-check.md).
+Ships off. `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world` turn it on once the app has Selfie Check access; the default `checkbox` mode is an 18+ self-attestation plus a wallet signature through the same route. What is left is in [`docs/plan/world-selfie-check.md`](docs/plan/world-selfie-check.md). What we would tell World about the docs, the skill and the MCP is in [`docs/WORLD-FEEDBACK.md`](docs/WORLD-FEEDBACK.md).
 
 ### Sealing: Chainlink CRE
 
