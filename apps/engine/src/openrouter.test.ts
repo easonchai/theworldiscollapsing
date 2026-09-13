@@ -51,6 +51,15 @@ function fakeFetch(replies: unknown[]) {
 const client = (f: ReturnType<typeof fakeFetch>) =>
   makeOpenRouter({ baseUrl: "https://openrouter.ai", apiKey: "k", imageModel: "google/gemini-3.1-flash-image", fetchImpl: f.impl });
 
+/** Connects but never answers, like a vendor socket that accepted the request and went quiet. */
+function hangingFetch(): typeof fetch {
+  return (async (_url: string | URL, init?: RequestInit) => {
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal!.reason));
+    });
+  }) as unknown as typeof fetch;
+}
+
 const tmp = await mkdtemp(path.join(tmpdir(), "twic-or-"));
 afterAll(() => rm(tmp, { recursive: true, force: true }));
 
@@ -121,5 +130,32 @@ describe("openrouter client", () => {
     expect((await client(g).generateImage("key art")).toString()).toBe("png-bytes");
     expect(g.calls[0]!.url).toBe("https://openrouter.ai/api/v1/images");
     expect(g.calls[0]!.body.model).toBe("google/gemini-3.1-flash-image");
+  });
+
+  it("pollVideo rejects rather than hang when the status request never answers", async () => {
+    const or = makeOpenRouter({
+      baseUrl: "https://openrouter.ai",
+      apiKey: "k",
+      imageModel: "m",
+      fetchImpl: hangingFetch(),
+      pollRequestTimeoutMs: 20, // short override so the test doesn't wait out the real 20s default
+    });
+    await expect(or.pollVideo("job1", { intervalMs: 1_000, timeoutMs: 60_000 })).rejects.toThrow(
+      /poll job1: request timed out after 20ms/,
+    );
+  });
+
+  it("download rejects rather than hang when the clip body never arrives", async () => {
+    const or = makeOpenRouter({
+      baseUrl: "https://openrouter.ai",
+      apiKey: "k",
+      imageModel: "m",
+      fetchImpl: hangingFetch(),
+      downloadTimeoutMs: 20, // short override so the test doesn't wait out the real 120s default
+    });
+    const out = path.join(tmp, "hang.mp4");
+    await expect(or.download("https://openrouter.ai/api/v1/videos/abc123/content?index=0", out)).rejects.toThrow(
+      /download .*: request timed out after 20ms/,
+    );
   });
 });

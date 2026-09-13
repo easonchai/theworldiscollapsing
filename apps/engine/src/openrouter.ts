@@ -51,6 +51,9 @@ export function makeOpenRouter(cfg: {
   fetchImpl?: typeof fetch;
   /** Called with usage.cost (USD) after every chat completion that reports one. */
   onUsage?: (usd: number, model: string) => Promise<void>;
+  /** Test seam: override the per-request timeouts below without waiting out the real ones. */
+  pollRequestTimeoutMs?: number;
+  downloadTimeoutMs?: number;
 }) {
   const doFetch = cfg.fetchImpl ?? fetch;
   const base = cfg.baseUrl.replace(/\/$/, "");
@@ -64,6 +67,22 @@ export function makeOpenRouter(cfg: {
    * the betting window, so a hung provider costs one skipped event rather than the channel.
    */
   const TIMEOUT_MS = 120_000;
+
+  /**
+   * A status poll is one small JSON reply, and `pollVideo` already retries every `intervalMs`, so
+   * a hung request should fail fast rather than sit on `intervalMs` itself. Well above the slowest
+   * observed poll and short enough that several timed-out attempts still leave `o.timeoutMs` (15
+   * minutes in production) reachable, instead of one hung connection eating the whole deadline.
+   */
+  const POLL_TIMEOUT_MS = cfg.pollRequestTimeoutMs ?? 20_000;
+
+  /** A clip download reads a multi-megabyte body, not a small JSON reply, so it gets `post()`'s budget. */
+  const DOWNLOAD_TIMEOUT_MS = cfg.downloadTimeoutMs ?? 120_000;
+
+  /** True when `AbortSignal.timeout` fired the request's abort, as opposed to any other rejection. */
+  function isTimeout(e: unknown): boolean {
+    return e instanceof Error && e.name === "TimeoutError";
+  }
 
   async function post(path: string, body: unknown): Promise<any> {
     const res = await doFetch(`${base}${path}`, {
@@ -124,7 +143,16 @@ export function makeOpenRouter(cfg: {
     async pollVideo(jobId: string, o: { intervalMs: number; timeoutMs: number }): Promise<{ url: string }> {
       const deadline = Date.now() + o.timeoutMs;
       for (;;) {
-        const res = await doFetch(`${base}/api/v1/videos/${jobId}`, { headers });
+        let res: Response;
+        try {
+          res = await doFetch(`${base}/api/v1/videos/${jobId}`, {
+            headers,
+            signal: AbortSignal.timeout(POLL_TIMEOUT_MS),
+          });
+        } catch (e) {
+          if (isTimeout(e)) throw new Error(`poll ${jobId}: request timed out after ${POLL_TIMEOUT_MS}ms`);
+          throw e;
+        }
         if (!res.ok) throw new Error(`poll ${jobId}: HTTP ${res.status}`);
         const json: any = await res.json();
         if (json.status === "completed") {
@@ -141,9 +169,20 @@ export function makeOpenRouter(cfg: {
     },
 
     async download(url: string, path: string): Promise<void> {
-      const res = await doFetch(url, { headers: { authorization: headers.authorization } });
-      if (!res.ok) throw new Error(`download ${url}: HTTP ${res.status}`);
-      await writeFile(path, Buffer.from(await res.arrayBuffer()));
+      let res: Response;
+      let bytes: ArrayBuffer;
+      try {
+        res = await doFetch(url, {
+          headers: { authorization: headers.authorization },
+          signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+        });
+        if (!res.ok) throw new Error(`download ${url}: HTTP ${res.status}`);
+        bytes = await res.arrayBuffer();
+      } catch (e) {
+        if (isTimeout(e)) throw new Error(`download ${url}: request timed out after ${DOWNLOAD_TIMEOUT_MS}ms`);
+        throw e;
+      }
+      await writeFile(path, Buffer.from(bytes));
     },
 
     /** POST /api/v1/images → { data: [{ b64_json, media_type }] }. Base64 bytes, never a URL. */
