@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { parseUnits, type Hex } from "viem";
+import { maxUint256, parseUnits, type Hex } from "viem";
 import {
   ARENA,
   MIN_BET,
@@ -19,11 +19,19 @@ import type { EventPublic } from "@/lib/public";
 import { betRevertMessage, confirmed, ensureGas, txMessage, type TxMessage } from "@/lib/tx";
 import { useGate, usePoll } from "./chain-hooks";
 import { useWallet } from "./wallet";
-import { TxError, usdc } from "./bits";
+import { TxError, useNow, usdc } from "./bits";
 
 export type MarketState = { pool: [bigint, bigint]; stake: [bigint, bigint] };
 
 const ZERO: [bigint, bigint] = [0n, 0n];
+
+/**
+ * A bet sent this close to the lock is mined after it and reverts `BettingClosed`. The simulation
+ * passes (the lock has not crossed yet), the wallet prompts, and the receipt is a revert. Base
+ * Sepolia mines every 2 s and the receipt poll is 4 s, so one write lands in 2 to 8 s; the bettor
+ * script keeps a 3 s margin on top of that and never hits it. Same idea here, said before signing.
+ */
+const LOCK_MARGIN_MS = 10_000;
 
 /**
  * Live pools and the caller's stakes for every market of the event, straight from the chain.
@@ -178,6 +186,8 @@ export function Markets({
   const [error, setError] = useState<TxMessage | null>(null);
 
   const open = event.state === "BETTING";
+  const now = useNow();
+  const lockIn = open && event.lockTime ? Date.parse(event.lockTime) - now : null;
   const parsed = useMemo(() => {
     try {
       const v = parseUnits(amount || "0", USDC_DECIMALS);
@@ -195,12 +205,14 @@ export function Markets({
         ? event.state === "LOCKED" || event.state === "RESOLVE"
           ? "Betting is closed — waiting for the drand round"
           : "Betting is closed"
-        : !parsed
-          ? "Enter an amount"
-          : // The contract's floor, said here rather than after an approval the bet would waste.
-            parsed < MIN_BET
-            ? `Minimum bet is ${usdc(MIN_BET)} USDC`
-            : null;
+        : lockIn !== null && lockIn < LOCK_MARGIN_MS
+          ? "Too close to the lock to land — nothing staked"
+          : !parsed
+            ? "Enter an amount"
+            : // The contract's floor, said here rather than after an approval the bet would waste.
+              parsed < MIN_BET
+              ? `Minimum bet is ${usdc(MIN_BET)} USDC`
+              : null;
 
   async function bet(outcomeIdx: number, yes: boolean) {
     if (!walletClient || !address || !parsed) return;
@@ -219,11 +231,14 @@ export function Markets({
         setStatus("Approving USDC…");
         // Simulate first: a revert is then a sentence the bettor reads, not a wallet prompt they
         // pay for. The request it returns is the exact call that was simulated.
+        //
+        // Unlimited, not the stake: an exact approval made every bet two transactions, which in a
+        // 45 s window is what pushed bets past the lock. One approval now covers every later bet.
         const approve = await publicClient.simulateContract({
           address: USDC,
           abi: mockusdcAbi,
           functionName: "approve",
-          args: [ARENA, parsed],
+          args: [ARENA, maxUint256],
           account: address,
         });
         const approveTx = await walletClient.writeContract(approve.request);
