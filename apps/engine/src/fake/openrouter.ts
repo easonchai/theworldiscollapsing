@@ -22,7 +22,7 @@ export function planShots(total: number): number[] {
   const n = Math.max(1, Math.min(Math.round(total / 8), Math.floor(total / 5) || 1));
   const base = Math.floor(total / n);
   const rem = total - base * n;
-  return Array.from({ length: n }, (_, i) => Math.max(5, Math.min(15, base + (i < rem ? 1 : 0))));
+  return Array.from({ length: n }, (_, i) => Math.max(5, Math.min(14, base + (i < rem ? 1 : 0))));
 }
 
 // Outcome sets are 3 or 4 long; authored() picks the one matching nOutcomes, or falls back to the

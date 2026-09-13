@@ -18,8 +18,8 @@ const good = {
   title: "Matchday 3",
   premise: "Level at the break.",
   outcomes: ["Home win", "Away win", "Draw"],
-  firstHalf: [shot(15), shot(15), shot(15), shot(15)],
-  branches: [[shot(15)], [shot(15)], [shot(15)]],
+  firstHalf: [shot(14), shot(14), shot(14), shot(14)],
+  branches: [[shot(14)], [shot(14)], [shot(14)]],
   cards: [{ afterShot: 1, title: "Half time", stats: ["Possession 51-49", "Shots 4-4"] }],
   ticker: ["Sold out"],
   canonUpdates: [["Home won."], ["Away won."], ["Level."]],
@@ -27,14 +27,14 @@ const good = {
   reasoning: "inline",
 };
 // one branch for three outcomes: fails Authored's refine
-const bad = { ...good, branches: [[shot(15)]] };
+const bad = { ...good, branches: [[shot(14)]] };
 // two outcomes: passes the schema (min 2) but is the wrong count against nOutcomes: 3
-const twoOutcomes = { ...good, outcomes: ["Home win", "Away win"], branches: [[shot(15)], [shot(15)]], canonUpdates: [["Home won."], ["Away won."]] };
+const twoOutcomes = { ...good, outcomes: ["Home win", "Away win"], branches: [[shot(14)], [shot(14)]], canonUpdates: [["Home won."], ["Away won."]] };
 // four outcomes, the right count against nOutcomes: 4
 const good4 = {
   ...good,
   outcomes: ["Home win by 2+", "Home win by 1", "Away win", "Draw"],
-  branches: [[shot(15)], [shot(15)], [shot(15)], [shot(15)]],
+  branches: [[shot(14)], [shot(14)], [shot(14)], [shot(14)]],
   canonUpdates: [["Home won big."], ["Home won."], ["Away won."], ["Level."]],
 };
 
@@ -172,7 +172,7 @@ describe("author", () => {
     const overlong = {
       ...good,
       firstHalf: [shot(10), shot(8), shot(8)], // 26s
-      branches: [[shot(12), shot(10)], [shot(8), shot(8)], [shot(15), shot(6)]], // 22 / 16 / 21s
+      branches: [[shot(12), shot(10)], [shot(8), shot(8)], [shot(14), shot(6)]], // 22 / 16 / 20s
       cards: [{ afterShot: 2, title: "Half time", stats: ["Possession 51-49", "Shots 4-4"] }],
     };
     const logged: Array<Record<string, unknown>> = [];
@@ -194,13 +194,13 @@ describe("author", () => {
       // 6, not 5: Reactor fast-h3 rejects a clip under 5.167 s at `enqueue`, so a shot the
       // clamp trimmed to 5 would cost a whole session to discover.
       expect(s.seconds).toBeGreaterThanOrEqual(6);
-      expect(s.seconds).toBeLessThanOrEqual(15);
+      expect(s.seconds).toBeLessThanOrEqual(14);
     }
     for (const c of a.cards) expect(c.afterShot).toBeLessThan(a.firstHalf.length);
     // one log line per adjusted list, with the seconds before and after
     expect(logged).toHaveLength(4);
     expect(logged[0]).toMatchObject({ where: "firstHalf", targetSec: 15, beforeSec: 26 });
-    expect(logged[3]).toMatchObject({ where: "branch 2", targetSec: 10, beforeSec: 21 });
+    expect(logged[3]).toMatchObject({ where: "branch 2", targetSec: 10, beforeSec: 20 });
   });
 
   it("strips the prompt's own numbering out of the title and the outcomes (ticket 29)", async () => {
