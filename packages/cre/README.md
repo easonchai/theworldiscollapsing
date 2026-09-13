@@ -123,23 +123,24 @@ bun test
 # compile to WASM (no CRE account needed)
 cre workflow build ./reveal-key --target local-settings
 
-# simulate — REQUIRES `cre login`
+# simulate — REQUIRES `cre login`; run from packages/cre, with the sealed local stack up
+# (anvil --port 8547 --chain-id 84532, engine on :4002; see docs/CRE.md)
 cre workflow simulate ./reveal-key --target local-settings \
-  --non-interactive --trigger-index 0 --evm-tx-hash <the resolve tx> --evm-event-index 0
+  --non-interactive --trigger-index 0 --listen
 ```
 
-### Gating status (verified 2026-09-09)
+### Gating status (verified 2026-09-13, CLI v1.33.0)
 
-| Step | Gate |
-|---|---|
-| `cre workflow build` | none — compiles offline, verified |
-| `cre workflow simulate` | **`cre login`** (browser OAuth) or `CRE_API_KEY`. Fails with `authentication required: no credentials found` |
-| `cre workflow deploy` | `cre login` **plus** deploy access approval (`cre account access`) |
-| `handlerInTee` on a real DON | Confidential Workflows **invite-only private beta**, separate from deploy access |
+| Step | Gate | Here |
+|---|---|---|
+| `cre workflow build` | none | compiles offline |
+| `cre workflow simulate` | **`cre login`** (browser OAuth) or `CRE_API_KEY` | ran, `docs/cre-simulation-2026-09-13.txt` |
+| `cre workflow deploy` | `cre login` **plus** deploy access approval (`cre account access`) | not granted to our organization |
+| `handlerInTee` on a real DON | Confidential Workflows **private beta**, by request, separate from deploy access | not granted |
 
-Chainlink's own line is "you don't need to wait for early access — run Confidential Workflows in the
-local simulator" — but the simulator still wants an account. Nothing here has been executed by a CRE
-node or a real enclave.
+The simulator only accepts chains on the tenant's supported list, so the local target names
+`ethereum-testnet-sepolia-base-1` and points it at an anvil started with `--chain-id 84532`.
+`anvil-devnet` is dropped silently and the run ends with `no RPC URLs found`.
 
 ## What has actually been verified
 
@@ -148,11 +149,11 @@ node or a real enclave.
 - `bun test` — 7 tests over the handler, including that the key sent matches the engine's schedule
   byte for byte, that the outcome comes from the chain read rather than the log, and that nothing is
   released when the chain says the event is unresolved.
-- The engine half end to end against a live anvil: branches published as ciphertext, `ffprobe`
-  refuses them, and after the release only the winning branch decrypts to a playable 10 s MP4 while
-  the loser stays sealed.
-- The handler itself driven against that live stack (real `eth_call`, real POST) outside the CRE
-  runtime, because `cre workflow simulate` is login-gated.
+- `cre workflow simulate --listen` against the live sealed stack: the EVM log trigger fired on
+  `Resolved`, the simulator ran the TEE handler (real `eth_call`, secrets from `secrets.yaml`, real
+  POST), the engine logged `branch key released` 120 ms after `resolved` on one event and 400 ms on
+  the next, and the 3 s fallback never fired for them.
+- After the release only the winning branch decrypts to a playable 10 s MP4; `ffprobe` refuses both
+  losers, which exist only as `.enc`.
 
-Not verified: anything involving a real Nitro enclave, the Vault DON, `cre workflow simulate`,
-Base Sepolia deployment, or the EVM log trigger actually firing.
+Not verified: a real Nitro enclave, the Vault DON, or a Base Sepolia deployment.

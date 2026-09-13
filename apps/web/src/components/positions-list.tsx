@@ -4,8 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { EventPublic } from "@/lib/public";
 import { gql, subgraphConfigured, type SubgraphPosition } from "@/lib/subgraph";
-import { marketPayout } from "@/lib/chain";
-import { ClaimButton, readMarket } from "./markets";
+import { ClaimButton, claimableOf, readMarket } from "./markets";
 import { SubgraphNotConfigured } from "./not-configured";
 import { usdc } from "./bits";
 import { useWallet } from "./wallet";
@@ -44,20 +43,21 @@ export function PositionsList() {
           const key = p.event.id.toLowerCase();
           grouped.set(key, [...(grouped.get(key) ?? []), p]);
         }
-        // Claimable is money, so it comes from the chain, never from the index.
-        const out: Row[] = [];
-        for (const [eventId, group] of grouped) {
-          const event = byId[eventId];
-          if (!event) continue;
-          let claimable = 0n;
-          if (event.outcome !== null) {
-            for (let i = 0; i < event.outcomes.length; i++) {
-              const m = await readMarket(event.id, i, address);
-              claimable += marketPayout(m.stake, m.pool, i === event.outcome, event.outcomes.length);
-            }
-          }
-          out.push({ event, positions: group, claimable });
-        }
+        // Claimable is money, so it comes from the chain, never from the index. Every event's
+        // markets, and every outcome within one event, read in parallel rather than one round
+        // trip at a time.
+        const built = await Promise.all(
+          Array.from(grouped, async ([eventId, group]): Promise<Row | null> => {
+            const event = byId[eventId];
+            if (!event) return null;
+            const markets =
+              event.outcome === null
+                ? null
+                : await Promise.all(event.outcomes.map((_, i) => readMarket(event.id, i, address)));
+            return { event, positions: group, claimable: claimableOf(event, markets) };
+          }),
+        );
+        const out = built.filter((r): r is Row => r !== null);
         if (live) {
           setRows(out.sort((a, b) => Number(b.claimable - a.claimable)));
           setError(null);

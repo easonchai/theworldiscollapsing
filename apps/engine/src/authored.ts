@@ -5,15 +5,17 @@ import { z } from "zod";
 /**
  * 6, not MiniMax's 5: Reactor fast-h3 refuses a shorter clip with
  * "seconds: 5.0 < ge(5.167)" (124 frames at 24 fps), and `seconds` is an integer.
- * 6 to 15 is inside both vendors' ranges, so one floor serves both. Exported because the author's
- * target clamp shortens shot lists and has to stop here, and a second copy of the number would
- * drift from this one.
+ * 14, not 15, at the top: fast-h3 refuses "seconds: 15.0 > le(14.375)" (345 frames), and sports
+ * 139 on 2026-09-13 paid for three sessions to learn it. 6 to 14 is inside both vendors' ranges.
+ * Exported because the author's target clamp shortens shot lists and has to stop at the floor,
+ * and a second copy of either number would drift from this one.
  */
 export const MIN_SHOT_SEC = 6;
+export const MAX_SHOT_SEC = 14;
 
 export const Shot = z.object({
   prompt: z.string().min(1),
-  seconds: z.number().int().min(MIN_SHOT_SEC).max(15),
+  seconds: z.number().int().min(MIN_SHOT_SEC).max(MAX_SHOT_SEC),
 });
 
 /**

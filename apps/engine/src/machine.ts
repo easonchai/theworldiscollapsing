@@ -56,7 +56,8 @@ export interface Store {
   insert(row: EventRow): Promise<EventRow>;
   get(id: Hex): Promise<EventRow | null>;
   update(id: Hex, patch: Partial<EventRow>): Promise<EventRow>;
-  canon(channelId: string, limit: number): Promise<string[]>;
+  /** Only lines from events this engine's own provenance authored: a fake run's world is not ours. */
+  canon(channelId: string, limit: number, provenance: string): Promise<string[]>;
   appendCanon(channelId: string, eventId: Hex, lines: string[]): Promise<void>;
   lastSeenAt(): Promise<Date | null>;
 }
@@ -141,7 +142,10 @@ export const REAL: Timing = {
   // What this does NOT cover is four channels at once, where the same day measured production at
   // 210 s to 400 s. That spread is download contention, not build time (the build held at 0.97x to
   // 1.08x at every concurrency level), so a longer pause is the wrong instrument for it.
-  pauseMs: 150_000,
+  //
+  // 165_000: the first half is now authored at txBuffer + firstHalf = 45 s (see produce), which is
+  // 15 s more footage to build at ~1x, so the pause grows by the same 15 s to keep the margin.
+  pauseMs: 165_000,
   idlePollMs: 10_000,
   renderRetryMs: 5_000,
   drandRetryMs: 2_000,
@@ -284,12 +288,15 @@ export async function produce(channelId: string, d: Deps, existing?: EventRow): 
     }
     if (!ev) {
       const seq = await d.store.nextSeq(channelId);
-      const canon = await d.store.canon(channelId, 50);
+      const canon = await d.store.canon(channelId, 50, d.provenance);
       const a = await d.author.author({
         channelId,
         seq,
         canon,
-        firstHalfSec: d.timing.firstHalfMs / 1000,
+        // The betting window is txBuffer + firstHalf (see `lock` below) and the picture starts
+        // when createEvent lands, so a firstHalf-long video froze on its last frame for the
+        // buffer's worth of seconds before the lock. The first half is authored to fill the window.
+        firstHalfSec: (d.timing.txBufferMs + d.timing.firstHalfMs) / 1000,
         secondHalfSec: d.timing.secondHalfMs / 1000,
         nOutcomes: d.nOutcomes,
       });

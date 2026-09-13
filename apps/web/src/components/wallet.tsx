@@ -179,8 +179,8 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   if (!DEV_WALLET_KEY) {
     return <Refuse reason="No wallet configured. Set NEXT_PUBLIC_PRIVY_APP_ID, or NEXT_PUBLIC_DEV_WALLET_KEY for a local chain." />;
   }
-  if (CHAIN_ID === 84532) {
-    return <Refuse reason="NEXT_PUBLIC_DEV_WALLET_KEY is refused on Base Sepolia (84532). Use Privy: set NEXT_PUBLIC_PRIVY_APP_ID." />;
+  if (CHAIN_ID === 84532 || CHAIN_ID === 8453) {
+    return <Refuse reason={`NEXT_PUBLIC_DEV_WALLET_KEY is refused on a public chain (${CHAIN_ID}). Use Privy: set NEXT_PUBLIC_PRIVY_APP_ID.`} />;
   }
   return <DevBridge>{children}</DevBridge>;
 }

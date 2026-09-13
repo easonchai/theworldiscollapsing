@@ -21,6 +21,26 @@ async function seconds(file: string): Promise<number> {
   return Number(stdout.trim());
 }
 
+/**
+ * Wraps the real fetch so the Nth POST to a given path throws instead of reaching the vendor, then
+ * passes every other call through untouched. Ticket 05's seam: no failure knob in the fake vendor,
+ * the failure is injected at the client's fetchImpl instead.
+ */
+function flakyFetch(rules: { path: string; failOnCall: number }[]): typeof fetch {
+  const counts = new Map<string, number>();
+  return async (input, init) => {
+    if (typeof input === "string" && init?.method === "POST") {
+      for (const rule of rules) {
+        if (!input.endsWith(rule.path)) continue;
+        const n = (counts.get(rule.path) ?? 0) + 1;
+        counts.set(rule.path, n);
+        if (n === rule.failOnCall) throw new Error(`simulated vendor failure on ${rule.path} call ${n}`);
+      }
+    }
+    return fetch(input, init);
+  };
+}
+
 let dir: string;
 let fake: ReturnType<typeof startFake>;
 let mediaServer: ReturnType<typeof startMediaServer>;
@@ -138,4 +158,55 @@ describe("render pipeline against the fake OpenRouter", () => {
     await expect(capped.render({ ...ev, id: `${ev.id.slice(0, -2)}ff` as EventRow["id"] })).rejects.toBeInstanceOf(SpendCapError);
     expect(persisted).toBe(0); // rejected up front: nothing was charged, nothing was submitted
   });
+
+  it("sums a branch clip's full retried charge into costUsd, not the plan's seconds", async () => {
+    const budget = makeBudget({ capUsd: Number.POSITIVE_INFINITY, spentUsd: 0, persist: async () => {}, log: () => {} });
+    const retryRender = makeRender({
+      or: makeOpenRouter({
+        baseUrl: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`,
+        apiKey: "fake",
+        imageModel: "google/gemini-3.1-flash-image",
+        // Both first-half submissions succeed; the first branch submission fails once and retries.
+        fetchImpl: flakyFetch([{ path: "/api/v1/videos", failOnCall: script.firstHalf.length + 1 }]),
+      }),
+      store: makeMediaStore({ store: "local", dir, baseUrl: `http://127.0.0.1:${mediaPort}` }),
+      workDir: path.join(dir, ".work-retry-branch"),
+      videoModel: "minimax/hailuo-3-max",
+      pollIntervalMs: 200,
+      pollTimeoutMs: 60_000,
+      budget,
+      imageCostUsd: 0,
+      log: () => {},
+    });
+    const retryEv = { ...ev, id: `${ev.id.slice(0, -2)}b1` as EventRow["id"] };
+    const r = await retryRender.render(retryEv);
+    expect(r.costUsd).toBeCloseTo(budget.spent(), 2);
+  }, 180_000);
+
+  it("counts the key-art fallback's retried clip the same way", async () => {
+    const budget = makeBudget({ capUsd: Number.POSITIVE_INFINITY, spentUsd: 0, persist: async () => {}, log: () => {} });
+    const retryRender = makeRender({
+      or: makeOpenRouter({
+        baseUrl: `http://127.0.0.1:${(fake.address() as AddressInfo).port}`,
+        apiKey: "fake",
+        imageModel: "google/gemini-3.1-flash-image",
+        // Image generation always fails, forcing the key-art fallback; its clip fails once and retries.
+        fetchImpl: flakyFetch([
+          { path: "/api/v1/images", failOnCall: 1 },
+          { path: "/api/v1/videos", failOnCall: 1 },
+        ]),
+      }),
+      store: makeMediaStore({ store: "local", dir, baseUrl: `http://127.0.0.1:${mediaPort}` }),
+      workDir: path.join(dir, ".work-retry-keyart"),
+      videoModel: "minimax/hailuo-3-max",
+      pollIntervalMs: 200,
+      pollTimeoutMs: 60_000,
+      budget,
+      imageCostUsd: 0, // out of scope here: keyArt() does not fold a failed image charge into costUsd
+      log: () => {},
+    });
+    const retryEv = { ...ev, id: `${ev.id.slice(0, -2)}b2` as EventRow["id"] };
+    const r = await retryRender.render(retryEv);
+    expect(r.costUsd).toBeCloseTo(budget.spent(), 2);
+  }, 180_000);
 });

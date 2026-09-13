@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -718,7 +718,7 @@ describe("makeReactorRender", () => {
     expect(store.stored).toHaveLength(6);
   }, 20_000);
 
-  it("logs the recording's shortfall against the plan's last segment when it comes up short (ticket 32)", async () => {
+  it("logs the recording's shortfall against the plan's last segment and refuses to air it (ticket 32)", async () => {
     // Round D's region branch, from ticket 32: the plan's last segment ended at 142.0 s but the
     // recording measured 131.70905 s. The sidecar still reports `done` (ticket 26) rather than
     // fail the paid session, so this has to be caught by comparing the two numbers, not by a
@@ -733,16 +733,25 @@ describe("makeReactorRender", () => {
     process.exit(0);`,
     );
     const logged: Array<Record<string, unknown>> = [];
-    await makeReactorRender({
+    const budget = recordingBudget();
+    const p = makeReactorRender({
       python: process.execPath,
       sidecar,
       sessions: 1,
       workDir: path.join(dir, "work-short-recording"),
       store: recordingStore(),
-      budget: recordingBudget(),
+      budget,
       ffmpeg: recordingFfmpeg().run,
       log: (m, extra) => void (m === "recording short of plan" && logged.push(extra ?? {})),
     }).render(ev);
+
+    // A 10 s hole is a whole shot, and the cut past the recording's end serves no frames: a
+    // fetch-class failure (the build is paid, a new session cannot help), so the machine skips it.
+    const caught = await p.catch((e: unknown) => e);
+    expect(caught).toBeInstanceOf(RenderFetchError);
+    expect((caught as RenderFetchError).billedS).toBe(142);
+    expect((caught as RenderFetchError).message).toMatch(/short of plan by 10\.29s/);
+    expect(budget.spent()).toBeCloseTo(142 * 0.007, 6); // trued up to what Reactor billed before the refusal
 
     expect(logged).toHaveLength(1);
     expect(logged[0]).toMatchObject({ channelId: "sports", seq: 1 });
@@ -775,6 +784,144 @@ describe("makeReactorRender", () => {
     }).render(ev);
 
     expect(logged).not.toContain("recording short of plan");
+  }, 20_000);
+
+  it("a sidecar that emits done and then never exits settles inside the reap grace, with the process gone and its work directory swept", async () => {
+    const pidFile = path.join(dir, "wedged-after-done.pid");
+    const sidecar = await writeScript(
+      "wedged-after-done.cjs",
+      `    require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+    console.log(JSON.stringify({ event: "ready" }));
+    console.log(JSON.stringify({ event: "segment", name: "first", start_t: 0, end_t: 10 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-0", start_t: 10, end_t: 15 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-1", start_t: 15, end_t: 20 }));
+    console.log(JSON.stringify({ event: "disconnected", billed_s: 20.5 }));
+    console.log(JSON.stringify({ event: "done", recording: "/fake/session.mp4", billed_s: 20.5, fetch_s: 3.2 }));
+    setInterval(() => {}, 1000); // never exits on its own; only succeed()'s reap path should end this`,
+    );
+    const workDir = path.join(dir, "work-wedged-after-done");
+    const render = makeReactorRender({
+      python: process.execPath,
+      sidecar,
+      sessions: 1,
+      workDir,
+      store: recordingStore(),
+      budget: recordingBudget(),
+      ffmpeg: recordingFfmpeg().run,
+      log: () => {},
+    });
+
+    const started = Date.now();
+    const r = await render.render(ev);
+    // The bug held this open for 10s against a 2s deadline its own repro. The reap path
+    // this now settles through tops out at SIGKILL_AFTER_MS + REAP_GRACE_MS = 5s, regardless of the
+    // deadline, so well under that is proof the arming happened rather than the exit event firing
+    // by luck.
+    expect(Date.now() - started).toBeLessThan(6_000);
+    expect(r.firstHalfUrl).toBe("https://fake.media/0xreactortest/first.mp4");
+    expect(r.branchUrls).toHaveLength(2);
+
+    const pid = Number(await readFile(pidFile, "utf8"));
+    expect(() => process.kill(pid, 0)).toThrow(); // ESRCH: the sidecar process is gone
+
+    await expect(stat(path.join(workDir, ev.id))).rejects.toThrow(); // swept by render()'s own finally
+  }, 20_000);
+
+  it("a shutdown abort arriving after done still settles rather than waiting out the full grace", async () => {
+    const sidecar = await writeScript(
+      "wedged-after-done-ignores-sigterm.cjs",
+      `    process.on("SIGTERM", () => {}); // like a sidecar stuck in the SDK's native FFI
+    console.log(JSON.stringify({ event: "ready" }));
+    console.log(JSON.stringify({ event: "segment", name: "first", start_t: 0, end_t: 10 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-0", start_t: 10, end_t: 15 }));
+    console.log(JSON.stringify({ event: "segment", name: "branch-1", start_t: 15, end_t: 20 }));
+    console.log(JSON.stringify({ event: "disconnected", billed_s: 20.5 }));
+    console.log(JSON.stringify({ event: "done", recording: "/fake/session.mp4", billed_s: 20.5, fetch_s: 3.2 }));
+    setInterval(() => {}, 1000);`,
+    );
+    const ac = new AbortController();
+    const render = makeReactorRender({
+      python: process.execPath,
+      sidecar,
+      sessions: 1,
+      workDir: path.join(dir, "work-wedged-abort"),
+      store: recordingStore(),
+      budget: recordingBudget(),
+      ffmpeg: recordingFfmpeg().run,
+      signal: ac.signal,
+      log: () => {},
+    });
+
+    const started = Date.now();
+    const pending = render.render(ev);
+    await new Promise((r) => setTimeout(r, 300)); // long enough for `done` to have armed the reap path
+    ac.abort();
+
+    // Resolves, not rejects: once `done` has set the outcome, an abort must not turn a paid,
+    // finished session into a failure. And it settles on the reap path's own clock (well inside
+    // SHUTDOWN_GRACE_MS, 8s in index.ts), not by waiting the shutdown grace out.
+    const r = await pending;
+    expect(r.firstHalfUrl).toBe("https://fake.media/0xreactortest/first.mp4");
+    expect(Date.now() - started).toBeLessThan(6_000);
+  }, 30_000);
+
+  it("a sidecar that dies before reading its plan fails that event instead of crashing the engine", async () => {
+    // No readline, no stdin handler at all: it must exit before ever reading what's written to it.
+    const sidecar = path.join(dir, "dies-before-reading-big.cjs");
+    await writeFile(sidecar, `process.stderr.write("ImportError: no module named reactor\\n");\nprocess.exit(1);\n`);
+
+    // 60 first-half shots plus three branches of 60, each prompt 400 characters: the audit's own
+    // sizing to clear the ~64KB pipe buffer so the write actually hits the closed pipe as EPIPE
+    // instead of fitting in the buffer and surfacing through the ordinary exit path.
+    const bigPrompt = "x".repeat(400);
+    const bigScript: Authored = {
+      ...script,
+      outcomes: ["A", "B", "C"],
+      firstHalf: Array.from({ length: 60 }, () => ({ prompt: bigPrompt, seconds: 1 })),
+      branches: Array.from({ length: 3 }, () => Array.from({ length: 60 }, () => ({ prompt: bigPrompt, seconds: 1 }))),
+      canonUpdates: [["A"], ["B"], ["C"]],
+    };
+    const bigEv: EventRow = { ...ev, id: "0xreactorbigplan", script: bigScript } as EventRow;
+
+    // A reverted fix turns the EPIPE into an uncaught exception, which would otherwise take the
+    // whole vitest worker down mid-test. This guard makes that failure legible instead.
+    let uncaught: unknown;
+    const onUncaught = (e: unknown) => {
+      uncaught = e;
+    };
+    process.on("uncaughtException", onUncaught);
+    try {
+      const render = makeReactorRender({
+        python: process.execPath,
+        sidecar,
+        sessions: 1,
+        workDir: path.join(dir, "work-dies-before-reading-big"),
+        store: recordingStore(),
+        budget: recordingBudget(),
+        log: () => {},
+      });
+
+      await expect(render.render(bigEv)).rejects.toBeInstanceOf(SidecarError);
+    } finally {
+      process.off("uncaughtException", onUncaught);
+    }
+    expect(uncaught).toBeUndefined();
+  }, 20_000);
+
+  it("a sidecar that dies before reading its plan at ordinary size still fails with 'sidecar exited unexpectedly', unchanged", async () => {
+    const sidecar = path.join(dir, "dies-before-reading-small.cjs");
+    await writeFile(sidecar, `process.stderr.write("ImportError: no module named reactor\\n");\nprocess.exit(1);\n`);
+    const render = makeReactorRender({
+      python: process.execPath,
+      sidecar,
+      sessions: 1,
+      workDir: path.join(dir, "work-dies-before-reading-small"),
+      store: recordingStore(),
+      budget: recordingBudget(),
+      log: () => {},
+    });
+
+    await expect(render.render(ev)).rejects.toThrow(/sidecar exited unexpectedly/);
   }, 20_000);
 
   it("SidecarError carries null billedS only when the error happens before ready", () => {

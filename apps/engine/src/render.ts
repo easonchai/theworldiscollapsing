@@ -20,7 +20,8 @@ const CLIP_ATTEMPTS = 3; // 1 try + 2 retries
 
 /** The footage type and camera of each channel, restated to the video model on every single clip. */
 export const CHANNEL_PREFIX: Record<string, string> = {
-  sports: "Live sports broadcast footage, broadcast camera, real-time speed:",
+  sports:
+    "Live MMA broadcast footage, cage-side broadcast camera, two fighters in a cage, one in red shorts and one in black shorts, real-time speed:",
   politics:
     "Television news footage, handheld news camera or fixed studio camera, real-time, charts and graphs on the studio screen where the shot is in a studio:",
   culture: "Live event television coverage, press camera, stage light as it is, real-time:",
@@ -57,7 +58,7 @@ const MAX_PROMPT = 800;
  */
 export function clipPrompt(channelId: string, prompt: string): string {
   const prefix = CHANNEL_PREFIX[channelId] ?? DEFAULT_PREFIX;
-  const room = MAX_PROMPT - prefix.length - STYLE_SUFFIX.length - 2;
+  const room = Math.max(0, MAX_PROMPT - prefix.length - STYLE_SUFFIX.length - 2);
   return `${prefix} ${prompt.trim().slice(0, room)} ${STYLE_SUFFIX}`;
 }
 
@@ -114,14 +115,23 @@ export function makeRender(cfg: {
   const listCost = (shots: Shot[], res: Res) => shots.reduce((n, s) => n + s.seconds * RATE[res], 0);
   const work = (ev: EventRow, name: string) => path.join(cfg.workDir, ev.id, name);
 
-  async function clip(ev: EventRow, shot: Shot, res: Res, frameUrl: string | null, name: string): Promise<string> {
+  /** Charges up front and may charge more than once on retry, so it reports what it actually charged. */
+  async function clip(
+    ev: EventRow,
+    shot: Shot,
+    res: Res,
+    frameUrl: string | null,
+    name: string,
+  ): Promise<{ path: string; costUsd: number }> {
     const out = work(ev, name);
     const usd = shot.seconds * RATE[res];
+    let charged = 0;
     let last: unknown;
     for (let attempt = 1; attempt <= CLIP_ATTEMPTS; attempt++) {
       // A submitted job may bill whether or not it succeeds, so every attempt is charged up front.
       cfg.budget.assertAffordable(usd, name);
       await cfg.budget.charge(usd, name);
+      charged += usd;
       try {
         const job = await cfg.or.submitVideo({
           model: cfg.videoModel,
@@ -135,7 +145,7 @@ export function makeRender(cfg: {
         });
         const { url } = await cfg.or.pollVideo(job, { intervalMs: cfg.pollIntervalMs, timeoutMs: cfg.pollTimeoutMs });
         await cfg.or.download(url, out);
-        return out;
+        return { path: out, costUsd: charged };
       } catch (e) {
         last = e;
         cfg.log("clip failed", { seq: ev.seq, name, attempt, error: String(e).slice(0, 200) });
@@ -160,11 +170,11 @@ export function makeRender(cfg: {
       cfg.log("image generation unavailable, seeding key art from the first shot", { seq: ev.seq, error: String(e).slice(0, 200) });
       const shot = ev.script.firstHalf[0]!;
       const c = await clip(ev, shot, "480p", null, "clip-0.mp4");
-      await lastFrame(c, png);
+      await lastFrame(c.path, png);
       return {
         url: await cfg.store.storeFile(ev.id, "key.png", png),
-        costUsd: shot.seconds * RATE["480p"],
-        clip0: c,
+        costUsd: c.costUsd,
+        clip0: c.path,
       };
     }
   }
@@ -181,8 +191,9 @@ export function makeRender(cfg: {
     const clips = new Map<number, string>();
     if (ka.clip0) clips.set(0, ka.clip0);
     await pool(CONCURRENCY, todo, async ({ s, i }) => {
-      clips.set(i, await clip(ev, s, "480p", ka.url, `clip-${i}.mp4`));
-      costUsd += s.seconds * RATE["480p"];
+      const c = await clip(ev, s, "480p", ka.url, `clip-${i}.mp4`);
+      clips.set(i, c.path);
+      costUsd += c.costUsd;
     });
 
     const out = work(ev, "first.mp4");
@@ -206,7 +217,9 @@ export function makeRender(cfg: {
     const lists = ev.script.branches;
     const flat = lists.flatMap((shots, b) => shots.map((s, i) => ({ s, b, i })));
     cfg.budget.assertAffordable(listCost(flat.map((f) => f.s), "768p"), "branches");
-    const paths = await pool(CONCURRENCY, flat, ({ s, b, i }) => clip(ev, s, "768p", seedUrl, `branch-${b}-${i}.mp4`));
+    const clips = await pool(CONCURRENCY, flat, ({ s, b, i }) => clip(ev, s, "768p", seedUrl, `branch-${b}-${i}.mp4`));
+    const paths = clips.map((c) => c.path);
+    const costUsd = clips.reduce((n, c) => n + c.costUsd, 0);
 
     const urls: string[] = [];
     for (let b = 0; b < lists.length; b++) {
@@ -216,7 +229,6 @@ export function makeRender(cfg: {
     }
 
     const seconds = flat.reduce((n, f) => n + f.s.seconds, 0);
-    const costUsd = seconds * RATE["768p"];
     cfg.log("rendered event", {
       channelId: ev.channelId,
       seq: ev.seq,

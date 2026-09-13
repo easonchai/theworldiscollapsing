@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Event } from "db";
-import { toPublic } from "./public";
+import { FINISHED, toPublic } from "./public";
 
 const row = (over: Partial<Event> = {}): Event =>
   ({
@@ -111,5 +111,24 @@ describe("toPublic", () => {
     expect(Object.keys(pub)).not.toContain("script");
     expect(Object.keys(pub)).not.toContain("branchUrls");
     expect(Object.keys(pub)).not.toContain("error");
+  });
+});
+
+describe("FINISHED", () => {
+  it("claims DONE and SKIPPED, the states an event never leaves", () => {
+    expect(FINISHED.has("DONE")).toBe(true);
+    expect(FINISHED.has("SKIPPED")).toBe(true);
+  });
+
+  it("does not claim REVEAL, CANON or PAUSE, which can still move on to DONE", () => {
+    for (const state of ["REVEAL", "CANON", "PAUSE"]) {
+      expect(FINISHED.has(state)).toBe(false);
+    }
+  });
+
+  it("does not claim any pre-reveal state", () => {
+    for (const state of ["RENDER", "READY", "BETTING", "LOCKED", "RESOLVE"]) {
+      expect(FINISHED.has(state)).toBe(false);
+    }
   });
 });

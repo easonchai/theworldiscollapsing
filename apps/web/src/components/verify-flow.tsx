@@ -2,11 +2,13 @@
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import { GATE_MODE, USDC, WORLD_APP_ID, mockusdcAbi, publicClient } from "@/lib/chain";
+import { GATE_MODE, MAINNET, USDC, WORLD_APP_ID, mockusdcAbi, publicClient } from "@/lib/chain";
 import { confirmed, ensureGas, requestVerify, txMessage, type TxMessage } from "@/lib/tx";
 import { useGate, usePoll } from "./chain-hooks";
 import { TxError, clock, useNow } from "./bits";
 import { useWallet } from "./wallet";
+
+const Ramp = dynamic(() => import("./ramp").then((m) => m.Ramp), { ssr: false });
 
 const WorldVerify = dynamic(() => import("./world-verify").then((m) => m.WorldVerify), { ssr: false });
 
@@ -105,7 +107,7 @@ export function VerifyFlow() {
         <p className="mt-2 text-[14px] text-dim">
           {GATE_MODE === "world"
             ? "World Selfie Check proves a live human is behind the address, so bots cannot farm the faucet."
-            : "Self-attestation stands in for Selfie Check while the beta flag is pending."}
+            : "Self-attestation stands in for Selfie Check in checkbox mode."}
         </p>
 
         <label className="mt-3 flex items-start gap-2 text-[14px] text-bone">
@@ -143,6 +145,9 @@ export function VerifyFlow() {
         </div>
       </section>
 
+      {MAINNET ? (
+        <Ramp balanceText={gate ? gate.balanceText : "—"} onMoved={refresh} />
+      ) : (
       <section className="bg-vac p-2">
         <p className="tag">step three</p>
         <h2 className="mt-1 text-[24px] text-bone">Faucet</h2>
@@ -159,6 +164,7 @@ export function VerifyFlow() {
           {cooling ? `Again in ${clock(readyAtMs - now)}` : busy ? "Working…" : "Take 1,000 USDC"}
         </button>
       </section>
+      )}
 
       <div aria-live="polite" className="bg-vac px-2 py-2 lg:col-span-3">
         {status ? <p className="num text-[12px] text-bone">{status}</p> : null}

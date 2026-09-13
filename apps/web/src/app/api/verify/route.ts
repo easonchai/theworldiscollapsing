@@ -1,7 +1,7 @@
 import { createWalletClient, http, isAddress, verifyMessage, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { chain, gateAbi, publicClient, GATE, GAS_DRIP, GAS_MIN, RPC_URL } from "@/lib/chain";
-import { verifyGasCap } from "@/lib/limits";
+import { perKeyLimiter, verifyGasCap } from "@/lib/limits";
 import { checkVerifyMessage } from "@/lib/verify-message";
 import { proofBoundTo } from "@/lib/world";
 
@@ -14,8 +14,10 @@ const WORLD_VERIFY_URL = "https://developer.world.org/api/v4/verify";
 
 // One verification per address per minute. This route spends the owner's gas, so it is rate-limited
 // per address in memory; a real deployment would need a shared store behind multiple instances.
+// perKeyLimiter's check-and-record is one atomic call, unlike a bare Map read followed by a write
+// made later, so it is also what closes the race between two concurrent requests for one address.
 const RATE_MS = 60_000;
-const lastVerify = new Map<string, number>();
+const addressLimit = perKeyLimiter(RATE_MS);
 
 const bad = (status: number, error: string) => Response.json({ verified: false, error }, { status });
 
@@ -72,8 +74,10 @@ export async function POST(request: Request) {
     }
   }
 
-  const last = lastVerify.get(address.toLowerCase());
-  if (last && Date.now() - last < RATE_MS) return bad(429, "one verification per address per minute");
+  // Taken before the World Portal round trip below: two concurrent requests for the same address
+  // both arrive here, and only the first one's atomic take() succeeds, so only one goes on to spend
+  // a `setVerified` transaction.
+  if (!addressLimit.take(address.toLowerCase())) return bad(429, "one verification per address per minute");
 
   if (GATE_MODE === "checkbox") {
     if (body.attest !== true) return bad(400, "18+ attestation required");
@@ -95,7 +99,6 @@ export async function POST(request: Request) {
   // The per-address limit is bypassed by generating fresh addresses, so the gas itself is capped.
   if (!verifyGasCap.take()) return bad(429, "verification is rate limited right now — try again later");
 
-  lastVerify.set(address.toLowerCase(), Date.now());
   const tx = await owner.writeContract({ address: GATE, abi: gateAbi, functionName: "setVerified", args: [address, true] });
   const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
   if (receipt.status !== "success") return bad(502, "setVerified reverted");

@@ -41,3 +41,13 @@ export const verifyGasCap = windowLimiter(30, 60 * 60 * 1000);
 
 /** Presence is a boolean, not a counter: one write per client per 10 s says everything it can say. */
 export const heartbeatLimit = perKeyLimiter(10_000);
+
+/**
+ * The per-client limiter above is keyed on `X-Forwarded-For`, which a caller sends and can rotate,
+ * so it caps nothing on its own; this caps the total across every key. `present()` in the engine's
+ * `machine.ts` only asks whether the last accepted write is fresher than `presenceWindowMs` (5
+ * minutes in REAL), so one accepted write a minute already keeps that answer fresh no matter how
+ * many viewers are watching. Ten a minute leaves headroom for a real crowd and gives a header-rotator
+ * nothing worth the trouble.
+ */
+export const presenceCeiling = windowLimiter(10, 60_000);

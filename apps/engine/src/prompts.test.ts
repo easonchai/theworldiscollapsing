@@ -54,6 +54,27 @@ describe("clip prompts", () => {
     expect(clipPrompt("politics", SHOT)).toMatch(/charts and graphs/i);
   });
 
+  it("floors room at zero instead of slicing the shot text from the wrong end", () => {
+    // Pick a prefix that drives room to a small negative number, not so negative that both the
+    // floored and the unfloored code collapse to the same empty string: JS slice(0, -n) only goes
+    // empty once n reaches the string's own length, so a small negative room is what actually tells
+    // "floored to zero" apart from "sliced from the wrong end".
+    const room = -20;
+    const prefixLen = 800 - STYLE_SUFFIX.length - 2 - room;
+    const hugePrefix = "x".repeat(prefixLen);
+    const originalPrefix = CHANNEL_PREFIX.sports!;
+    CHANNEL_PREFIX.sports = hugePrefix;
+    try {
+      const built = clipPrompt("sports", SHOT);
+      expect(built.startsWith(hugePrefix)).toBe(true);
+      expect(built.endsWith(STYLE_SUFFIX)).toBe(true);
+      // floored at zero: nothing of the shot text survives between prefix and suffix
+      expect(built).toBe(`${hugePrefix}  ${STYLE_SUFFIX}`);
+    } finally {
+      CHANNEL_PREFIX.sports = originalPrefix;
+    }
+  });
+
   it("stays under the ceiling even for a 300-character shot, and still leaves that shot whole", () => {
     const long = "x".repeat(300);
     for (const channelId of [...CHANNELS, "weather"]) {

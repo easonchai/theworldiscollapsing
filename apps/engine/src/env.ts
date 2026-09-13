@@ -20,3 +20,10 @@ export const intEnv = (k: string, fallback: string, min: number, max: number): n
   if (!Number.isInteger(n) || n < min || n > max) throw new Error(`${k} must be an integer ${min} to ${max}, got ${raw}`);
   return n;
 };
+
+/** Comma-separated env var: split, trim each entry, drop empties. Whitespace after a comma is not a new value. */
+export const list = (k: string, fallback: string): string[] =>
+  env(k, fallback)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);

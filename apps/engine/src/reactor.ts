@@ -21,6 +21,10 @@ const REAP_GRACE_MS = 2_000;
  * whole recording can fall short of the plan by more than that, and this is the number that
  * decides whether it's worth saying so. */
 const RECORDING_SHORTFALL_THRESHOLD_S = 0.5;
+/** Past this the missing tail is a whole shot, not a cut error: sports 138 on 2026-09-13 came back
+ * 64 s short, the cut past the recording's end wrote two 4 s containers with no frames, and the
+ * chain put money on one of them. The event is not aired. */
+const MAX_AIRABLE_SHORTFALL_S = 3;
 
 type PlanClip = {
   id: string;
@@ -192,7 +196,12 @@ function runSidecar(
     function succeed(v: SidecarResult) {
       if (outcome) return;
       outcome = { ok: true, value: v };
-      // The sidecar exits on its own right after `done`; deliver when it does.
+      // The sidecar is expected to exit on its own right after `done`; `child.on("exit")` below
+      // delivers as soon as it does. One that doesn't must not wedge the channel, so this arms
+      // the same SIGTERM/SIGKILL/reap path `stopChild()` uses for every other exit. Once
+      // `outcome` is set here, `fail()` is a no-op, so `deliver()` still resolves with this value
+      // however the child ends up gone.
+      stopChild();
     }
 
     // Spec section 6: SIGTERM at 2x the estimate's seconds plus 120s of wall clock, treated as an error.
@@ -216,6 +225,10 @@ function runSidecar(
     if (cfg.signal?.aborted) onAbort();
 
     child.on("error", (e) => fail(`failed to spawn sidecar: ${e.message}`));
+    // `child.on("error")` only covers spawn/kill failures, not stdio pipe errors. A sidecar that
+    // dies before reading its plan turns the write below into an EPIPE on this stream, and
+    // unhandled that is an uncaught exception that kills the whole engine.
+    child.stdin.on("error", (e) => fail(`sidecar stdin write failed: ${e.message}`));
     child.stderr.on("data", (c: Buffer) => {
       // otherwise a sidecar crash surfaces as a bare exit code with no clue why
       stderrTail = (stderrTail + c.toString()).slice(-4000);
@@ -488,6 +501,12 @@ export function makeReactorRender(cfg: {
         // whether the local cut/store steps below succeed.
         const usd = result.billedS * USD_PER_SEC;
         await cfg.budget.charge(usd - reservedUsd, "reactor session true-up");
+
+        // The build is paid for either way and a second session cannot lengthen this recording, so
+        // this is a fetch-class failure: the machine skips the event rather than re-rendering it.
+        if (result.shortfallS !== null && result.shortfallS > MAX_AIRABLE_SHORTFALL_S) {
+          throw new RenderFetchError(`recording short of plan by ${result.shortfallS}s; not airing`, result.billedS);
+        }
 
         const firstSeg = result.segments.get("first");
         if (!firstSeg) throw new Error("sidecar finished without a 'first' segment offset");

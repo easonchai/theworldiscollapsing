@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { env, flag, intEnv } from "./env.js";
+import { env, flag, intEnv, list } from "./env.js";
 
 afterEach(() => {
   delete process.env.TWIC_TEST_FLAG;
@@ -51,5 +51,26 @@ describe("intEnv", () => {
     expect(() => intEnv("TWIC_TEST_FLAG", "3", 2, 5)).toThrow(/TWIC_TEST_FLAG must be an integer 2 to 5, got 1/);
     process.env.TWIC_TEST_FLAG = "6";
     expect(() => intEnv("TWIC_TEST_FLAG", "3", 2, 5)).toThrow(/TWIC_TEST_FLAG must be an integer 2 to 5, got 6/);
+  });
+});
+
+describe("list", () => {
+  it("trims whitespace around each entry", () => {
+    process.env.TWIC_TEST_FLAG = "sports, politics";
+    expect(list("TWIC_TEST_FLAG", "fallback")).toEqual(["sports", "politics"]);
+  });
+
+  it("drops empty entries instead of producing a blank id", () => {
+    process.env.TWIC_TEST_FLAG = "sports,,politics";
+    expect(list("TWIC_TEST_FLAG", "fallback")).toEqual(["sports", "politics"]);
+  });
+
+  it("uses the fallback when unset", () => {
+    expect(list("TWIC_TEST_FLAG", "sports,politics,culture,region")).toEqual([
+      "sports",
+      "politics",
+      "culture",
+      "region",
+    ]);
   });
 });

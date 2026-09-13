@@ -34,3 +34,27 @@ describe("appendCanon", () => {
     expect(f.created).toEqual([]);
   });
 });
+
+describe("canon", () => {
+  it("reads only lines from events of the asking provenance, oldest first", async () => {
+    const calls: unknown[] = [];
+    const prisma = {
+      event: {
+        findMany: async (q: unknown) => {
+          calls.push(q);
+          return [{ id: "0xreal" }];
+        },
+      },
+      canon: {
+        findMany: async (q: unknown) => {
+          calls.push(q);
+          return [{ text: "second" }, { text: "first" }];
+        },
+      },
+    } as unknown as PrismaClient;
+    const lines = await makeStore(prisma).canon("sports", 50, "reactor:real");
+    expect(lines).toEqual(["first", "second"]);
+    expect(calls[0]).toEqual({ where: { channelId: "sports", provenance: "reactor:real" }, select: { id: true } });
+    expect(calls[1]).toMatchObject({ where: { channelId: "sports", eventId: { in: ["0xreal"] } }, take: 50 });
+  });
+});

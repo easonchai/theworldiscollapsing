@@ -1,8 +1,34 @@
 # theworldiscollapsing
 
-An autonomous fictional universe broadcast as a wall of TV channels, with a provably-random parimutuel casino attached to every event. ETHOnline 2026. Testnet and play money only.
+An autonomous fictional universe broadcast as a wall of TV channels, with a provably random parimutuel casino attached to every event. Built for ETHOnline 2026. Testnet and play money only.
 
-Four channels each run one event at a time. An event is an AI-generated video that *is* the event — a football match, an election night, an awards show — and its outcomes are the markets. The first half plays while betting is open. Betting locks on chain. A drand round that was fixed before the first bet lands, its signature picks the outcome, and the matching second half (rendered before betting ever opened, withheld until then) plays immediately. Winners claim, the result becomes canon, the next event in that channel builds on it, and the loop repeats with nobody touching it.
+**[▶ Demo video](docs/demo.mp4)** <!-- product demo, 27 s; swap for the submission cut (slides + product video) before judging --> · **[Live site](https://theworldiscollapsing.vercel.app)** · **[Contracts on Base Sepolia](#live-on-base-sepolia)**
+
+## The product
+
+Four channels (sports, politics, culture, region) each run one event at a time. An event is an AI-generated video that *is* the event: a football match, an election night, an awards show. Its possible endings are the markets.
+
+1. The first half plays. Betting is open on every outcome.
+2. Betting locks on chain.
+3. A drand round that was fixed before the first bet lands. Its signature picks the outcome. Nobody, including us, could have known it earlier, because it did not exist.
+4. The matching second half, rendered before betting opened and withheld until now, plays at once.
+5. Winners claim. The result becomes canon. The next event on that channel builds on it.
+
+Nobody touches it. The engine writes, renders, opens, settles and reveals, forever, and only spends money while someone is watching.
+
+![The wall: four channels, each running its own event, pools and outcome on every tile](docs/images/wall.png)
+
+![The board mid-event: a side picked, the stake set, and the clock the bet has to land inside](docs/images/event-betting.png)
+
+![Markets: every outcome in the world, with volume and the side that won](docs/images/markets.png)
+
+![Positions: every bet this address holds, what each event resolved to, and what is left to claim](docs/images/positions.png)
+
+![Verify: wallet, World Selfie Check and the faucet, the three things that gate a bet](docs/images/verify.png)
+
+The badge below is the whole argument, and your browser does the checking. It pulls round 20586709 from `api.drand.sh`, holds that signature against the one the contract stored, and recomputes the outcome from it. Both sigs match and both derivations land on 2.
+
+![The verify badge: stored signature, live drand signature, and the outcome re-derived from it](docs/images/verify-badge.png)
 
 ## How it works
 
@@ -18,16 +44,155 @@ flowchart LR
   K --> A
 ```
 
-- **Randomness**: drand `evmnet` (BN254). The round is committed in `createEvent` and must land at least 10 s after betting locks. `resolve` verifies the BLS signature on chain (`packages/contracts/src/DrandVerifier.sol`) and derives the outcome with a keccak.
-- **Markets**: every outcome of an event is a YES/NO parimutuel market. One beacon settles all of them. Payout is stake × total pool ÷ winning pool, less 2 %.
-- **Video**: the first half is shared and ends level; one full second half is rendered per outcome before the event goes on chain and kept hidden until it resolves. Only the winning branch URL ever leaves the API (`apps/web/src/lib/public.ts`), so nobody can skip ahead.
-- **House style**: every channel is shot as real footage as broadcast on television, in real time — never cinematic, never slow motion, no film look, no drone hero shots. Sports is an actual competition from broadcast camera positions; politics is a studio whose screen carries charts, graphs, maps or gauges, cut with field reportage; culture is an ENG press-pool camera; region is a reporter in the field. The base prompts live in two places: `CHANNEL_STYLE` in `apps/engine/src/author.ts` (what the showrunner is told to write) and `clipPrompt` in `apps/engine/src/render.ts`, which puts the channel's camera in front of every authored shot and the same constraints behind it, key art included, capped at 600 characters — MiniMax has no negative-prompt field, so the constraints ride in the prompt as plain sentences.
-- **Engine**: one Node process, one state machine per channel, restart-safe against chain state, presence-gated so an empty site costs nothing. `apps/engine/src/machine.ts`.
-- **World state**: canon lines in Postgres, injected into every authoring prompt. No simulation, just memory.
+Three processes and a chain. The engine is one Node process on a laptop with one state machine per channel (`apps/engine/src/machine.ts`), restart-safe against chain state. The web app is Next.js on Vercel. The contracts are on Base Sepolia.
 
-## Live
+```mermaid
+flowchart TB
+  subgraph engine["apps/engine (one Node process)"]
+    M[machine.ts<br/>one state machine per channel]
+    AU[author.ts<br/>OpenRouter, gpt-5-mini]
+    RE[reactor.ts + Python sidecar<br/>Reactor fast-h3]
+    SE[seal.ts<br/>AES-256-GCM, off by default]
+  end
+  subgraph chain["Base Sepolia"]
+    AR[Arena]
+    DV[DrandVerifier]
+    GA[Gate]
+    US[MockUSDC]
+  end
+  subgraph web["apps/web (Next.js on Vercel)"]
+    WA[wall, channel, event]
+    MK[markets, positions]
+    VE[verify]
+  end
+  PG[(Postgres<br/>events, canon, spend)]
+  BL[(Vercel Blob<br/>mp4 + key art)]
+  SG[(The Graph<br/>twic-arena subgraph)]
+  DR[drand evmnet<br/>api.drand.sh]
+  PV[Privy<br/>email to wallet]
+  WD[World<br/>Selfie Check]
+  CRE[Chainlink CRE<br/>reveal-key workflow]
 
-Base Sepolia (chain 84532), deployed 2026-09-10 from block 46631130. Testnet and play money — `MockUSDC.faucet` mints 1,000 a day to any verified address.
+  AU --> M
+  RE --> M
+  M --> PG
+  M --> BL
+  M -->|createEvent, resolve| AR
+  M -->|fetch round| DR
+  AR --> DV
+  AR -->|events| SG
+  SG -->|previous pools| AU
+  WA --> PG
+  WA --> BL
+  WA -->|bet, claim| AR
+  WA -->|verify badge| DR
+  WA --> PV
+  MK --> SG
+  VE --> WD
+  VE -->|setVerified| GA
+  AR -.->|Resolved| CRE
+  CRE -.->|winning key only| SE
+```
+
+### The money and the randomness
+
+Every outcome of an event is a YES/NO parimutuel market. One beacon settles all of them. The sequence below is what makes "nobody can know" true, and each step is a revert condition in `packages/contracts/src/Arena.sol`.
+
+```mermaid
+sequenceDiagram
+  participant E as engine
+  participant A as Arena
+  participant B as bettor
+  participant D as drand evmnet
+  E->>E: author, then render first half and every branch
+  E->>A: createEvent(lockTime, round R)
+  Note over A: rejects unless R publishes at least 10 s after lockTime (SUSPENSE_GAP)
+  B->>A: bet(eventId, market, side, amount)
+  Note over A: bet reverts at lockTime (BettingClosed)
+  Note over D: round R is signed at genesis + (R - 1) x 3 s
+  D-->>E: signature for round R
+  E->>A: resolve(eventId, signature)
+  A->>A: DrandVerifier checks the BN254 pairing against evmnet's key for round R
+  A->>A: outcome = keccak256(signature, eventId) mod n
+  E->>E: publish branchUrls[outcome]; the winning branch plays
+  B->>A: claim(eventId)
+  Note over A: stake x total pool / winning pool, less 2 %
+```
+
+The verify badge on every resolved event page does the last two arithmetic steps again in your browser, against `api.drand.sh`, so you do not need to trust our copy of the beacon.
+
+### The video
+
+One channel-event is one Reactor session (`reactor/fast-h3`, real time). The first half is rendered as chained clips and ends level. Every branch then continues from the first half's last clip, so all N endings share the same footage up to the break. The session recording is cut with `ffmpeg -c copy` into `first.mp4` and `branch-N.mp4`, uploaded to Vercel Blob, and only then does the event go on chain. "Every ending exists before the first bet" is literally true. Reactor bills $0.007 per second of generated media; at 30 s halves and three outcomes a channel-event is about $0.92.
+
+```mermaid
+flowchart LR
+  P[authored shot list] --> S[one Reactor session<br/>reactor/fast-h3, real time]
+  S --> F[first half, 30 s<br/>ends level]
+  F -->|continue_from| B0[branch 0, 30 s]
+  F -->|continue_from| B1[branch 1, 30 s]
+  F -->|continue_from| B2[branch 2, 30 s]
+  S --> REC[(session recording)]
+  REC -->|ffmpeg -c copy| CUT[first.mp4<br/>branch-0..2.mp4]
+  CUT --> BL[(Vercel Blob)]
+  CUT -.->|BRANCH_SEAL=1| CT[AES-256-GCM ciphertext]
+```
+
+Only the winning branch URL ever leaves the API (`apps/web/src/lib/public.ts`), so nobody can skip ahead. Authoring is one OpenRouter call to `openai/gpt-5-mini` with a strict JSON schema; key art is `google/gemini-3.1-flash-image`; MiniMax `hailuo-3-max` through OpenRouter is the fallback video path when no Reactor key is set. Every channel is shot as live television, never cinematic: sports from broadcast camera positions, politics as a studio with charts on the screen, culture as an ENG press-pool camera, region as a reporter in the field. The house style lives in `CHANNEL_STYLE` in `apps/engine/src/author.ts` and `clipPrompt` in `apps/engine/src/render.ts`.
+
+### The memory
+
+There is no simulation. Canon is a list of lines in Postgres, one per resolved event, injected into every authoring prompt for that channel. The showrunner also reads the previous event's pool split from The Graph, so the next episode knows what the crowd bet. That is the whole world model.
+
+## Sponsor integrations
+
+Each of these solved a problem the product had. Where each is called is in the table at the end of this section.
+
+### Indexing: The Graph
+
+The engine only knows its own database, and the wall tiles read `Arena` directly for live pools. Two things need more than that: a bettor's positions across every event they ever touched, and the showrunner's view of how the crowd bet last time. Both are index questions.
+
+`packages/subgraph` is the `twic-arena` subgraph on Subgraph Studio, indexing `Arena` on Base Sepolia through four handlers (`EventCreated`, `Bet`, `Resolved`, `Claimed`). `/markets` and `/positions` read it with a raw GraphQL POST (`apps/web/src/lib/subgraph.ts`). The engine reads it too: `previousPools` in `apps/engine/src/author.ts:79-109` fetches the previous event's pool split and puts it in the LLM prompt, so an AI decision (what happens next on this channel) is made from live indexed data. `SUBGRAPH_URL` on the engine, `NEXT_PUBLIC_SUBGRAPH_URL` on the web; without either, the pages say "not configured" and the author goes without sentiment.
+
+### Wallets: Privy
+
+A viewer who lands on a TV wall does not have a wallet, and the betting window is 30 seconds. Privy's smart account is the only wallet the app supports. There is no connect-wallet button, no seed phrase, no extension: a viewer signs in with email, Privy creates an embedded wallet, and an ERC-4337 smart wallet in front of it (`useSmartWallets`) signs every write with gas paid by the dashboard's paymaster. Every contract write goes through one `Signer` shape in `apps/web/src/components/wallet.tsx`, so the rest of the code does not know or care what signed. If the paymaster is off, the embedded wallet pays its own gas and the verify step drips it enough ETH to start (`apps/web/src/app/api/verify/route.ts`, `dripGas`).
+
+The financial flow that runs end to end on a Privy wallet: faucet 1,000 USDC, approve, bet on an outcome, claim the parimutuel payout after resolution. Every write simulates first and fails loudly on `receipt.status !== "success"`.
+
+On Base mainnet (`NEXT_PUBLIC_CHAIN_ID=8453`) the faucet is gone and step three of `/verify` becomes `apps/web/src/components/ramp.tsx`: Privy's funding modal (`useFundWallet`) takes a card, Apple Pay or a transfer from another wallet and lands USDC in the smart wallet, and a USDC transfer signed by the same wallet takes it out. A web2 user goes from email to a funded, gasless wallet without leaving the page. Funding is switched on in the Privy dashboard (`docs/SETUP.md`).
+
+![Privy's funding modal on the verify page: pay with card or receive funds, no chain picker, no gas](docs/images/privy-fund.png)
+
+### Identity: World
+
+Play money still has a real problem: a script can farm the faucet and one bot can fund both sides of every pool. `Gate.verified` is required by `MockUSDC.faucet` and `Arena.bet`, and the intended way to earn it is a World Selfie Check, one per address. `apps/web/src/components/world-verify.tsx` runs IDKit 4's `IDKitRequestWidget` with `selfieCheckLegacy`, signing the wallet address as the proof's signal. `apps/web/src/app/api/world/rp-context` signs the request context server-side. `apps/web/src/app/api/verify/route.ts` verifies the proof against World's v4 endpoint, refuses any proof whose `signal_hash` is not the hash of that address, and then writes `Gate.setVerified(address)` on chain. Selfie Check is used as the abuse-prevention signal that decides who can take play money and move pools.
+
+Runs. `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world` select it; `checkbox` mode is an 18+ self-attestation plus a wallet signature through the same route. Verified end to end on Base Sepolia on 2026-09-13 with the production World App: scan, World verify, `setVerified` mined, faucet unlocked. Setup and what each screen means: [`docs/WORLD.md`](docs/WORLD.md). What we would tell World about the docs, the skill and the MCP is in [`docs/WORLD-FEEDBACK.md`](docs/WORLD-FEEDBACK.md).
+
+### Sealing: Chainlink CRE
+
+Every branch is rendered before betting opens and sits on a media server. The chain guarantees nobody can know the outcome, but a curious viewer could still fetch the branch files and watch all three endings early. With `BRANCH_SEAL=1` the engine publishes branches as AES-256-GCM ciphertext (`apps/engine/src/seal.ts`) and a CRE workflow holds the only key.
+
+`packages/cre/reveal-key/workflow.ts` registers `cre.handlerInTee` on an EVM log trigger for `Arena.Resolved`. Inside the enclave it reads the authoritative outcome back from the contract, pulls the seal root from `runtime.getSecrets`, derives `key_i = keccak256(root ‖ eventId ‖ i)` for the winning `i` only, and POSTs it to the engine's `/internal/reveal-key`. The seal root is the sensitive input; it never leaves the TEE, and the losing branches' keys are never derived. The engine's `seal.ts` has the byte-identical derivation, and the round trip is tested.
+
+Ships off in the deployed env, on with `BRANCH_SEAL=1`. Runs in CRE simulation: on 2026-09-13 `cre workflow simulate --listen` fired on `Resolved`, executed the TEE handler and released the winning key to the engine 120 ms after resolve, ahead of the engine's 3 s fallback ([transcript](docs/cre-simulation-2026-09-13.txt), [setup](docs/CRE.md)). Simulation is done. It is not deployed to a DON: Chainlink has not granted our organization deploy access or the Confidential Workflows beta, both of which are by request. What is left is in [`docs/plan/chainlink-confidential-workflow.md`](docs/plan/chainlink-confidential-workflow.md).
+
+### Where each is called
+
+| Sponsor | Used for | Code |
+|---|---|---|
+| The Graph | index of every `Arena` event; positions and markets pages; the previous event's pools in the authoring prompt | `packages/subgraph`, `apps/web/src/lib/subgraph.ts`, `apps/engine/src/author.ts:79-109` |
+| Privy | email login, embedded wallet, optional smart wallet with sponsored gas, one signer shape for every write; on mainnet, on-ramp into the wallet and USDC out of it | `apps/web/src/components/wallet.tsx`, `apps/web/src/components/ramp.tsx` |
+| World | Selfie Check bound to the wallet address, verified server-side, then `Gate.setVerified` on chain | `apps/web/src/components/world-verify.tsx`, `apps/web/src/app/api/world/rp-context`, `apps/web/src/app/api/verify` |
+| Chainlink CRE | confidential workflow derives and releases only the winning branch key after `Resolved` | `packages/cre/reveal-key/workflow.ts`, `apps/engine/src/seal.ts`, `apps/engine/src/media.ts` |
+| Base | the chain; all four contracts source-verified on Basescan | `packages/contracts`, `apps/engine/src/chain.ts`, `apps/web/src/lib/chain.ts` |
+| drand | `evmnet` beacon verified on chain (BN254 pairing) and re-checked in the browser | `packages/contracts/src/DrandVerifier.sol`, `apps/engine/src/drand.ts`, `apps/web/src/components/verify-badge.tsx` |
+| Reactor | one real-time generative video session per event, cut into first half and branches | `apps/engine/src/reactor.ts`, `apps/engine/sidecar/` |
+
+## Live on Base Sepolia
+
+Chain 84532, deployed 2026-09-10 from block 46631130. `MockUSDC.faucet` mints 1,000 a day to any verified address.
 
 | | |
 |---|---|
@@ -38,221 +203,76 @@ Base Sepolia (chain 84532), deployed 2026-09-10 from block 46631130. Testnet and
 | `MockUSDC` | [`0x763CD7478F3d4D2320c01C383dD8CF57119cf970`](https://sepolia.basescan.org/address/0x763cd7478f3d4d2320c01c383dd8cf57119cf970#code) |
 | `Gate` | [`0xF7ff820BBcD99fd59E47C50aAE1fAa7DBbdC5527`](https://sepolia.basescan.org/address/0xf7ff820bbcd99fd59e47c50aae1faa7dbbdc5527#code) |
 
-All four are source-verified on Basescan. Three events have resolved on chain under that verifier against real drand `evmnet` beacons; the one with real generated video is [`0x4734962d…`](https://theworldiscollapsing.vercel.app/e/0x4734962dd63171cb92e109ac5d31cbb5cf27ca797f94c647084ec8e71a006019) — "United–Chelsea: The Fourth Meeting", round 20503772, outcome 1. Open it and the verify badge fetches that round from `api.drand.sh` in your browser, compares the signature with the one stored on chain and re-derives the outcome. Its winning branch does not play, for the reason in [Known issues](#known-issues).
-
-## Run the whole thing locally
-
-Needs Node 24 (`.nvmrc`), pnpm 9, [Foundry](https://getfoundry.sh), Docker and ffmpeg. Nothing below needs an API key or a funded account: video is stubbed with ffmpeg test patterns, the chain is anvil, the money is fake. Demo timing puts a full event — bet, lock, resolve, reveal, claim — at about 35 seconds.
-
-**1 — install, database, migrations** (once):
-
-```bash
-pnpm install
-docker compose up -d                       # Postgres on 5433
-printf 'DATABASE_URL=postgresql://twic:twic@localhost:5433/twic\n' > packages/db/.env
-pnpm --filter db run generate
-pnpm --filter db run deploy                # applies packages/db/prisma/migrations
-```
-
-**2 — chain.** Leave anvil running in its own terminal:
-
-```bash
-anvil                                      # terminal 1 — 127.0.0.1:8545
-```
-
-then deploy (anvil account 0 is the deployer, resolver and gate owner; account 9 is the treasury — nobody bets from it, so the 2 % fee is a balance you can watch grow):
-
-```bash
-cd packages/contracts
-RESOLVER=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
-TREASURY=0xa0Ee7A142d267C1f36714E4a8F75612F20a79720 \
-forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 \
-  --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 --broadcast
-```
-
-On a fresh anvil the addresses are deterministic and match the env below: Gate `0x5FbDB231…`, USDC `0xe7f1725E…`, Arena `0x9fE46736…`. The script also deploys `DrandVerifier` and calls `setVerifier`, so resolution is BLS-verified on chain from the first event.
-
-**3 — env files.** Both are gitignored; paste them verbatim:
-
-```bash
-cat > apps/engine/.env <<'EOF'
-DATABASE_URL=postgresql://twic:twic@localhost:5433/twic
-RPC_URL=http://127.0.0.1:8545
-CHAIN_ID=31337
-RESOLVER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-ARENA_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
-DEMO_MODE=1
-ALWAYS_ON=1
-CHANNELS=sports,politics,culture,region
-STUB_MODE=1
-MEDIA_STORE=local
-MEDIA_DIR=./media
-MEDIA_PORT=4000
-MEDIA_BASE_URL=http://localhost:4000
-EOF
-
-cat > apps/web/.env.local <<'EOF'
-NEXT_PUBLIC_CHAIN_ID=31337
-NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545
-NEXT_PUBLIC_ARENA_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
-NEXT_PUBLIC_USDC_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512
-NEXT_PUBLIC_GATE_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
-NEXT_PUBLIC_GATE_MODE=checkbox
-NEXT_PUBLIC_DEV_WALLET_KEY=0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
-DATABASE_URL=postgresql://twic:twic@localhost:5433/twic
-GATE_MODE=checkbox
-GATE_OWNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
-EOF
-```
-
-Those are anvil's published test keys, which is the only reason they can sit in a README. Real keys go nowhere near a tracked file. The full variable lists — OpenRouter, Privy, World, Vercel Blob, branch sealing — are in `apps/engine/.env.example` and `apps/web/.env.local.example`; set `STUB_MODE=0` with an `OPENROUTER_API_KEY` for real video.
-
-**4 — run**, one terminal each (if you want synthetic volume, start the bettor below *first* — the engine opens its first four events within seconds):
-
-```bash
-pnpm --filter engine start                 # terminal 2 — the loop, and the media server on 4000
-pnpm --filter web dev                      # terminal 3 — http://localhost:3000
-```
-
-The wall fills in as the first four events author, render and go on chain.
-
-**Synthetic bettors.** They fund, verify and faucet themselves, then bet both sides of every market of every open event and claim when it resolves, perpetually, until Ctrl-C. Give them six keys in `BETTOR_KEYS` (anvil prints ten accounts at startup; 2–7 are unused by the rest of the stack) and the Gate owner in `GATE_OWNER_PRIVATE_KEY` — that account verifies them and pays their gas out of its own balance. **Start them before the engine**: a bettor that arrives after an event has opened misses that whole betting window, so the first event on each channel ends with empty pools.
-
-```bash
-BETTOR_KEYS=<six anvil keys, comma-separated> \
-GATE_OWNER_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-RPC_URL=http://127.0.0.1:8545 \
-ARENA_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0 \
-USDC_ADDRESS=0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 \
-GATE_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3 \
-DATABASE_URL=postgresql://twic:twic@localhost:5433/twic \
-BET_INTERVAL_MS=1500 BETTOR_SEED=424242 \
-pnpm --filter engine bettor                # --events 2 stops after two events
-```
-
-Everything but the keys can live in `apps/engine/.env` instead — the script loads it itself, and the shell wins. `BETTOR_SEED` makes a run replayable; without it the seed is time-based and printed on the first line. Measured on 2026-09-10: 10 minutes of this against four channels put 776 bets on 68 events with both sides funded on every market, paid 222 claims and left 130.68 USDC of fees in the treasury.
-
-The house take is that treasury's balance, so you can watch it accrue while they play:
-
-```bash
-cast call 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 \
-  "balanceOf(address)(uint256)" 0xa0Ee7A142d267C1f36714E4a8F75612F20a79720 \
-  --rpc-url http://127.0.0.1:8545
-```
-
-Live pools are on the wall tiles and the event page, which read `Arena` directly — no extra stack. The markets list and positions pages read the **subgraph** instead, and stay in a "not configured" state until you point `NEXT_PUBLIC_SUBGRAPH_URL` at one. Locally that is graph-node in docker ([`packages/subgraph/README.md`](packages/subgraph/README.md)), with the anvil of step 2 already up:
-
-```bash
-docker compose -f packages/subgraph/docker-compose.yml up -d   # graph-node 8000/8020/8030, ipfs 5001, pg 5434
-ARENA_ADDRESS=0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0 pnpm --filter subgraph run prepare:local
-pnpm --filter subgraph run codegen && pnpm --filter subgraph run build
-pnpm --filter subgraph run create-local && pnpm --filter subgraph run deploy-local
-printf 'NEXT_PUBLIC_SUBGRAPH_URL=http://localhost:8000/subgraphs/name/twic/arena\n' >> apps/web/.env.local
-```
-
-Restart `pnpm --filter web dev` afterwards and `/markets` fills in as events index. Everything else works without it.
+Events have resolved on chain under that verifier against real drand `evmnet` beacons. One with real generated video is [`0x4734962d…`](https://theworldiscollapsing.vercel.app/e/0x4734962dd63171cb92e109ac5d31cbb5cf27ca797f94c647084ec8e71a006019), "United–Chelsea: The Fourth Meeting", round 20503772, outcome 1. Open it and the verify badge fetches that round from `api.drand.sh` in your browser, compares the signature with the one stored on chain and re-derives the outcome.
 
 ## Trust model
 
-The pitch is that nobody, including us, can know an outcome in advance. Here is exactly how much of that the code proves, and what you are still trusting us for.
+The pitch is that nobody, including us, can know an outcome in advance. Here is how much of that the code proves, and what you are still trusting us for.
 
 ### What the chain proves
 
-- **The randomness is committed before the money.** `Arena.createEvent` stores the deciding drand round alongside the event and rejects it (`BadRound`) unless that round is published at least `SUSPENSE_GAP` = 10 s after `lockTime`. `bet` reverts (`BettingClosed`) at `lockTime`. So every bet is placed before the signature that decides it exists anywhere — not merely before anyone here has seen it.
-- **The outcome is a public function of that signature.** `outcome = uint(keccak256(signature ‖ eventId)) % nOutcomes`, recomputable by anyone from the `Resolved` event. No operator input, no commit-reveal, no VRF, no oracle, no ZK.
-- **`resolve` cannot run early, twice, or on a made-up signature.** It reverts before `lockTime` (`BettingOpen`), after resolution (`AlreadyResolved`), and — because `script/Deploy.s.sol` deploys `DrandVerifier` and calls `setVerifier` — unless the 64-byte BN254 signature verifies on chain against drand `evmnet`'s group key **for the round this event committed to at creation** (`BadSignature`). A genuine beacon from the wrong round fails the pairing, not just a length check; both directions are tested in `packages/contracts/test/DrandVerifier.t.sol`.
-- **The verifier is pinned when the event opens, not when it settles.** `createEvent` records the verifier of the moment in `eventVerifier[eventId]` and `resolve` reads that one, so a later `setVerifier` — including `setVerifier(address(0))` — only changes events created after it. Nobody can move an event that is already taking bets into trusted mode, or under a verifier that waves anything through. In trusted mode (no verifier at creation, which is not how this is deployed) `resolve` still refuses to run until the committed round is actually published (`RoundNotPublished`).
-- **An event that is never resolved refunds.** `bail(eventId)` is callable by anyone 3 days after `lockTime` (`BAIL_DELAY`) while the event is unresolved; after it, `resolve` is closed for good and `claim` hands every staker their stakes back in full on every market of that event, no fee. Being ignored is the worst the resolver can do to your money.
-- **You do not have to take our word for the beacon.** The signature is stored and emitted, and the event page fetches that round from `api.drand.sh` in your browser, compares it byte for byte and re-derives the outcome (the verify badge).
-- **The payout arithmetic is parimutuel and in the contract.** `stake × total pool ÷ winning pool`, less a flat 2 % (`FEE_BPS = 200`) to the treasury, rounding dust left behind. A market pays winner-take-all only while its winning side holds at least `1/nOutcomes` of the market's pool. Under that — an empty winning side and a dusted one alike — the market is **void**: both sides take their own stake back and no fee is charged. The outcome here is `keccak % nOutcomes`, so `1/nOutcomes` is not a guess at the odds, it is the true probability of any market's YES; paying more than `nOutcomes ×` a stake would be paying over true odds. That ceiling is also what closes the capture: buying the winning side of every outcome — the one sweep guaranteed to win a market — costs `nOutcomes ×` a stake and can never pay more back. The house is escrow; bettors are paid by other bettors.
+- **The randomness is committed before the money.** `createEvent` stores the deciding drand round and rejects it (`BadRound`) unless that round publishes at least `SUSPENSE_GAP` = 10 s after `lockTime`. `bet` reverts (`BettingClosed`) at `lockTime`. Every bet is placed before the signature that decides it exists anywhere.
+- **The outcome is a public function of that signature.** `outcome = uint(keccak256(signature ‖ eventId)) % nOutcomes`, recomputable by anyone from the `Resolved` event. No operator input, no commit-reveal, no oracle.
+- **`resolve` cannot run early, twice, or on a made-up signature.** It reverts before `lockTime`, after resolution, and unless the 64-byte BN254 signature verifies on chain against `evmnet`'s group key for the round this event committed to (`BadSignature`). A genuine beacon from the wrong round fails the pairing. Both directions are tested in `packages/contracts/test/DrandVerifier.t.sol`.
+- **The verifier is pinned when the event opens.** `createEvent` records `eventVerifier[eventId]` and `resolve` reads that one, so a later `setVerifier` only changes events created after it. Nobody can move an event that is already taking bets into trusted mode.
+- **An event that is never resolved refunds.** `bail(eventId)` is callable by anyone 3 days after `lockTime`; after it, `claim` returns every stake in full, no fee.
+- **The payout is parimutuel and in the contract.** `stake × total pool ÷ winning pool`, less a flat 2 % to the treasury. A market pays only while its winning side holds at least `1/nOutcomes` of the pool, which is the true probability of any YES here; below that it is void and both sides get their stake back. That ceiling is what makes sweeping every outcome cost more than it can pay. The house is escrow; bettors are paid by other bettors. The full argument is in [`docs/CONTRACTS.md`](docs/CONTRACTS.md), "Void markets".
 
 ### What it does not prove
 
-- **Liveness.** Only the `resolver` address can call `resolve`, and `claim` requires a resolved event. The resolver cannot change an outcome, but it can stall one: there is no permissionless resolve path, so a stalled event pays nothing for three days, until anyone calls `bail` and it refunds instead of settling. The *amount* you are owed does not trust us; the *timing* does.
-- **Admin keys.** `Arena` is `Ownable`: the owner can `setResolver`, `setTreasury`, and `setVerifier(address(0))`, which puts future events into trusted mode where the submitted signature is only checked off chain — events already open keep the verifier they were created under. The `Gate` owner decides who is verified at all. In this deployment one key holds all of it.
-- **The video vendor.** Every prompt, including the shot lists for branches that never air, goes to OpenRouter in plaintext while betting is open. The vendor learns what every ending looks like. It cannot learn or influence which one happens — that is drand's job — but the prompts are not confidential, and no TEE would change it, because TLS terminates at the vendor (`docs/RESEARCH.md`).
-- **That the video matches the chain.** Nothing on chain commits to the video files. The engine reads the on-chain outcome and publishes the matching branch; a dishonest operator could publish a branch that contradicts it, and settlement would still follow the signature. The broadcast is the show, not the proof.
-- **Branch sealing is a spoiler lock, not a fairness claim.** With `BRANCH_SEAL=1` the branch files are published as AES-256-GCM ciphertext and a Chainlink CRE confidential workflow releases only the winning key after `Resolved` (`key_i = keccak256(root ‖ eventId ‖ i)`). That stops a curious viewer reading the ending off the media server early. It says nothing about the outcome, which was already unknowable, and the operator holds the root either way. Off by default.
-- **Anything about the odds being "right".** The outcome is uniform over the event's outcome space; the world model is canon injection, not a simulation. Prices are the pool ratio between bettors, and nothing more.
-- **Identity.** World Selfie Check — or the checkbox fallback — gates the faucet and betting to slow bots down. It is per address, not per person, and it is not age verification: 18+ is self-attested.
-- ⚠ **Scale of the claim.** This is testnet play money: `MockUSDC.faucet` mints 1,000 to any verified address once a day. The contracts are live on Base Sepolia ([Live](#live)) and `DrandVerifier` has now checked real `evmnet` beacons there — 261,292 gas for a verified `resolve` — not only on anvil and in `forge test`. What has and has not run against a real vendor or a real chain is recorded in [`docs/RESEARCH.md`](docs/RESEARCH.md).
+- **Liveness.** Only the `resolver` address can call `resolve`. It cannot change an outcome, but it can stall one for three days, until anyone calls `bail` and the event refunds instead of settling. The *amount* you are owed does not trust us; the *timing* does.
+- **Admin keys.** `Arena` is `Ownable`: the owner can `setResolver`, `setTreasury`, and `setVerifier(address(0))`, which puts *future* events into trusted mode. The `Gate` owner decides who is verified at all. In this deployment one key holds all of it.
+- **The video vendor.** Every prompt, including the shot lists for branches that never air, goes to the vendor in plaintext while betting is open. The vendor learns what every ending looks like. It cannot learn or influence which one happens, that is drand's job, but the prompts are not confidential and no TEE would change it, because TLS terminates at the vendor (`docs/RESEARCH.md`).
+- **That the video matches the chain.** Nothing on chain commits to the video files. A dishonest operator could publish a branch that contradicts the signature, and settlement would still follow the signature. The broadcast is the show, not the proof.
+- **Branch sealing is a spoiler lock, not a fairness claim.** It stops a curious viewer reading the ending off the media server early. It says nothing about the outcome, which was already unknowable, and the operator holds the root either way. Off by default.
+- **Anything about the odds being "right".** The outcome is uniform over the outcome space; the world model is canon injection, not a simulation. Prices are the pool ratio between bettors, nothing more.
+- **Identity.** Selfie Check, or the checkbox fallback, gates the faucet and betting to slow bots down. It is per address, not per person, and it is not age verification: 18+ is self-attested.
+- **Scale of the claim.** Testnet play money. `DrandVerifier` has checked real `evmnet` beacons on Base Sepolia (261,292 gas for a verified `resolve`), not only on anvil. What has and has not run against a real vendor or a real chain is recorded in [`docs/RESEARCH.md`](docs/RESEARCH.md).
+
+## Run it locally
+
+Nothing here needs an API key or a funded account: video is stubbed with ffmpeg test patterns, the chain is anvil, the money is fake. After the one-time setup in [`docs/LOCAL.md`](docs/LOCAL.md) (Postgres, migrations, contract deploy, two env files), it is three terminals:
+
+```bash
+anvil                                      # terminal 1
+pnpm --filter engine start                 # terminal 2: the loop, and the media server on 4000
+pnpm --filter web dev                      # terminal 3: http://localhost:3000
+```
+
+A full event in demo timing (bet, lock, resolve, reveal, claim) is about 35 seconds. `docs/LOCAL.md` also has the synthetic bettors that keep every pool funded, and the local graph-node for `/markets`.
 
 ## Status
 
-The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1)) is 65 user stories; 61 of them are built and verified — on a local stack (anvil, docker Postgres, fake OpenRouter, local graph-node, Playwright) and, on 2026-09-10, on Base Sepolia with real OpenRouter authoring and real MiniMax video. The other 4 — stories 18, 23, 43, 44 — are the Pending column below: a first half that visibly *shows* the score level at the break (18 — the authored premise says level and the rendered football is real, but no generated frame carries a readable scoreboard, so this is asserted, not shown), Privy email login (23 — the allowed-origins block is gone and the login modal now opens on the production domain with a clean console, but no email login has been completed end to end, see [Known issues](#known-issues)), and World Selfie Check (43, 44; the 18+ checkbox of story 46 is what runs). Open bugs are in [Known issues](#known-issues). What to obtain and what it turns on is in [`docs/SETUP.md`](docs/SETUP.md); deploying is [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
+The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1)) is 65 user stories, all built and verified, on a local stack and on Base Sepolia with real authoring, real video and a real Selfie Check. The remaining sponsor-track gaps are tickets in [`docs/plan/`](docs/plan/).
 
-| Area | Verified | Pending |
-|---|---|---|
-| Contracts | 40 Foundry tests incl. real evmnet rounds verified on chain, tampered and wrong-round rejected, per-event verifier pinning, bail refunds, the minimum bet, void markets. Deployed to Base Sepolia and source-verified on Basescan; 3 events resolved there against live beacons (`createEvent` 77,368 gas, verified `resolve` 261,292) | — |
-| Engine | 111 tests; a 10-minute soak over 4 channels — 80 events, 776 synthetic bets, engine and bettor each restarted mid-window with no duplicate events and no double claims — on top of the earlier 20-event soak and SIGKILL resume; presence gating. Real MiniMax clips and the Vercel Blob store, on anvil and on Base Sepolia. Authoring is now `openai/gpt-5-mini` (was `openai/gpt-6-astra`): one call an event does not need a $10/M model, and in a real probe on 2026-09-10 it took the strict schema first try on both channels and hit the first-half seconds exactly, so the duration clamp never fired (`docs/RESEARCH.md`). $3.27 an event was measured under the old author; the video is unchanged and authoring is now under a cent, so ≈$3.20. Spend metered against `MAX_SPEND_USD`. All of the above predates Reactor: `VIDEO_VENDOR` now defaults to `reactor` once `REACTOR_API_KEY` is set, with OpenRouter/MiniMax as the fallback (`docs/RUNBOOK.md` sections 6 and 7) | bettor-sentiment authoring (`SUBGRAPH_URL`) has never run against a live index; Reactor is wired up but has not had a paid session yet |
-| Web | 79 tests; wall, channel, event, markets, positions, verify flows in a browser; bet → lock → reveal → claim with on-chain numbers checked. In production: the wall and the event page play real generated video from Blob, the verify badge re-derives the outcome from live drand, `/markets` reads the Studio subgraph, and the Privy login modal opens with no console error | a Privy email login carried through to an embedded wallet, World Selfie Check |
-| Subgraph | 5 matchstick tests; pools, outcomes, claims and totals equal `cast` reads against a local graph-node. Deployed to Studio, indexing Base Sepolia with no indexing errors, and read by `/markets` in production | Subgraph MCP (needs a published subgraph and a gateway key) |
-| CRE | workflow compiles to WASM, 7 handler tests, engine seal/unseal round trip | `cre workflow simulate` and deploy (login-gated), Confidential Workflows beta |
-
-## Sponsor integrations
-
-| Sponsor | What | Where |
-|---|---|---|
-| The Graph | subgraph indexing every `Arena` event; the engine reads the previous event's pools from it when authoring; markets and positions pages read it | `packages/subgraph`, `apps/engine/src/author.ts`, `apps/web/src/app/markets`, `apps/web/src/app/positions` |
-| Privy | email login + embedded wallet, Base Sepolia default, behind one `useWallet()` hook | `apps/web/src/components/wallet.tsx` |
-| World | Selfie Check via IDKit 4 with signed `rp_context`, server-side v4 verify, then `Gate.setVerified` on chain; checkbox fallback | `apps/web/src/app/verify`, `apps/web/src/app/api/verify`, `apps/web/src/app/api/world/rp-context` |
-| Chainlink CRE | confidential workflow releases only the winning branch key after `Resolved` | `packages/cre`, `apps/engine/src/seal.ts` |
-
-## Known issues
-
-Findings from the end-to-end validation, an adversarial review of the money path, and the first real-money runs. Struck lines are fixed and carry what the fix was; the rest are still open. Severity is the reviewer's.
-
-**From the first real-video runs and the Base Sepolia deploy (2026-09-10)**
-
-- ~~high, `apps/engine/src/machine.ts`: **the reveal can lose its branches.** `case "RESOLVE"` reads `branchUrls` off the row `produce()` handed it, so when the branch render finished *before* resolve — which real, fast rendering makes likely — `inflightBranches` has already dropped its entry and `ensureBranches` starts a *second* render. That one throws `ENOENT` on the already-swept `media/.work/<id>/last.png`, the step logs `branches unavailable at reveal`, and it then persists `branchUrls: null` over three URLs the database already held. Seen on Base Sepolia event `0x4734962d…`: branches finished at 09:26:36, resolve ran at 09:26:44, and the event page replayed the first half instead of the winning branch. Latent money bug too: had the work directory survived, the second render would have re-bought every branch clip (~$2.40).~~ Fixed: `RESOLVE` waits for a branch render that is still running, otherwise reads the URLs the render stored, and only renders again when nothing was stored; it never writes null over stored URLs. Reproduced by a test with the real timeline (`machine.test.ts`, "reveals branches that finished in the background"). The production row for `0x4734962d…` was repaired by hand from the Blob listing and its winning branch plays.
-- ~~medium, `machine.ts` / `chain.ts`: **a `BlockNotFoundError` right after a write loses the transaction hash.** Public `https://sepolia.base.org` load-balances across nodes at different heights, so the block read that follows a receipt can be told the block does not exist. The step then retried and took the "event already exists on chain" resume path, which adopts the on-chain state with `tx: null`, so `Event.createTx` / `resolveTx` are NULL and the event page has no explorer link. It hit 4 of 4 chain writes on 2026-09-10.~~ Fixed: `chain.ts` retries the block read on `BlockNotFoundError` (up to 20 s) instead of failing the step, so the hash is kept. The five events already on Base Sepolia keep their NULL hashes. A keyed RPC is still the right choice.
-- medium, `apps/web/src/lib/data.ts`: `getChannels` prefers *any* live event over the newest `DONE` one, so stopping the engine mid-cycle pins a tile at "Locked" forever instead of replaying the last finished event. Let the current event finish before stopping, or skip live events whose `lockTime` passed more than a grace period ago.
-- ~~medium, deployment: **Privy login cannot open on the production domain.** `https://theworldiscollapsing.vercel.app` is not in the Privy app's allowed origins, so the login iframe is refused by `frame-ancestors` and every page carries that CSP error in the console.~~ Fixed in the Privy dashboard, not in this repo. Re-checked on 2026-09-10 in a browser against production: `/` and `/c/sports` log zero console errors and zero warnings (the only output is the Privy iframe's own self-XSS banner, so the frame loads), and clicking "Sign in" opens the "Log in or sign up" modal with an email field and the "Protected by Privy" footer. No email was submitted, so the OTP step and the embedded wallet are still unproven and story 23 stays in Pending.
-
-**Open validation findings**
-
-- low, `apps/engine/scripts/bettor.ts`: **a bettor stopped mid-window never comes back for that event's money.** It only claims events it opened in its own process, so Ctrl-C during a betting window leaves those events to resolve with nobody claiming — ~118 USDC sat unclaimed on one event in the 2026-09-10 soak, and the 2 % fee on those markets never reached the treasury. Nothing is lost (`claim` stays open forever) but a soak that restarts accumulates dead pools and understates the house take. Fix is a startup sweep: claim recent `DONE` events for every configured key, catching `NothingToClaim` the way `settle()` already does.
-- low, authoring copy: `openai/gpt-5-mini` labels outcomes "Outcome 1 — Plan passed and funded", and those strings are the market names on the betting UI. `gpt-6-astra` did not number them. Model drift from the cheap default, not a prompt bug; the outcome-labelling rule was left alone.
-- ~~high, web: client writes report success without checking `receipt.status`, so a reverted bet shows "Bet confirmed". Root cause for PRD stories 29 and 30.~~ Fixed: approve, bet, claim and faucet simulate first (custom errors mapped to viewer copy, `NotVerified` links to `/verify`) and every write goes through `confirmed`, which fails on `receipt.status !== "success"`.
-- ~~medium, web: the engine authors studio cards but nothing renders them (story 11).~~ Fixed: `EventPublic.cards` carries the cue in seconds and the event stage runs each card as a lower third from its cue.
-- ~~medium, web: the ticker overlay shows authored lines only, no pool odds or countdown (story 12).~~ Fixed: `tickerLines` appends the lock countdown and the live implied-YES odds of every market to the authored straps.
-
-**Review findings confirmed by two of three independent refuters**
-
-- ~~critical, `Arena.sol`: one micro-USDC on the empty side of a market converts an "everyone refunded" market into "one bettor takes the whole pool". `MIN_BET` repriced that capture at 1 USDC per outcome; it did not close it.~~ Fixed: the ceiling is a ratio, not a floor. `claim` pays winner-take-all only while the winning side holds at least `1/nOutcomes` of the market's pool and voids the market below that, refunding both sides, so a market returns at most `nOutcomes ×` a stake and the sweep across every outcome always costs more than it pays. `test_MinBetOnEveryOutcomeCannotCaptureThePool` runs the capture at the stake `MIN_BET` actually permits — 1 USDC on all five outcomes against a 25 USDC-per-market crowd — and the sweep ends 4 USDC down instead of 20.48 up; `test_WinningSideIsPaidToItsUniformShareAndVoidedBelowIt` pins both sides of the line.
-- ~~critical, `Arena.sol`: the verifier is not pinned per event, so the owner can switch to trusted mode after bets land.~~ Fixed: `createEvent` pins `eventVerifier[eventId]` and `resolve` reads that, so `setVerifier` only reaches future events.
-- ~~critical, `apps/engine/src/media.ts`: a malformed percent-escape in a request URL kills the engine process.~~ Fixed: the decode is wrapped, a bad escape is a 400 and the server keeps serving.
-- ~~high, `media.ts`: no error handler on the response stream, so a file-open failure crashes the engine.~~ Fixed: headers wait for the file descriptor, so a file that stats but will not open answers 500; the response's own errors close the stream.
-- ~~high, `machine.ts` / `render.ts`: `costUsd` omits failed and retried generations; there is no spend ceiling.~~ Fixed: every clip attempt, key-art image and authoring call is charged against `MAX_SPEND_USD`, persisted in `World.spendUsd`.
-- ~~high, `machine.ts` / `drand.ts`: beacon fetch retries forever with no timeout or abort.~~ Fixed: `fetchRound` carries an `AbortSignal.timeout` (10 s), so a hung request fails and the retry loop keeps its cadence.
-- ~~medium, `machine.ts`: canon lines are appended twice if the CANON step re-runs.~~ Fixed: `appendCanon` is idempotent per event id.
-- medium, `machine.ts`: `lockTime` is computed before the tx is mined, so tx latency eats the betting window. Live on Base Sepolia this once cost a whole window — a `BlockNotFoundError` step retry (since fixed, above) opened one event with about 5 s left to bet — and ordinary tx latency still shaves a few seconds off every window.
-- low, `Arena.sol`: the ordering guarantee rests on the chain clock being within 10 s of drand's.
-
-**Review candidates not yet adjudicated** (the refuters ran out of session budget)
-
-- ~~high, `Arena.sol`: in trusted mode `resolve` never checks that the committed round has been published.~~ Fixed: a trusted-mode event reverts `RoundNotPublished` until `block.timestamp >= roundTime(drandRound)`.
-- ~~medium, `Arena.sol`: no escape hatch if an event is never resolved; stakes stay locked.~~ Fixed: permissionless `bail(eventId)` 3 days after `lockTime` closes `resolve` and turns `claim` into a full, fee-free refund.
-- low, `Arena.sol`: 2 % fee is charged on principal when nobody took the other side.
-- ~~high, `api/verify`: per-address rate limit is bypassed with fresh addresses; gas drain on the gate owner; no already-verified short-circuit.~~ Fixed: an address the gate already knows returns `{ verified: true, tx: null }` without a transaction, and the instance sends at most 30 `setVerified` txs an hour (429 beyond) on top of the per-address minute.
-- ~~medium, `api/verify` (world mode): the proof's signal is not bound to the target address.~~ Fixed: the widget signs the address as the signal and the route refuses any proof whose `responses[].signal_hash` is not `hashSignal(<the signed address>)`.
-- ~~medium, `api/heartbeat`: unauthenticated and unthrottled, and it is the only thing gating paid generation.~~ Fixed: same-origin only (403 otherwise), one accepted beat per client IP per 10 s, 204 either way.
-- ~~medium, `machine.ts`: a database reset against a live `Arena` replays stale on-chain events with a zero betting window.~~ Fixed: an on-chain twin whose lock has already passed marks the row `SKIPPED` and the channel moves on.
-- medium, `chain.ts`: one global tx queue plus viem's receipt timeout; a stuck tx blocks all channels.
-- ~~low, `index.ts`: mode flags are exact-string `1` comparisons, so `true` silently means off.~~ Fixed: `flag()` in `apps/engine/src/env.ts` accepts `1` and `true`, any case.
+| Area | Verified |
+|---|---|
+| Contracts | 40 Foundry tests, including real `evmnet` rounds verified on chain and tampered or wrong-round beacons rejected. Deployed to Base Sepolia, source-verified, events resolved there against live beacons |
+| Engine | 111 tests. A 10-minute soak over 4 channels, 80 events, 776 synthetic bets, engine and bettor each restarted mid-window with no duplicate events and no double claims. Real Reactor sessions, real Blob uploads, spend metered against `MAX_SPEND_USD` |
+| Web | 79 tests. Wall, channel, event, markets, positions and verify flows in a browser. Bet, lock, reveal, claim checked against on-chain numbers. Privy email login through to an embedded wallet on production |
+| Subgraph | 5 matchstick tests; pools, outcomes, claims and totals equal `cast` reads. Deployed to Studio, indexing Base Sepolia, read by `/markets` in production and by the engine's author |
+| CRE | compiles to WASM, 7 handler tests, engine seal/unseal round trip. Not yet simulated (ticket) |
 
 ## Repo
 
 | Path | What |
 |---|---|
 | `packages/contracts` | Foundry: `Arena` (parimutuel + drand resolve), `DrandVerifier` (BN254 BLS), `Gate`, `MockUSDC` |
-| `packages/db` | Prisma schema and migrations — event content, canon, engine state |
-| `apps/engine` | the unattended loop: author → render → create → bet → lock → resolve → reveal → canon → pause |
+| `packages/db` | Prisma schema and migrations: event content, canon, engine state |
+| `apps/engine` | the unattended loop: author, render, create, bet, lock, resolve, reveal, canon, pause |
 | `apps/web` | Next.js: the wall, channel and event pages, markets list, positions, verify |
 | `packages/subgraph` | The Graph index of `Arena`, behind [its own README](packages/subgraph/README.md) |
-| `packages/cre` | Chainlink CRE workflow that releases branch keys (stretch, off by default) |
+| `packages/cre` | Chainlink CRE workflow that releases branch keys |
 
-[`docs/CONTRACTS.md`](docs/CONTRACTS.md) is the binding shared surface — names, routes, env vars, ports, the event lifecycle. [`docs/RESEARCH.md`](docs/RESEARCH.md) holds the verified vendor facts with sources.
+| Doc | What |
+|---|---|
+| [`docs/LOCAL.md`](docs/LOCAL.md) | the full local walkthrough, synthetic bettors, local subgraph |
+| [`docs/CONTRACTS.md`](docs/CONTRACTS.md) | the binding shared surface: names, routes, env vars, ports, the event lifecycle |
+| [`docs/SETUP.md`](docs/SETUP.md) | which key or account unlocks what |
+| [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | deploying to Base Sepolia, real video, World mode, sealing |
+| [`docs/RESEARCH.md`](docs/RESEARCH.md) | verified vendor facts with sources |
+| [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) | every finding from validation and adversarial review, fixed and open |
+| [`docs/plan/`](docs/plan/) | what is left for each sponsor track |
 
 ## Checks
 
@@ -260,5 +280,5 @@ Findings from the end-to-end validation, an adversarial review of the money path
 pnpm --filter contracts exec forge test
 pnpm --filter engine test
 pnpm --filter web test
-node docs/readme.check.mjs                 # the commands and env vars above still exist
+node docs/readme.check.mjs                 # README and docs/LOCAL.md still name real scripts and env vars
 ```

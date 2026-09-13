@@ -3,8 +3,9 @@
 //
 // The README makes two kinds of promise: a trust model a reviewer can hold us to, and a local run a
 // teammate can paste. Both rot silently. This asserts the trust-model sections are still there, that
-// every `pnpm --filter` command in the README names a script that exists, and that every env var the
-// README writes is one an .env example still documents.
+// every `pnpm --filter` command in the README or docs/LOCAL.md names a script that exists, and that
+// every env var they write is one an .env example still documents. The README carries the promises;
+// the walkthrough lives in docs/LOCAL.md, so the command checks read both.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -13,6 +14,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(path.join(root, p), "utf8");
 const readme = read("README.md");
+const docs = readme + "\n" + read("docs/LOCAL.md");
 
 // 1. trust model: what it proves and what it does not (PRD story 63, "Honest claims").
 for (const heading of ["## Trust model", "### What the chain proves", "### What it does not prove"]) {
@@ -23,9 +25,9 @@ for (const claim of ["SUSPENSE_GAP", "BadSignature", "setVerifier", "plaintext",
 }
 
 // 2. the local run is there and every pnpm script it calls exists.
-const body = [...readme.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]).join("\n");
+const body = [...docs.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1]).join("\n");
 for (const cmd of ["docker compose up -d", "forge script script/Deploy.s.sol", "pnpm --filter engine start", "pnpm --filter web dev"]) {
-  assert.ok(body.includes(cmd), `README no longer shows how to run \`${cmd}\``);
+  assert.ok(body.includes(cmd), `README/LOCAL.md no longer show how to run \`${cmd}\``);
 }
 const dirs = { engine: "apps/engine", web: "apps/web", db: "packages/db", subgraph: "packages/subgraph", contracts: "packages/contracts" };
 for (const [, pkg, script] of body.matchAll(/pnpm --filter (\S+) (?:run )?([a-z:-]+)/g)) {
@@ -68,10 +70,10 @@ for (const addr of playable) {
 const PRD_STORIES = 65;
 const total = Number(readme.match(/is (\d+) user stories/)?.[1]);
 const verified = Number(readme.match(/(\d+) of them are built and verified/)?.[1]);
-const pending = readme.match(/The other (\d+) — stories ([\d, ]+) —/);
+const pending = readme.match(/The other (\d+), stor(?:y|ies) ([\d, and]+),/);
 assert.equal(total, PRD_STORIES, `README counts ${total} PRD user stories; issue #1 lists ${PRD_STORIES}`);
 assert.ok(pending, "README no longer names which PRD stories are not verified locally");
-const gated = pending[2].split(",").map((n) => Number(n.trim()));
+const gated = [...pending[2].matchAll(/\d+/g)].map((m) => Number(m[0]));
 assert.equal(gated.length, Number(pending[1]), "README's pending story count does not match the list it prints");
 assert.equal(new Set(gated).size, gated.length, "README lists a pending story twice");
 assert.ok(
@@ -90,10 +92,10 @@ assert.ok(/bail/.test(trust), "the /verify trust copy no longer mentions bail, w
 // 7. /markets and /positions read the subgraph, not the database, so on the README's local stack they
 // sit at "not configured" forever unless the README also says how to get one. It must keep pointing at
 // where pools *are* visible without it, and at the local graph-node deploy that turns those pages on.
-assert.ok(/wall tiles and the event page/.test(readme), "README no longer says where live pools show without a subgraph");
+assert.ok(/wall tiles and the event page/.test(docs), "README/LOCAL.md no longer say where live pools show without a subgraph");
 assert.ok(
-  body.includes("pnpm --filter subgraph run deploy-local") && readme.includes("NEXT_PUBLIC_SUBGRAPH_URL"),
-  "README no longer shows how to point /markets at a local subgraph",
+  body.includes("pnpm --filter subgraph run deploy-local") && docs.includes("NEXT_PUBLIC_SUBGRAPH_URL"),
+  "README/LOCAL.md no longer show how to point /markets at a local subgraph",
 );
 
 console.log("README ok");
