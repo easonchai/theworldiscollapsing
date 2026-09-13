@@ -75,12 +75,14 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 - developer.world.org → create app → app id; create an incognito action named `verify` (or set `NEXT_PUBLIC_WORLD_ACTION`); copy the RP id and the RP signing key that IDKit 4's `rp_context` must be signed with (`WORLD_RP_ID`, `WORLD_RP_SIGNING_KEY`, server only).
 - Request Selfie Check access (feature flag on your app) and a sandbox device. Both are access-gated. Ask in the ETHOnline Discord for a fast track.
 - Switch `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world`. Until then the checkbox mode (18+ self-attest + wallet signature) is what runs. `WORLD_API_KEY` is listed but unused; the v4 verify endpoint documents no auth header.
+- Dashboard steps, the local switch-on and what each screen means: `docs/WORLD.md`.
 
 ### 12. Chainlink CRE
 
 - Install the `cre` CLI, run `cre login` (browser) or set `CRE_API_KEY`. `cre workflow build` works without an account and is verified; `cre workflow simulate` and `cre workflow deploy` are login-gated and have never run here.
 - Apply for deploy access (`cre account access`) and, separately, the Confidential Workflows private beta (docs.chain.link/cre/account/confidential-workflows-access).
 - Fill `packages/cre/.env` from its `.env.example`; `SECRET_BRANCH_SEAL_ROOT` and `SECRET_REVEAL_SECRET` must equal the engine's `BRANCH_SEAL_ROOT` and `REVEAL_SECRET`. Full steps in `packages/cre/README.md`.
+- Account, toolchain, the local sealed stack and simulate/deploy in order: `docs/CRE.md`.
 
 ### 14. Reactor
 
