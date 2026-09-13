@@ -2,11 +2,12 @@
 
 Branch sealing publishes every second-half branch as AES-256-GCM ciphertext and lets a Chainlink CRE
 confidential workflow release only the winning key after `Arena.Resolved`. The engine half and the
-workflow are written and tested. Nothing has been set up on this machine yet: no `cre` CLI, no bun
-install, no `.env`, and the engine runs with sealing off.
+workflow are written and tested.
 
-Status on 2026-09-13: code built, toolchain not installed, no CRE account logged in. See the table
-at the end.
+Status on 2026-09-13: `cre workflow simulate --listen` ran against the local sealed stack and
+released the key for two events in a row, 120 ms and 400 ms after `Resolved`, ahead of the engine's
+3 s fallback. Transcript: `docs/cre-simulation-2026-09-13.txt`. Simulation is free; it needs only
+`cre login`. Deploying to a DON is gated by access approval, not payment. See the table at the end.
 
 ## What is built
 
@@ -17,7 +18,7 @@ at the end.
 | Fallback reveal | `apps/engine/src/index.ts` | Waits 3 s after resolve for the workflow; if the winner is still `.enc`, derives the key itself and reveals. A sealed event never ends with a dead video |
 | Workflow | `packages/cre/reveal-key/workflow.ts` | EVM log trigger on `Resolved`, chain read of `Arena.events(eventId)` for the authoritative outcome, key derivation inside the TEE, HTTP POST to the engine |
 | Tests | `packages/cre/reveal-key/workflow.test.ts`, `apps/engine/src/seal.test.ts` | 7 handler tests; engine seal, unseal and endpoint round trip |
-| Config | `packages/cre/project.yaml`, `reveal-key/workflow.yaml`, `config.local.json`, `config.staging.json`, `secrets.yaml` | Two targets: `local-settings` (anvil on 8547) and `staging-settings` (Base Sepolia) |
+| Config | `packages/cre/project.yaml`, `reveal-key/workflow.yaml`, `config.local.json`, `config.staging.json`, `secrets.yaml` | Two targets: `local-settings` (anvil on 8547 run as chain 84532, see step 3) and `staging-settings` (Base Sepolia) |
 
 Design, threat model and the deviation from the packet's envelope scheme are in
 `packages/cre/README.md`.
@@ -69,8 +70,13 @@ Put the same two values in both places or the released key opens nothing:
 The CRE local target expects anvil on port 8547 and the engine media server on 4002, so it can run
 beside the normal 8545/4000 stack (`docs/CONTRACTS.md`, port table).
 
+Anvil runs with `--chain-id 84532`. The CLI (v1.33) simulates only against chains on the tenant's
+supported list, which is testnets and mainnets; `anvil-devnet` (31337) is silently dropped from
+`project.yaml` and the run fails with `no RPC URLs found`. So the local target names Base Sepolia
+and points its RPC at localhost. Nothing touches the real Base Sepolia.
+
 ```bash
-anvil --port 8547
+anvil --port 8547 --chain-id 84532
 
 cd packages/contracts
 RESOLVER=0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 \
@@ -82,10 +88,21 @@ forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8547 \
 On a fresh anvil the Arena lands at `0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0`, which is what
 `config.local.json` already holds. If the address differs, update `arenaAddress` there.
 
+Because the chain id is 84532, forge writes this deploy over the real Base Sepolia record in
+`packages/contracts/broadcast/Deploy.s.sol/84532/`. Put it back before committing:
+
+```bash
+git checkout -- packages/contracts/broadcast/Deploy.s.sol/84532/run-latest.json
+git clean -n packages/contracts/broadcast/Deploy.s.sol/84532/   # then delete the listed run-*.json
+```
+
 Engine env, on top of the README's local `.env`:
 
 ```
 RPC_URL=http://127.0.0.1:8547
+CHAIN_ID=84532
+DATABASE_URL=postgresql://twic:twic@localhost:5433/twic_cre   # its own database; create it and run the migrations
+STUB_MODE=1                # ffmpeg test patterns, no vendor spend
 MEDIA_STORE=local          # sealing refuses to start with the blob store
 MEDIA_PORT=4002
 MEDIA_BASE_URL=http://localhost:4002
@@ -112,17 +129,23 @@ were set. The workflow adds the TEE release in front of it.
 cre login                    # browser: email, password, 2FA; writes ~/.cre/cre.yaml
 cd packages/cre
 cre workflow simulate ./reveal-key --target local-settings \
-  --non-interactive --trigger-index 0 \
-  --evm-tx-hash <hash of a resolve tx on the 8547 anvil> --evm-event-index 0
+  --non-interactive --trigger-index 0 --listen
 ```
 
-The engine prints the resolve hash in its log, or read `Event.resolveTx` from the database. Add
-`--listen` to keep the simulator up and fire on every `Resolved`. In simulation the secrets come
-from `packages/cre/.env` through `secrets.yaml`, and the HTTP request leaves your machine, so the
-engine on 4002 receives the key and logs `branch key released` before its own 3 s fallback.
+`--listen` keeps the simulator up and fires on every `Resolved`. It must be running from the
+project directory (`packages/cre`): with `-R` the CLI does not find `.env`. Compilation takes about
+a minute, so the first event that resolves in that window falls back (`no CRE key in time`); from
+the second one on the engine logs `branch key released` a few hundred milliseconds after
+`resolved`, and the fallback finds the winner already plain. In simulation the secrets come from
+`packages/cre/.env` through `secrets.yaml`, and the HTTP request leaves your machine, so the engine
+on 4002 receives the key.
 
-To make the fallback visibly lose the race, watch for `branch key released` and the absence of
-`no CRE key in time` on that event.
+A one-shot run against a past resolve (`--evm-tx-hash <tx> --evm-event-index 0` instead of
+`--listen`) also executes the handler, but the engine answers 400 because that winner was already
+revealed by the fallback. Use it to debug the workflow, not to demo the reveal.
+
+Afterwards, `MEDIA_DIR/<eventId>/` holds the winner as `.mp4` (ffprobe: 10 s) and both losers as
+`.enc` only.
 
 ### 5. Deploy to Base Sepolia (needs deploy access, then the beta)
 
@@ -140,12 +163,15 @@ losers; the winner was revealed at resolve, so nothing on the wall changes.
 
 | Step | Gate | State here |
 |---|---|---|
-| `bun test`, `bun run typecheck` | none | code ready, `bun install` not run yet |
-| `cre workflow build` | none | verified on 2026-09-09, CLI since uninstalled |
-| Engine sealing + fallback reveal | none | tested in `seal.test.ts`; `BRANCH_SEAL` off in the running env |
-| `cre workflow simulate` | `cre login` | never run |
-| `cre workflow deploy` | login + deploy access | never run |
-| Real enclave | Confidential Workflows beta | not enrolled |
+| `bun test`, `bun run typecheck` | none | 7 pass, 2026-09-13 |
+| `cre workflow build` | none | CLI v1.33.0, binary hash `44a2a5ef…38885`, 2026-09-13 |
+| Engine sealing + fallback reveal | none | tested in `seal.test.ts` and live on the 8547 stack; `BRANCH_SEAL` off in the deployed env |
+| `cre workflow simulate` | `cre login` | ran 2026-09-13, `docs/cre-simulation-2026-09-13.txt` |
+| `cre workflow deploy` | login + deploy access | not granted. `cre account access` says "Deployment access is not yet enabled for your organization"; the same command submits the request (needs a TTY) |
+| Real enclave | Confidential Workflows beta | not granted; by request |
+
+None of these steps costs money. There are no CRE credits to buy for simulation, and the deploy gate
+is an approval, not a plan.
 
 ## Notes
 

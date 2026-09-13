@@ -176,7 +176,7 @@ Every branch is rendered before betting opens and sits on a media server. The ch
 
 `packages/cre/reveal-key/workflow.ts` registers `cre.handlerInTee` on an EVM log trigger for `Arena.Resolved`. Inside the enclave it reads the authoritative outcome back from the contract, pulls the seal root from `runtime.getSecrets`, derives `key_i = keccak256(root ‖ eventId ‖ i)` for the winning `i` only, and POSTs it to the engine's `/internal/reveal-key`. The seal root is the sensitive input; it never leaves the TEE, and the losing branches' keys are never derived. The engine's `seal.ts` has the byte-identical derivation, and the round trip is tested.
 
-Ships off. Compiled to WASM with 7 handler tests, not yet run through `cre workflow simulate` (login-gated). What is left is in [`docs/plan/chainlink-confidential-workflow.md`](docs/plan/chainlink-confidential-workflow.md).
+Ships off in the deployed env, on with `BRANCH_SEAL=1`. Runs in CRE simulation: on 2026-09-13 `cre workflow simulate --listen` fired on `Resolved`, executed the TEE handler and released the winning key to the engine 120 ms after resolve, ahead of the engine's 3 s fallback ([transcript](docs/cre-simulation-2026-09-13.txt), [setup](docs/CRE.md)). Simulation is done. It is not deployed to a DON: Chainlink has not granted our organization deploy access or the Confidential Workflows beta, both of which are by request. What is left is in [`docs/plan/chainlink-confidential-workflow.md`](docs/plan/chainlink-confidential-workflow.md).
 
 ### Where each is called
 

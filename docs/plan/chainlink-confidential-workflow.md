@@ -1,6 +1,6 @@
 # Chainlink: Best Confidential Workflow ($2,000, up to 2 teams at $1,000)
 
-**Status: not done.** The workflow is written, compiles to WASM and passes 7 handler tests, but it has never executed through the CRE CLI or on a DON. The track requires a demonstrated execution.
+**Status: simulation done. Not deployed: our organization does not have deploy access or the Confidential Workflows beta, both granted by Chainlink on request.** On 2026-09-13 `cre workflow simulate --listen` (CLI v1.33.0) fired on `Arena.Resolved` from a local sealed stack, executed the `handlerInTee` handler and released the winning key to the engine 120 ms after resolve, ahead of the 3 s fallback; the winner decrypted to a playable clip and both losers stayed ciphertext. Transcript: `docs/cre-simulation-2026-09-13.txt`. Setup: `docs/CRE.md`. That satisfies "demonstrate successful execution through CRE CLI simulation".
 
 ## What the track asks for
 
@@ -18,14 +18,6 @@
 
 ## What is missing
 
-1. `cre workflow simulate ./reveal-key` has not been run. It needs `cre login` (browser OAuth) or `CRE_API_KEY`. `docs/CRE.md` is the switch-on guide (account, toolchain, the local sealed stack, simulate and deploy in order); `packages/cre/README.md:126-138` has the command and the gating table.
-2. `packages/cre/reveal-key/config.staging.json` still holds `arenaAddress: 0x000…0` and `revealUrl: https://engine.example.invalid/...`. Needs the Base Sepolia `Arena` address and a public URL for the laptop engine (a tunnel is fine).
-3. `handlerInTee` on a real DON needs the Confidential Workflows private beta, which is invite-only and separate from deploy access. Simulation satisfies the track; the beta does not block it.
-4. Recording: the engine currently self-reveals after a 3 s grace when no CRE key arrives (`apps/engine/src/index.ts:247-256`, log line "no CRE key in time"). For the demo video, raise that grace or disable the fallback so the reveal visibly waits for the workflow.
-
-## Steps
-
-1. `cre login`, then `cre workflow simulate` against a local anvil with `BRANCH_SEAL=1` and an event resolving. Capture the output.
-2. Fill `config.staging.json`, point it at Base Sepolia, re-run against a real `Resolved` log.
-3. Screen-record one event: sealed branch on the media server (ciphertext), `Resolved` on chain, the workflow releasing exactly one key, the winning branch playing.
-4. Move the README's CRE section from "wired, off by default" to "runs", with the simulation transcript linked.
+1. `packages/cre/reveal-key/config.staging.json` still holds `arenaAddress: 0x000…0` and `revealUrl: https://engine.example.invalid/...`. Only needed for a deploy: the Base Sepolia `Arena` address and a public URL for the laptop engine (a tunnel is fine).
+2. `cre workflow deploy` needs deploy access. `cre account access` reports "Deployment access is not yet enabled for your organization"; the same command submits the request (run it in a terminal, it prompts). Not required by the track.
+3. `handlerInTee` on a real DON needs the Confidential Workflows private beta, by request and separate from deploy access. Not required by the track.

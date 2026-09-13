@@ -1,0 +1,75 @@
+# cre workflow simulate ./reveal-key --target local-settings --non-interactive --trigger-index 0 --listen
+# CRE CLI v1.33.0, 2026-09-13. anvil --port 8547 --chain-id 84532, engine STUB_MODE=1 BRANCH_SEAL=1 on :4002.
+
+Initializing...
+Loading settings...
+Checking RPC connectivity...
+Compiling workflow...
+✓ Workflow compiled
+✓ Simulation limits enabled
+  HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite evm_report=50kb evm_gas=10000000 solana_report=265b solana_cu=300000 | WASM binary=100mb compressed=20mb
+  Binary hash: 44a2a5ef45c384fc81db0ea0f96620f33170d0c9b31eb5fdf6a42013dae38885
+  Config hash: 97c4ffcdf8374d72709e824480af7e6daa33c347e723d3907168a06b3ebed3a3
+
+EVM log trigger selected.
+
+Waiting for a matching EVM log event...
+Chain: ethereum-testnet-sepolia-base-1
+Contract: 0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0
+Event: 0x8b698f0e39175deacecfd41b61e868581b74da2938aacc8da39dcb2c3d38bf95
+Press Ctrl+C to stop the simulation.
+
+If you already have a transaction hash, restart with:
+  cre workflow simulate reveal-key --evm-tx-hash 0x... --evm-event-index 0
+
+  Listening for logs starting at block 6...
+2026-09-13T16:35:18Z [SIMULATION] Simulator Initialized
+
+2026-09-13T16:35:18Z [SIMULATION] Running trigger trigger=evm:ChainSelector:10344971235874465080@1.0.0
+✓ Matching EVM log event found at block 7 (tx 0x13a5da4e6dc4a00abe92a2c2d714458e5aa83f925b25586c37a769b3c8e1c2dc, index 0)
+╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Handler requested TEE Execution                                                                    │
+│ The simulator is not a real TEE, and is meant to debug.                                            │
+│ Do not use it for sensitive information.                                                           │
+│ During real execution, user logs for this trigger will not be visible, and will not leave the TEE. │
+│ They are presented in the simulator for debugging only.                                            │
+│                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+2026-09-13T16:35:33Z [USER LOG] released branch key for outcome 2
+
+✓ Workflow Simulation Result:
+"released 0x77c6ec3313571f2696231b0eb57554c136dd0c1280b1f516bc6033bad29db5ea outcome 2"
+
+2026-09-13T16:35:33Z [SIMULATION] Execution finished signal received
+
+Listen: ready for next request (run #2)
+2026-09-13T16:35:33Z [SIMULATION] Running trigger trigger=evm:ChainSelector:10344971235874465080@1.0.0
+  Still waiting (scanned through block 7)...
+  Still waiting (scanned through block 8)...
+✓ Matching EVM log event found at block 9 (tx 0xa30c1f77d26fa68b4fc28db44613fc0f37308b1e6bf20772f8301252bbb3fa8f, index 0)
+╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Handler requested TEE Execution                                                                    │
+│ The simulator is not a real TEE, and is meant to debug.                                            │
+│ Do not use it for sensitive information.                                                           │
+│ During real execution, user logs for this trigger will not be visible, and will not leave the TEE. │
+│ They are presented in the simulator for debugging only.                                            │
+│                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+2026-09-13T16:36:21Z [USER LOG] released branch key for outcome 1
+
+✓ Workflow Simulation Result:
+"released 0x7376298b2f4d137bb2bff943be4054d4354d70aaf16b88ab09325a305da8c60f outcome 1"
+
+2026-09-13T16:36:21Z [SIMULATION] Execution finished signal received
+
+Listen: ready for next request (run #3)
+
+# engine log, same window (UTC):
+2026-09-13T08:34:44.786Z resolved {"channelId":"sports","seq":1,"outcome":0,"label":"Manchester United win","tx":"0xff58f2b79aed6ae1bad9c5b5fe8b9f786fc347c43d1c77ddcc45dc4b8c09ca86"}
+2026-09-13T08:34:47.816Z no CRE key in time, revealed the winning branch locally {"eventId":"0xfa9065743d1211e328d8534fe669e4f60e9a24fec6efb614d9add44c96f9b674","outcome":0,"url":"http://localhost:4002/0xfa9065743d1211e328d8534fe669e4f60e9a24fec6efb614d9add44c96f9b674/branch-0-6020b3757b273209c10f9096efde403d.mp4"}
+2026-09-13T08:35:33.008Z resolved {"channelId":"sports","seq":2,"outcome":2,"label":"Draw","tx":"0x13a5da4e6dc4a00abe92a2c2d714458e5aa83f925b25586c37a769b3c8e1c2dc"}
+2026-09-13T08:35:33.127Z branch key released {"eventId":"0x77c6ec3313571f2696231b0eb57554c136dd0c1280b1f516bc6033bad29db5ea","outcome":2,"url":"http://localhost:4002/0x77c6ec3313571f2696231b0eb57554c136dd0c1280b1f516bc6033bad29db5ea/branch-2-a92a546d476da1944a42b5ee6279ad4a.mp4"}
+2026-09-13T08:36:20.829Z resolved {"channelId":"sports","seq":3,"outcome":1,"label":"Chelsea win","tx":"0xa30c1f77d26fa68b4fc28db44613fc0f37308b1e6bf20772f8301252bbb3fa8f"}
+2026-09-13T08:36:21.231Z branch key released {"eventId":"0x7376298b2f4d137bb2bff943be4054d4354d70aaf16b88ab09325a305da8c60f","outcome":1,"url":"http://localhost:4002/0x7376298b2f4d137bb2bff943be4054d4354d70aaf16b88ab09325a305da8c60f/branch-1-ba50a1699f7a0deb37c4dd6bc125d751.mp4"}
