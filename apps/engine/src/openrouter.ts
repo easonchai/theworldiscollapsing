@@ -56,8 +56,22 @@ export function makeOpenRouter(cfg: {
   const base = cfg.baseUrl.replace(/\/$/, "");
   const headers = { authorization: `Bearer ${cfg.apiKey}`, "content-type": "application/json" };
 
+  /**
+   * Authoring is one blocking call in the middle of a channel's production loop, and it had no
+   * deadline: a request that never answers stalled a probe for ten minutes on 2026-09-12 and would
+   * have stalled a live channel for as long as the socket stayed open. Two minutes is well past the
+   * slowest observed authoring call (about 40 s on gpt-5-mini at medium effort) and well short of
+   * the betting window, so a hung provider costs one skipped event rather than the channel.
+   */
+  const TIMEOUT_MS = 120_000;
+
   async function post(path: string, body: unknown): Promise<any> {
-    const res = await doFetch(`${base}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+    const res = await doFetch(`${base}${path}`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`POST ${path}: HTTP ${res.status} ${(await res.text()).slice(0, 300)}`);
     return res.json();
   }

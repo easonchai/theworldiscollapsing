@@ -36,10 +36,15 @@ export function makeBudget(cfg: {
       }
     },
     async charge(usd, what) {
-      if (usd <= 0) return;
-      spent += usd;
-      cfg.log("spend", { what, usd: Math.round(usd * 1000) / 1000, totalUsd: Math.round(spent * 100) / 100, capUsd: cfg.capUsd });
-      await cfg.persist(usd);
+      // Negative usd is a true-up refund (estimate was over the sidecar's actual billed_s), not a
+      // no-op: dropping it here silently ate every refund. Floor at zero so a refund larger than
+      // what is actually spent (should not happen, but a vendor's numbers are not ours to trust)
+      // cannot push World.spendUsd negative.
+      const applied = Math.max(-spent, usd);
+      if (applied === 0) return;
+      spent += applied;
+      cfg.log("spend", { what, usd: Math.round(applied * 1000) / 1000, totalUsd: Math.round(spent * 100) / 100, capUsd: cfg.capUsd });
+      await cfg.persist(applied);
     },
   };
 }

@@ -91,34 +91,30 @@ afterAll(async () => {
 });
 
 describe("render pipeline against the fake OpenRouter", () => {
-  it("renders first.mp4 to the shot sum and bills 480p", async () => {
-    const r = await render.firstHalf(ev);
-    const want = script.firstHalf.reduce((n, s) => n + s.seconds, 0);
-    expect(r.url).toMatch(/\/0xrendertest\/first\.mp4$/);
-    expect(await seconds(path.join(dir, "0xrendertest", "first.mp4"))).toBeCloseTo(want, 0);
-    expect(Math.abs((await seconds(path.join(dir, "0xrendertest", "first.mp4"))) - want)).toBeLessThan(1);
-    expect(r.costUsd).toBeCloseTo(want * 0.05, 6);
-    // key art still was generated and stored; last frame extracted for the branches
+  it("renders the whole event in one call: first half then branches, every file stored", async () => {
+    const r = await render.render(ev);
+    const wantFirst = script.firstHalf.reduce((n, s) => n + s.seconds, 0);
+    expect(r.firstHalfUrl).toMatch(/\/0xrendertest\/first\.mp4$/);
+    expect(await seconds(path.join(dir, "0xrendertest", "first.mp4"))).toBeCloseTo(wantFirst, 0);
+    expect(Math.abs((await seconds(path.join(dir, "0xrendertest", "first.mp4"))) - wantFirst)).toBeLessThan(1);
+    // key art still was generated and stored
     await stat(path.join(dir, "0xrendertest", "key.png"));
-    await stat(path.join(dir, ".work", "0xrendertest", "last.png"));
-  }, 120_000);
 
-  it("renders one branch per outcome from the first half's last frame and bills 768p", async () => {
-    const r = await render.branches({ ...ev, costUsd: 1 });
-    expect(r.urls).toHaveLength(script.outcomes.length);
-    const want = script.branches[0]!.reduce((n, s) => n + s.seconds, 0);
+    expect(r.branchUrls).toHaveLength(script.outcomes.length);
+    const wantBranch = script.branches[0]!.reduce((n, s) => n + s.seconds, 0);
     for (let i = 0; i < script.outcomes.length; i++) {
       // Random suffix: the only copy of this URL is Event.branchUrls, which is gated on state.
-      expect(r.urls[i]).toMatch(new RegExp(`/0xrendertest/branch-${i}-[0-9a-f]{32}\\.mp4$`));
-      const name = path.basename(new URL(r.urls[i]!).pathname);
-      expect(Math.abs((await seconds(path.join(dir, "0xrendertest", name))) - want)).toBeLessThan(1);
+      expect(r.branchUrls[i]).toMatch(new RegExp(`/0xrendertest/branch-${i}-[0-9a-f]{32}\\.mp4$`));
+      const name = path.basename(new URL(r.branchUrls[i]!).pathname);
+      expect(Math.abs((await seconds(path.join(dir, "0xrendertest", name))) - wantBranch)).toBeLessThan(1);
       // the guessable path an unrevealed branch used to sit at
       const guess = await fetch(`http://127.0.0.1:${mediaPort}/0xrendertest/branch-${i}.mp4`);
       expect(guess.status).toBe(404);
     }
-    const total = script.branches.flat().reduce((n, s) => n + s.seconds, 0);
-    expect(r.costUsd).toBeCloseTo(total * 0.08, 6);
-    // the per-event work directory is swept once the branches are stored
+
+    const wantBranchTotal = script.branches.flat().reduce((n, s) => n + s.seconds, 0);
+    expect(r.costUsd).toBeCloseTo(wantFirst * 0.05 + wantBranchTotal * 0.08, 6);
+    // the per-event work directory is swept once every file is stored
     await expect(stat(path.join(dir, ".work", "0xrendertest"))).rejects.toThrow();
   }, 180_000);
 
@@ -139,7 +135,7 @@ describe("render pipeline against the fake OpenRouter", () => {
       imageCostUsd: 0.04,
       log: () => {},
     });
-    await expect(capped.firstHalf({ ...ev, id: `${ev.id.slice(0, -2)}ff` as EventRow["id"] })).rejects.toBeInstanceOf(SpendCapError);
+    await expect(capped.render({ ...ev, id: `${ev.id.slice(0, -2)}ff` as EventRow["id"] })).rejects.toBeInstanceOf(SpendCapError);
     expect(persisted).toBe(0); // rejected up front: nothing was charged, nothing was submitted
   });
 });

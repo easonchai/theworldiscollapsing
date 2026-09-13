@@ -3,6 +3,12 @@ import type { Event } from "db";
 /** A studio card, cued `at` seconds into the first half (PRD story 11). */
 export type StudioCard = { at: number; title: string; stats: string[] };
 
+/**
+ * The corner scorebug, sports only. One score, never the list: the authored `atEnd` holds a final
+ * per outcome and so gives the answer away, exactly like `branchUrls`. See `scorebug` below.
+ */
+export type Scorebug = { sides: [string, string]; score: string; final: boolean };
+
 /** The only shape of an Event a client ever sees. Defined in docs/CONTRACTS.md. */
 export type EventPublic = {
   id: `0x${string}`;
@@ -14,6 +20,7 @@ export type EventPublic = {
   outcomes: string[];
   ticker: string[];
   cards: StudioCard[];
+  score: Scorebug | null;
   reasoning: string | null;
   firstHalfUrl: string | null;
   winningBranchUrl: string | null;
@@ -54,12 +61,26 @@ function cards(script: { cards?: unknown; firstHalf?: unknown }): StudioCard[] {
 }
 
 /**
+ * The scorebug, reduced to the one score the viewer is allowed to know. Before the reveal that is
+ * the break score, which the author is required to keep level; after it, the final for the outcome
+ * that actually happened. The other finals stay on the server, for the same reason the losing
+ * branch URLs do: `atEnd[2]` reading "1 - 2" tells you who won before the round publishes.
+ */
+function scorebug(script: { score?: unknown }, outcome: number | null, revealed: boolean): Scorebug | null {
+  const s = script.score as { sides?: unknown; atBreak?: unknown; atEnd?: unknown } | null | undefined;
+  const sides = strings(s?.sides);
+  if (typeof s?.atBreak !== "string" || sides.length !== 2) return null;
+  const final = revealed ? strings(s.atEnd)[outcome as number] : undefined;
+  return { sides: [sides[0]!, sides[1]!], score: final ?? s.atBreak, final: final !== undefined };
+}
+
+/**
  * Build the public view of an event row. This is the anti-skip-ahead guarantee: the object is
  * constructed field by field (never spread from the row), and `branchUrls` leaves this function
  * only as `winningBranchUrl`, only once the chain has resolved the event.
  */
 export function toPublic(e: Event): EventPublic {
-  const script = (e.script ?? {}) as { ticker?: unknown; cards?: unknown; firstHalf?: unknown };
+  const script = (e.script ?? {}) as { ticker?: unknown; cards?: unknown; firstHalf?: unknown; score?: unknown };
   const branches = strings(e.branchUrls);
   const revealed = REVEALED.has(e.state) && e.outcome !== null;
   return {
@@ -72,6 +93,7 @@ export function toPublic(e: Event): EventPublic {
     outcomes: strings(e.outcomes),
     ticker: strings(script.ticker),
     cards: cards(script),
+    score: scorebug(script, e.outcome, revealed),
     reasoning: e.reasoning,
     firstHalfUrl: e.firstHalfUrl,
     winningBranchUrl: revealed ? (branches[e.outcome as number] ?? null) : null,

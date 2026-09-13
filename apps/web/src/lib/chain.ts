@@ -20,6 +20,12 @@ export const WORLD_ACTION = process.env.NEXT_PUBLIC_WORLD_ACTION ?? "verify";
 
 export const chain = CHAIN_ID === 84532 ? baseSepolia : anvil;
 
+// A Privy embedded wallet is born with no ETH, so `/api/verify` drips some from the gate owner
+// whenever a verified address falls below GAS_MIN. At Base Sepolia's ~0.006 gwei a faucet call
+// costs ~0.000001 ETH, so GAS_DRIP is hundreds of writes; GAS_MIN is well above one bet.
+export const GAS_MIN = 500_000_000_000_000n; // 0.0005 ETH
+export const GAS_DRIP = 2_000_000_000_000_000n; // 0.002 ETH
+
 export const publicClient = createPublicClient({ chain, transport: http(RPC_URL) });
 
 // ── drand evmnet (mirrors Arena.sol and apps/engine/src/drand.ts) ─────────────

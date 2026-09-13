@@ -1,4 +1,4 @@
-import { Authored, type Shot } from "./authored.js";
+import { Authored, MIN_SHOT_SEC, type Shot } from "./authored.js";
 import { eventIdFor, type Author, type AuthorCtx } from "./machine.js";
 import { SchemaError, type OpenRouter, type Reasoning } from "./openrouter.js";
 
@@ -21,7 +21,7 @@ Pacing: real time, live news.`,
   culture: `Culture.
 Subject: live coverage of an event as it happens — award stages, red carpets, concert stages, gallery openings, talent-show finals. Named artists, hosts and works that recur.
 Camera: an ENG press-pool camera — shoulder-held in the scrum, or a hard camera locked on the stage.
-On screen: the stage and its lighting exactly as it is, presenters, nominees, the audience, photographers.
+On screen: the stage and its lighting exactly as it is, presenters, nominees, the audience, photographers. Frame the people, never the backdrop behind them: a step-and-repeat board or an award logo renders as gibberish lettering and takes over the shot.
 Pacing: real time, as it happens.`,
   region: `Region: one coastal city state.
 Subject: local-news field reportage — the council chamber, harbour works, the seawall, the ferry, the market, storm damage, festivals, local disputes. The same landmarks, streets and councillors recur.
@@ -40,14 +40,18 @@ House style, every shot on every channel: this is real footage as broadcast on t
 
 Hard rules:
 - The first half MUST end level. No outcome may be foreshadowed, hinted at or made more likely by anything in it. A viewer who has seen the whole first half must still believe every outcome is possible.
-- Give 3 to 5 outcomes. They are mutually exclusive and exhaustive: exactly one happens. Label them plainly, so nobody can misread which one they are betting on.
+- Give exactly ${ctx.nOutcomes} outcomes. They are mutually exclusive and exhaustive: exactly one happens. Label them plainly, so nobody can misread which one they are betting on.
+- title and outcomes are read by a viewer next to their money. Write the name of the thing only. No numbering, no "Event ${ctx.seq}", no "Outcome 1", no prefix of any kind. Name the real people, clubs, parties and works of this world, the way the canon names them: "Jun Park wins the award", never a placeholder like "Nominee A", "Candidate B" or "the favourite".
 - One second-half shot list per outcome, in the same order as the outcomes. Each branch continues from the last frame of the first half.
-- Every shot is a video prompt of 5 to 15 seconds. Write one or two plain sentences, no paragraphs: start with the camera position of this channel, then what it sees. Short prompts render closer to what you asked for.
-- No dialogue, no captions, no subtitles. On-screen graphics — scoreboards, tickers, charts, lower thirds — may be in frame as broadcast furniture, but nothing may depend on them being read: rendered text comes out as gibberish. On politics, put a chart, graph, map or gauge in shot in most studio shots and say what it shows.
+- Every shot is a video prompt of 6 to 15 seconds. Write one or two plain sentences, no paragraphs: start with the camera position of this channel, then what it sees. Short prompts render closer to what you asked for.
+- No dialogue, no captions, no subtitles.
+- Never write text, or the things that carry it, into a shot. No logo, no sign, no banner, no step-and-repeat backdrop, no scoreboard, no ticker, no lower third, no name card, no hoarding, no printed slogan on clothing. The video model renders any lettering as gibberish, and a shot that names one puts that gibberish in the middle of the frame. Write the people, the action and the light instead: what the camera is pointed at and what it is doing.
+- Politics is the only exception, and it is a shape, not words: put a chart, graph, map or gauge on the studio screen in most studio shots and say what it shows. A rising bar or a red zone on a map reads at a glance. The numbers on it do not have to be legible.
 - The first-half shot seconds must total ${ctx.firstHalfSec} seconds (within 10%).
 - Each branch's shot seconds must total ${ctx.secondHalfSec} seconds (within 10%).
 - cards: 1 or 2 studio cards, the graphics the broadcast cuts to between first-half clips. Each has afterShot (the 0-based index of the first-half shot it follows, so it must be smaller than the number of first-half shots), a title under 48 characters, and exactly two short stat lines, also under 48 characters. Write them as a studio would: a heading and two numbers or facts about this event.
 - ticker: 3 to 6 short broadcast strap lines, under 60 characters each.
+${ctx.channelId === "sports" ? `- score: the scorebug the broadcast keeps in the corner of the picture. sides is the two competitors as scorebug codes of 3 or 4 letters, drawn from their names the way a broadcaster shortens them (Harbour City becomes HAR). atBreak is the score at the end of the first half and it must be level, because the first half gives nothing away. atEnd is one final score per outcome, in the same order as outcomes, and each one must follow from atBreak and from that outcome: the branch where Harbour City win cannot end level. Write scores only, like "1 - 1" and "2 - 1", never words. This is the one thing on the picture a viewer actually reads, because it is drawn as page text rather than generated as video, so get it right.\n` : `- score: null. Only sports has a scoreline.\n`}
 - canonUpdates: one list per outcome, 1 to 3 flat factual sentences stating what became true in the world if that outcome happens. They are appended to the world log and every later event reads them.
 - reasoning: two or three sentences on how this event follows from the canon and why the first half gives nothing away.
 
@@ -105,10 +109,25 @@ async function previousPools(
   }
 }
 
-const MIN_SHOT_SEC = 5; // Shot's floor, and MiniMax's shortest clip
 const OVERRUN = 1.1; // the tolerance the prompt asks for, enforced here because video is billed per second
 
 const totalSec = (shots: Shot[]): number => shots.reduce((n, s) => n + s.seconds, 0);
+
+/**
+ * The prompt's own scaffolding leaks into the two strings a bettor reads next to their money:
+ * two of the four REAL events came back as `Outcome 1 — Harbour City win` and
+ * `Event 43 — National Film Gala` (ticket 29). Stripped here rather than asked for again, for the
+ * same reason the shot lengths are: the model is inconsistent about it across calls.
+ *
+ * The separator is required, so a title that merely starts with one of these words survives
+ * ("Option B", "Eventual Recount"). A string that is nothing but scaffolding is left alone.
+ */
+const SCAFFOLD = /^\s*(?:outcome|option|result|event|episode|part)\b\s*#?\d*\s*[-–—:.)]\s*/i;
+
+function unlabel(s: string): string {
+  const out = s.replace(SCAFFOLD, "").trim();
+  return out.length ? out : s.trim();
+}
 
 /**
  * The model treats the target durations as a suggestion — a real probe against gpt-6-astra returned
@@ -169,9 +188,19 @@ export function makeAuthor(cfg: {
             return kept;
           };
           const a = { ...r.object, reasoning: r.reasoning ?? r.object.reasoning };
+          if (a.outcomes.length !== ctx.nOutcomes) {
+            throw new SchemaError(`expected exactly ${ctx.nOutcomes} outcomes, got ${a.outcomes.length}`);
+          }
           const firstHalf = fit(a.firstHalf, ctx.firstHalfSec, "firstHalf");
           return {
             ...a,
+            // The schema offers `score` to every channel, so the model fills it in whatever the
+            // prompt says: a probe came back with a region scorebug reading "City v Harb" and
+            // finals in Chinese. Only sports has a scoreline, and that is decided here rather
+            // than asked for, the same way the shot lengths and the outcome labels are.
+            score: ctx.channelId === "sports" ? a.score : null,
+            title: unlabel(a.title),
+            outcomes: a.outcomes.map(unlabel),
             firstHalf,
             branches: a.branches.map((b, i) => fit(b, ctx.secondHalfSec, `branch ${i}`)),
             // Dropping trailing shots can orphan a card's cue; keep it on the last shot that survived.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { env, flag } from "./env.js";
+import { env, flag, intEnv } from "./env.js";
 
 afterEach(() => {
   delete process.env.TWIC_TEST_FLAG;
@@ -31,5 +31,25 @@ describe("env", () => {
     expect(() => env("TWIC_TEST_FLAG")).toThrow(/missing env TWIC_TEST_FLAG/);
     process.env.TWIC_TEST_FLAG = "set";
     expect(env("TWIC_TEST_FLAG", "fallback")).toBe("set");
+  });
+});
+
+describe("intEnv", () => {
+  it("uses the fallback when unset", () => {
+    expect(intEnv("TWIC_TEST_FLAG", "3", 2, 5)).toBe(3);
+  });
+
+  it("parses a set value within range", () => {
+    process.env.TWIC_TEST_FLAG = "4";
+    expect(intEnv("TWIC_TEST_FLAG", "3", 2, 5)).toBe(4);
+  });
+
+  it("rejects a non-integer, an out-of-range value, and out-of-range fallback with a clear message", () => {
+    process.env.TWIC_TEST_FLAG = "2.5";
+    expect(() => intEnv("TWIC_TEST_FLAG", "3", 2, 5)).toThrow(/TWIC_TEST_FLAG must be an integer 2 to 5, got 2.5/);
+    process.env.TWIC_TEST_FLAG = "1";
+    expect(() => intEnv("TWIC_TEST_FLAG", "3", 2, 5)).toThrow(/TWIC_TEST_FLAG must be an integer 2 to 5, got 1/);
+    process.env.TWIC_TEST_FLAG = "6";
+    expect(() => intEnv("TWIC_TEST_FLAG", "3", 2, 5)).toThrow(/TWIC_TEST_FLAG must be an integer 2 to 5, got 6/);
   });
 });

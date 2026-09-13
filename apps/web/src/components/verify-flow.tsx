@@ -3,8 +3,7 @@
 import dynamic from "next/dynamic";
 import { useState } from "react";
 import { GATE_MODE, USDC, WORLD_APP_ID, mockusdcAbi, publicClient } from "@/lib/chain";
-import { buildVerifyMessage } from "@/lib/verify-message";
-import { confirmed, txMessage, type TxMessage } from "@/lib/tx";
+import { confirmed, ensureGas, requestVerify, txMessage, type TxMessage } from "@/lib/tx";
 import { useGate, usePoll } from "./chain-hooks";
 import { TxError, clock, useNow } from "./bits";
 import { useWallet } from "./wallet";
@@ -14,7 +13,7 @@ const WorldVerify = dynamic(() => import("./world-verify").then((m) => m.WorldVe
 const FAUCET_COOLDOWN_S = 86_400n;
 
 export function VerifyFlow() {
-  const { address, walletClient, login } = useWallet();
+  const { address, walletClient, sponsored, login } = useWallet();
   const { gate, refresh } = useGate();
   const [attest, setAttest] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -33,34 +32,20 @@ export function VerifyFlow() {
   const readyAtMs = lastFaucet ? Number(lastFaucet + FAUCET_COOLDOWN_S) * 1000 : 0;
   const cooling = lastFaucet !== null && lastFaucet > 0n && readyAtMs > now;
 
-  /** Sign the challenge, then hand it to the server: only the wallet's owner can ask to be verified. */
-  async function sign() {
+  /** Sign, then let the server set the flag (and drip gas into an empty wallet). */
+  async function verify(extra: Record<string, unknown>) {
     if (!walletClient || !address) throw new Error("no wallet");
-    const message = buildVerifyMessage(address, Math.floor(Date.now() / 1000));
-    const signature = await walletClient.signMessage({ account: address, message });
-    return { message, signature };
-  }
-
-  async function post(body: Record<string, unknown>) {
-    const res = await fetch("/api/verify", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const out = (await res.json()) as { verified?: boolean; tx?: string; error?: string };
-    if (!res.ok || !out.verified) throw new Error(out.error ?? `verify failed (${res.status})`);
-    setStatus(`Verified on chain — ${out.tx?.slice(0, 12)}…`);
+    setStatus("Signing…");
+    const out = await requestVerify(walletClient, address, extra);
+    setStatus(out.tx ? `Verified on chain — ${out.tx.slice(0, 12)}…` : "Already verified.");
     refresh();
   }
 
   async function verifyCheckbox() {
     setBusy(true);
     setError(null);
-    setStatus("Signing…");
     try {
-      const { message, signature } = await sign();
-      setStatus("Setting your flag on chain…");
-      await post({ address, attest: true, message, signature });
+      await verify({ attest: true });
     } catch (e) {
       setStatus(null);
       setError(txMessage(e));
@@ -75,6 +60,7 @@ export function VerifyFlow() {
     setError(null);
     setStatus("Requesting play USDC…");
     try {
+      await ensureGas({ walletClient, address, sponsored }, setStatus);
       // Unverified addresses and a cooldown that has not passed both revert: simulating names
       // which one it is before the wallet ever opens.
       const sim = await publicClient.simulateContract({
@@ -126,7 +112,8 @@ export function VerifyFlow() {
           <input
             type="checkbox"
             className="mt-1 size-4 accent-amber"
-            checked={attest}
+            checked={attest || !!gate?.verified}
+            disabled={!!gate?.verified}
             onChange={(e) => setAttest(e.target.checked)}
           />
           I am 18 or older. This is play money on a testnet.
@@ -137,7 +124,7 @@ export function VerifyFlow() {
             <p className="num text-[13px] text-amber">✓ this address is verified</p>
           ) : GATE_MODE === "world" ? (
             WORLD_APP_ID ? (
-              <WorldVerifyGate attest={attest} address={address} sign={sign} post={post} setError={setError} />
+              <WorldVerifyGate attest={attest} address={address} verify={verify} setError={setError} />
             ) : (
               <p className="num text-[12px] text-amber">
                 World mode is selected but NEXT_PUBLIC_WORLD_APP_ID is not set, so Selfie Check cannot start here.
@@ -184,14 +171,12 @@ export function VerifyFlow() {
 function WorldVerifyGate({
   attest,
   address,
-  sign,
-  post,
+  verify,
   setError,
 }: {
   attest: boolean;
   address: string | null;
-  sign: () => Promise<{ message: string; signature: string }>;
-  post: (body: Record<string, unknown>) => Promise<void>;
+  verify: (extra: Record<string, unknown>) => Promise<void>;
   setError: (m: TxMessage) => void;
 }) {
   if (!address || !attest) {
@@ -204,8 +189,7 @@ function WorldVerifyGate({
       signal={address}
       onProof={async (proof) => {
         try {
-          const { message, signature } = await sign();
-          await post({ address, attest: true, proof, message, signature });
+          await verify({ attest: true, proof });
         } catch (e) {
           setError(txMessage(e));
         }

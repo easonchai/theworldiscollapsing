@@ -23,14 +23,33 @@ export const CHANNEL_PREFIX: Record<string, string> = {
   sports: "Live sports broadcast footage, broadcast camera, real-time speed:",
   politics:
     "Television news footage, handheld news camera or fixed studio camera, real-time, charts and graphs on the studio screen where the shot is in a studio:",
-  culture: "Live event television coverage, ENG press-pool camera, stage light as it is, real-time:",
+  culture: "Live event television coverage, press camera, stage light as it is, real-time:",
   region: "Local television news field footage, reporter's camera, natural light, real-time:",
 };
 const DEFAULT_PREFIX = "Live television broadcast footage, broadcast camera, real-time speed:";
-/** MiniMax has no negative-prompt field, so the constraints ride in the prompt as plain statements. */
-export const STYLE_SUFFIX = "Real-time speed. No slow motion. Not cinematic. No film look. Natural light as it is.";
-/** Prompts over ~2000 chars are risky on MiniMax and short ones follow better; this is the ceiling. */
-const MAX_PROMPT = 600;
+/**
+ * MiniMax has no negative-prompt field, so the constraints ride in the prompt as plain statements.
+ * Every clip carries these once and `keyArtPrompt` no longer repeats them.
+ *
+ * v3, ticket 29: "No captions, no logos" was read as a rule about overlays, so scene text survived
+ * on every channel and fast-h3 rendered it as nonsense letterforms — a gold awards screen reading
+ * CHENNIU DORSTAWS RAPOOI was the brightest object in the culture clip. The rule now names what the
+ * camera sees. "Too small, too distant or too oblique" rather than "out of focus" or "blurred" on
+ * purpose: those two ask for a soft image, which is a different and worse picture. Signage stays in
+ * frame, because politics needs a chart on the studio screen and the shape is what carries it.
+ */
+export const STYLE_SUFFIX =
+  "Real-time speed. No slow motion. Not cinematic. No film look. Natural light as it is. " +
+  "Signs, screens and hoardings may be in frame, but lettering on them is too small, too distant " +
+  "or too oblique to read. No readable words anywhere in frame. No captions, no subtitles, " +
+  "no broadcaster watermark, no logos.";
+/**
+ * Prompts over ~2000 chars are risky on MiniMax and short ones follow better; this is the ceiling.
+ * 800, not 600: the v3 suffix is 195 chars longer than v2, and at 600 the shot text is what pays for
+ * it — a two-sentence shot would start getting sliced mid-word. This leaves the shot the same room
+ * it had before the suffix grew.
+ */
+const MAX_PROMPT = 800;
 
 /**
  * The prompt actually sent to the video model: channel house style, the authored shot, the universal
@@ -150,70 +169,72 @@ export function makeRender(cfg: {
     }
   }
 
-  async function renderList(ev: EventRow, shots: Shot[], res: Res, frameUrl: string, prefix: string, out: string) {
-    const clips = await pool(CONCURRENCY, shots, (s, i) => clip(ev, s, res, frameUrl, `${prefix}-${i}.mp4`));
-    await concat(clips, out);
-    return clips.length;
+  async function firstHalf(ev: EventRow): Promise<{ url: string; costUsd: number }> {
+    await mkdir(path.join(cfg.workDir, ev.id), { recursive: true });
+    const shots = ev.script.firstHalf;
+    // Refuse before the first clip rather than leave a half-rendered list behind.
+    cfg.budget.assertAffordable(listCost(shots, "480p") + cfg.imageCostUsd, "first half");
+    const ka = await keyArt(ev);
+
+    let costUsd = ka.costUsd;
+    const todo = shots.map((s, i) => ({ s, i })).filter(({ i }) => !(i === 0 && ka.clip0));
+    const clips = new Map<number, string>();
+    if (ka.clip0) clips.set(0, ka.clip0);
+    await pool(CONCURRENCY, todo, async ({ s, i }) => {
+      clips.set(i, await clip(ev, s, "480p", ka.url, `clip-${i}.mp4`));
+      costUsd += s.seconds * RATE["480p"];
+    });
+
+    const out = work(ev, "first.mp4");
+    await concat(shots.map((_, i) => clips.get(i)!), out);
+    // Branch clips continue from this frame, so the second half is visually continuous.
+    await lastFrame(out, work(ev, "last.png"));
+    const seconds = shots.reduce((n, s) => n + s.seconds, 0);
+    cfg.log("rendered first half", { channelId: ev.channelId, seq: ev.seq, clips: shots.length, seconds, usd: round(costUsd) });
+    return { url: await cfg.store.storeFile(ev.id, "first.mp4", out), costUsd };
+  }
+
+  // firstHalfCostUsd is passed through rather than read off the row: `produce` no longer updates the
+  // row between the two steps, so ev.costUsd is still whatever it was before this render started.
+  async function branches(ev: EventRow, firstHalfCostUsd: number): Promise<{ urls: string[]; costUsd: number }> {
+    const dir = path.join(cfg.workDir, ev.id);
+    await mkdir(dir, { recursive: true });
+    const seed = work(ev, "last.png");
+    await lastFrame(work(ev, "first.mp4"), seed).catch(() => {}); // idempotent; no-op if already extracted
+    const seedUrl = await cfg.store.storeFile(ev.id, "last.png", seed);
+
+    const lists = ev.script.branches;
+    const flat = lists.flatMap((shots, b) => shots.map((s, i) => ({ s, b, i })));
+    cfg.budget.assertAffordable(listCost(flat.map((f) => f.s), "768p"), "branches");
+    const paths = await pool(CONCURRENCY, flat, ({ s, b, i }) => clip(ev, s, "768p", seedUrl, `branch-${b}-${i}.mp4`));
+
+    const urls: string[] = [];
+    for (let b = 0; b < lists.length; b++) {
+      const out = work(ev, `branch-${b}.mp4`);
+      await concat(flat.map((f, k) => (f.b === b ? paths[k]! : null)).filter((p): p is string => !!p), out);
+      urls.push(await cfg.store.storeFile(ev.id, branchFileName(b), out));
+    }
+
+    const seconds = flat.reduce((n, f) => n + f.s.seconds, 0);
+    const costUsd = seconds * RATE["768p"];
+    cfg.log("rendered event", {
+      channelId: ev.channelId,
+      seq: ev.seq,
+      clips: ev.script.firstHalf.length + flat.length,
+      seconds: ev.script.firstHalf.reduce((n, s) => n + s.seconds, 0) + seconds,
+      usd: round(firstHalfCostUsd + costUsd),
+    });
+    // Every finished file is in the media store now; nothing reads this directory again. Without
+    // the sweep it keeps ~18 MB of clips per event forever.
+    await rm(dir, { recursive: true, force: true });
+    return { urls, costUsd };
   }
 
   return {
-    async firstHalf(ev) {
-      await mkdir(path.join(cfg.workDir, ev.id), { recursive: true });
-      const shots = ev.script.firstHalf;
-      // Refuse before the first clip rather than leave a half-rendered list behind.
-      cfg.budget.assertAffordable(listCost(shots, "480p") + cfg.imageCostUsd, "first half");
-      const ka = await keyArt(ev);
-
-      let costUsd = ka.costUsd;
-      const todo = shots.map((s, i) => ({ s, i })).filter(({ i }) => !(i === 0 && ka.clip0));
-      const clips = new Map<number, string>();
-      if (ka.clip0) clips.set(0, ka.clip0);
-      await pool(CONCURRENCY, todo, async ({ s, i }) => {
-        clips.set(i, await clip(ev, s, "480p", ka.url, `clip-${i}.mp4`));
-        costUsd += s.seconds * RATE["480p"];
-      });
-
-      const out = work(ev, "first.mp4");
-      await concat(shots.map((_, i) => clips.get(i)!), out);
-      // Branch clips continue from this frame, so the second half is visually continuous.
-      await lastFrame(out, work(ev, "last.png"));
-      const seconds = shots.reduce((n, s) => n + s.seconds, 0);
-      cfg.log("rendered first half", { channelId: ev.channelId, seq: ev.seq, clips: shots.length, seconds, usd: round(costUsd) });
-      return { url: await cfg.store.storeFile(ev.id, "first.mp4", out), costUsd };
-    },
-
-    async branches(ev) {
-      const dir = path.join(cfg.workDir, ev.id);
-      await mkdir(dir, { recursive: true });
-      const seed = work(ev, "last.png");
-      await lastFrame(work(ev, "first.mp4"), seed).catch(() => {}); // idempotent; no-op if already extracted
-      const seedUrl = await cfg.store.storeFile(ev.id, "last.png", seed);
-
-      const lists = ev.script.branches;
-      const flat = lists.flatMap((shots, b) => shots.map((s, i) => ({ s, b, i })));
-      cfg.budget.assertAffordable(listCost(flat.map((f) => f.s), "768p"), "branches");
-      const paths = await pool(CONCURRENCY, flat, ({ s, b, i }) => clip(ev, s, "768p", seedUrl, `branch-${b}-${i}.mp4`));
-
-      const urls: string[] = [];
-      for (let b = 0; b < lists.length; b++) {
-        const out = work(ev, `branch-${b}.mp4`);
-        await concat(flat.map((f, k) => (f.b === b ? paths[k]! : null)).filter((p): p is string => !!p), out);
-        urls.push(await cfg.store.storeFile(ev.id, branchFileName(b), out));
-      }
-
-      const seconds = flat.reduce((n, f) => n + f.s.seconds, 0);
-      const costUsd = seconds * RATE["768p"];
-      cfg.log("rendered event", {
-        channelId: ev.channelId,
-        seq: ev.seq,
-        clips: ev.script.firstHalf.length + flat.length,
-        seconds: ev.script.firstHalf.reduce((n, s) => n + s.seconds, 0) + seconds,
-        usd: round((ev.costUsd ?? 0) + costUsd),
-      });
-      // Every finished file is in the media store now; nothing reads this directory again. Without
-      // the sweep it keeps ~18 MB of clips per event forever.
-      await rm(dir, { recursive: true, force: true });
-      return { urls, costUsd };
+    async render(ev) {
+      const first = await firstHalf(ev);
+      const second = await branches(ev, first.costUsd);
+      return { firstHalfUrl: first.url, branchUrls: second.urls, costUsd: first.costUsd + second.costUsd };
     },
   };
 }
@@ -222,4 +243,4 @@ const round = (n: number) => Math.round(n * 100) / 100;
 
 /** The still that seeds every first-half clip, so it has to be in the same house style as they are. */
 export const keyArtPrompt = (ev: EventRow) =>
-  clipPrompt(ev.channelId, `A still frame from live coverage of: ${ev.title}. ${ev.premise} No captions, no logos.`);
+  clipPrompt(ev.channelId, `A still frame from live coverage of: ${ev.title}. ${ev.premise}`);

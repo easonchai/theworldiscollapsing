@@ -15,7 +15,7 @@ import {
   publicClient,
 } from "@/lib/chain";
 import type { EventPublic } from "@/lib/public";
-import { betRevertMessage, confirmed, txMessage, type TxMessage } from "@/lib/tx";
+import { betRevertMessage, confirmed, ensureGas, txMessage, type TxMessage } from "@/lib/tx";
 import { useGate, usePoll } from "./chain-hooks";
 import { useWallet } from "./wallet";
 import { TxError, usdc } from "./bits";
@@ -163,7 +163,7 @@ export function Markets({
   /** What sits between the board and the ticket at the foot of the rail. */
   children?: React.ReactNode;
 }) {
-  const { address, walletClient } = useWallet();
+  const { address, walletClient, sponsored } = useWallet();
   const { gate, refresh: refreshGate } = useGate();
   const [amount, setAmount] = useState("25");
   const [pick, setPick] = useState<{ i: number; yes: boolean } | null>(null);
@@ -202,6 +202,7 @@ export function Markets({
     setBusy(key);
     setError(null);
     try {
+      await ensureGas({ walletClient, address, sponsored }, setStatus);
       const allowance = await publicClient.readContract({
         address: USDC,
         abi: mockusdcAbi,
@@ -414,7 +415,7 @@ export function ClaimButton({
   claimable: bigint;
   onClaimed?: () => void;
 }) {
-  const { address, walletClient } = useWallet();
+  const { address, walletClient, sponsored } = useWallet();
   const { refresh: refreshGate } = useGate();
   const [busy, setBusy] = useState(false);
   const [paid, setPaid] = useState<bigint | null>(null);
@@ -425,6 +426,7 @@ export function ClaimButton({
     setBusy(true);
     setError(null);
     try {
+      await ensureGas({ walletClient, address, sponsored });
       const sim = await publicClient.simulateContract({
         address: ARENA,
         abi: arenaAbi,

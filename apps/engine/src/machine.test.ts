@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { Hex } from "viem";
-import { outcomeFor } from "./drand.js";
-import { DEMO, eventIdFor, runChannel, type Chain, type Deps, type EventRow, type Store, type Timing } from "./machine.js";
+import { outcomeFor, PERIOD, SUSPENSE_GAP } from "./drand.js";
+import {
+  DEMO,
+  REAL,
+  RenderFetchError,
+  eventIdFor,
+  runChannel,
+  type Chain,
+  type Deps,
+  type EventRow,
+  type Store,
+  type Timing,
+} from "./machine.js";
 import { stubAuthor } from "./stubs.js";
 
 const SIG =
@@ -124,10 +135,15 @@ function harness(over: Partial<Deps> & { fc?: ReturnType<typeof fakeChain> } = {
     drand: { fetchRound: async (round) => ({ round, signature: SIG }) },
     author: stubAuthor,
     render: {
-      firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
-      branches: async (ev) => ({ urls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`), costUsd: 2 }),
+      render: async (ev) => ({
+        firstHalfUrl: `first:${ev.seq}`,
+        branchUrls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`),
+        costUsd: 3,
+      }),
     },
     timing: T,
+    nOutcomes: 3,
+    provenance: "reactor:real",
     ...clock,
     log: () => {},
     alwaysOn: true,
@@ -143,6 +159,47 @@ function harness(over: Partial<Deps> & { fc?: ReturnType<typeof fakeChain> } = {
 
 const rows = (s: FakeStore) => [...s.rows.values()].sort((a, b) => a.seq - b.seq);
 const doneCount = (s: FakeStore) => rows(s).filter((r) => r.state === "DONE").length;
+
+/**
+ * Drops an open (unfinished) event straight into the store, as a previous engine run would have left
+ * it, bypassing produce()/nextSeq so its provenance can be set independently of the running engine's.
+ * seq 42 (ticket 21's real example) keeps it clear of the seq-1-onward events runChannel authors itself.
+ */
+async function seedEvent(
+  store: FakeStore,
+  seq: number,
+  provenance: string | null,
+  state: EventRow["state"] = "RENDER",
+): Promise<EventRow> {
+  const a = await stubAuthor.author({ channelId: "sports", seq, canon: [], firstHalfSec: 2, secondHalfSec: 1, nOutcomes: 3 });
+  const row: EventRow = {
+    id: eventIdFor("sports", seq),
+    channelId: "sports",
+    seq,
+    state,
+    title: a.title,
+    premise: a.premise,
+    outcomes: a.outcomes,
+    script: a,
+    provenance,
+    reasoning: a.reasoning ?? null,
+    firstHalfUrl: null,
+    branchUrls: null,
+    lockTime: null,
+    drandRound: null,
+    startTime: null,
+    revealTime: null,
+    outcome: null,
+    signature: null,
+    createTx: null,
+    resolveTx: null,
+    costUsd: null,
+    renderAttempts: 0,
+    error: null,
+  };
+  store.rows.set(row.id, row);
+  return row;
+}
 
 describe("channel lifecycle", () => {
   it("runs create → resolve in order, after lock, and reaches DONE with canon applied", async () => {
@@ -240,14 +297,13 @@ describe("channel lifecycle", () => {
     let attempts = 0;
     const h = harness({
       render: {
-        firstHalf: async (ev) => {
+        render: async (ev) => {
           if (ev.seq === 1) {
             attempts++;
             throw new Error("boom");
           }
-          return { url: `first:${ev.seq}`, costUsd: 1 };
+          return { firstHalfUrl: `first:${ev.seq}`, branchUrls: ev.outcomes.map(() => "b"), costUsd: 3 };
         },
-        branches: async (ev) => ({ urls: ev.outcomes.map(() => "b"), costUsd: 2 }),
       },
     });
     const store = await h.run((s) => doneCount(s) >= 1);
@@ -258,9 +314,32 @@ describe("channel lifecycle", () => {
     expect(b.state).toBe("DONE");
   });
 
+  it("skips an event on a fetch failure without retrying or opening a second paid session", async () => {
+    // Ticket 24: the build was fully paid for and only the download failed, so re-rendering would
+    // pay for the build a second time. Unlike a plain render failure, this must not touch
+    // renderAttempts or retry, just skip straight away.
+    const callsBySeq = new Map<number, number>();
+    const h = harness({
+      render: {
+        render: async (ev) => {
+          callsBySeq.set(ev.seq, (callsBySeq.get(ev.seq) ?? 0) + 1);
+          if (ev.seq === 1) throw new RenderFetchError("sidecar error at stage fetch: connection reset", 147);
+          return { firstHalfUrl: `first:${ev.seq}`, branchUrls: ev.outcomes.map(() => "b"), costUsd: 3 };
+        },
+      },
+    });
+    const store = await h.run((s) => doneCount(s) >= 1);
+    const [a, b] = rows(store);
+    expect(a.state).toBe("SKIPPED");
+    expect(a.renderAttempts).toBe(0); // never treated as a build failure worth retrying
+    expect(a.error).toMatch(/fetch/);
+    expect(callsBySeq.get(1)).toBe(1); // exactly one render call, no retry
+    expect(b.state).toBe("DONE");
+  });
+
   it("backs off exponentially while every production fails", async () => {
     const h = harness({
-      render: { firstHalf: async () => { throw new Error("vendor down"); }, branches: async () => ({ urls: [], costUsd: 0 }) },
+      render: { render: async () => { throw new Error("vendor down"); } },
     });
     const t0 = h.clock.now();
     await h.run((s) => rows(s).filter((r) => r.state === "SKIPPED").length >= 5);
@@ -268,52 +347,44 @@ describe("channel lifecycle", () => {
     expect(h.clock.now() - t0).toBeGreaterThanOrEqual(30 * T.idlePollMs);
   });
 
-  it("still resolves and reveals when branch rendering fails", async () => {
+  it("an event reaches READY only with every branch stored", async () => {
+    // The render resolves only once both URL sets are ready, so nothing partial is ever persisted.
     const h = harness({
       render: {
-        firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
-        branches: async () => { throw new Error("vendor down"); },
-      },
-    });
-    const store = await h.run((s) => doneCount(s) >= 1);
-    const ev = rows(store)[0];
-    expect(ev.state).toBe("DONE");
-    expect(ev.branchUrls).toBeNull();
-    expect(h.fc.calls.filter((c) => c.startsWith("resolve:")).length).toBe(1);
-  });
-
-  it("reveals branches that finished in the background without rendering or paying twice", async () => {
-    // Seen on Base Sepolia: the LOCKED→RESOLVE row is read while the branch render is still running,
-    // the render lands during the resolve tx, and the row's stale null `branchUrls` then started a
-    // second (paid) render that failed and persisted null over the URLs already stored.
-    const clock = fakeClock();
-    const fc = fakeChain(clock);
-    const resolveNow = fc.chain.resolve;
-    fc.chain.resolve = async (id, sig) => {
-      await new Promise((r) => setImmediate(r)); // a real tx takes a while
-      return resolveNow(id, sig);
-    };
-    const renders = new Map<Hex, number>();
-    const h = harness({
-      fc,
-      ...clock,
-      render: {
-        firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
-        branches: async (ev) => {
-          renders.set(ev.id, (renders.get(ev.id) ?? 0) + 1);
-          while (h.store.rows.get(ev.id)?.state !== "RESOLVE") {
-            if (h.ac.signal.aborted) throw new Error("aborted"); // the prefetched next event never resolves
-            await new Promise((r) => setImmediate(r));
-          }
-          return { urls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`), costUsd: 2 };
+        render: async (ev) => {
+          await new Promise((r) => setImmediate(r));
+          await new Promise((r) => setImmediate(r));
+          return {
+            firstHalfUrl: `first:${ev.seq}`,
+            branchUrls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}`),
+            costUsd: 3,
+          };
         },
       },
     });
-    const store = await h.run((s) => doneCount(s) >= 1);
-    const ev = rows(store)[0];
-    expect(ev.branchUrls).toEqual(ev.outcomes.map((_, i) => `branch:1:${i}`));
-    expect(ev.costUsd).toBe(3);
-    expect(renders.get(ev.id)).toBe(1);
+    const readyOrLater = new Set<EventRow["state"]>(["READY", "BETTING", "LOCKED", "RESOLVE", "REVEAL", "CANON", "PAUSE", "DONE"]);
+    const violations: EventRow[] = [];
+    const origHook = h.store.hook;
+    h.store.hook = (row) => {
+      if (readyOrLater.has(row.state) && row.branchUrls === null) violations.push(row);
+      origHook(row);
+    };
+    await h.run((s) => doneCount(s) >= 1);
+    expect(violations).toEqual([]);
+  });
+
+  it("REAL pause covers production as measured, not as estimated", () => {
+    // This used to assert against the estimate formula (9 s first build + halves + 3 s teardown),
+    // which said 132 s. Three consecutive REAL events on sports on 2026-09-12 took 217 s, 219 s and
+    // 221 s from betting open to stored media, so the formula was ~85 s optimistic and the pause it
+    // blessed left the wall dark for ~146 s an event (ticket 28). The measurement is the assertion
+    // now; if the pause is ever lowered again, this fails and says why.
+    const MEASURED_PRODUCTION_MS = 221_000;
+    // drand publishes SUSPENSE_GAP seconds past lock, so the wait between lock and reveal is that
+    // gap rounded up to the next beacon, plus the resolve transaction.
+    const drandSuspenseMs = Number(SUSPENSE_GAP + PERIOD) * 1_000;
+    const cycleMs = REAL.txBufferMs + REAL.firstHalfMs + drandSuspenseMs + REAL.secondHalfMs + REAL.pauseMs;
+    expect(cycleMs).toBeGreaterThanOrEqual(MEASURED_PRODUCTION_MS);
   });
 
   it("stays idle without viewers when not always-on", async () => {
@@ -352,8 +423,11 @@ describe("channel lifecycle", () => {
     const seen: Array<[number, string]> = [];
     const h = harness({
       render: {
-        firstHalf: async (ev) => ({ url: `first:${ev.seq}`, costUsd: 1 }),
-        branches: async (ev) => ({ urls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}.enc`), costUsd: 2 }),
+        render: async (ev) => ({
+          firstHalfUrl: `first:${ev.seq}`,
+          branchUrls: ev.outcomes.map((_, i) => `branch:${ev.seq}:${i}.enc`),
+          costUsd: 3,
+        }),
       },
       revealWinner: async (ev, outcome) => {
         seen.push([outcome, ev.id]);
@@ -365,5 +439,53 @@ describe("channel lifecycle", () => {
     expect(seen).toEqual([[ev.outcome!, ev.id]]);
     expect(ev.branchUrls![ev.outcome!]).toBe(`branch:1:${ev.outcome}`);
     expect(ev.branchUrls!.filter((u) => u.endsWith(".enc"))).toHaveLength(ev.outcomes.length - 1);
+  });
+
+  // Ticket 21 (2026-09-12): a paid Reactor engine resumed and rendered an event a free fake-sidecar
+  // soak had authored, opening a real billed session over a canned script.
+  it("skips an event authored under a different provenance instead of paying to render it", async () => {
+    let rendered = false;
+    const h = harness({
+      provenance: "reactor:real",
+      render: {
+        render: async (ev) => {
+          rendered = true;
+          return { firstHalfUrl: `first:${ev.seq}`, branchUrls: [], costUsd: 3 };
+        },
+      },
+    });
+    await seedEvent(h.store, 42, "fake:demo");
+    const store = await h.run((s) => rows(s).some((r) => r.state === "SKIPPED"));
+    const ev = rows(store).find((r) => r.seq === 42)!;
+    expect(ev.state).toBe("SKIPPED");
+    expect(ev.error).toMatch(/provenance mismatch/);
+    expect(rendered).toBe(false);
+  });
+
+  it("resumes and renders an event whose provenance matches the running engine", async () => {
+    const renderedSeqs: number[] = [];
+    const h = harness({
+      provenance: "reactor:real",
+      render: {
+        render: async (ev) => {
+          renderedSeqs.push(ev.seq);
+          return { firstHalfUrl: `first:${ev.seq}`, branchUrls: ev.outcomes.map(() => "b"), costUsd: 3 };
+        },
+      },
+    });
+    await seedEvent(h.store, 42, "reactor:real");
+    const store = await h.run((s) => rows(s).some((r) => r.seq === 42 && r.state === "DONE"));
+    const ev = rows(store).find((r) => r.seq === 42)!;
+    expect(ev.state).toBe("DONE");
+    expect(renderedSeqs).toContain(42);
+  });
+
+  it("treats a pre-provenance row (null, unknown) as a mismatch and skips it", async () => {
+    const h = harness({ provenance: "reactor:real" });
+    await seedEvent(h.store, 42, null);
+    const store = await h.run((s) => rows(s).some((r) => r.state === "SKIPPED"));
+    const ev = rows(store).find((r) => r.seq === 42)!;
+    expect(ev.state).toBe("SKIPPED");
+    expect(ev.error).toMatch(/provenance mismatch/);
   });
 });

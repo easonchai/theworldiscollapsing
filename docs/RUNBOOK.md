@@ -100,6 +100,8 @@ The query URL carries the version label — `https://api.studio.thegraph.com/que
 
 ## 6. Turning real video on
 
+Reactor is the default video vendor once `REACTOR_API_KEY` is set (`VIDEO_VENDOR` picks it automatically); OpenRouter is the fallback when no Reactor key is present, and an explicit `VIDEO_VENDOR=openrouter` keeps using it even with a Reactor key set. This section is the OpenRouter path below; section 7 covers the Reactor sidecar.
+
 1. `STUB_MODE=0`, `OPENROUTER_API_KEY`, `MEDIA_STORE=blob` + token in the engine `.env`, and a `MAX_SPEND_USD` you are willing to lose; restart.
 2. Watch one event end to end in the logs: `budget` → `spend openai/gpt-5-mini` (whatever `AUTHOR_MODEL` is) → `authored` → `spend key art` → `spend clip-N.mp4` ×3 → `rendered first half` → `on-chain` → `spend branch-…` → `rendered event` → `resolved`. Then confirm the first-half MP4 plays from its blob URL.
 3. Measured on 2026-09-10 with `DEMO_MODE=1` and a 3-outcome event (two runs, anvil and Base Sepolia):
@@ -118,15 +120,35 @@ The query URL carries the version label — `https://api.studio.thegraph.com/que
 5. The house style holds on the real video model. Two 5 s @480p clips on 2026-09-10, prompts built by `clipPrompt` exactly as the loop builds them, **$0.50** of real spend: the sports clip is an elevated main side camera panning with a red-kit attacker at two defenders, mow-stripes, hoardings and a full crowd, cutting to behind the goal for the save; the politics clip is a locked-off studio camera on an anchor who turns to a video wall carrying a rising bar chart and a red-shaded world map. Neither is slow motion or graded like film (`ffprobe`: 5.184 s each; details and the motion measure in `docs/RESEARCH.md`). On-screen text renders as gibberish on both — a MiniMax limitation, which is why nothing is allowed to depend on reading it.
 6. Media lands on the Blob store's public host. A plain `GET` answers 200 `video/mp4`; a `Range` request answers **206 Partial Content** with a `content-range` header, which is what the video element needs to scrub. Nothing prunes blobs — the engine's `MEDIA_KEEP` retention only applies to the local store — so objects accrue until you delete them by hand.
 
-## 7. World mode ⚠
+## 7. Sidecar
+
+Only matters when the engine is running Reactor as the video vendor (the default once `REACTOR_API_KEY` is set; section 6 above is the OpenRouter fallback).
+
+```bash
+cd apps/engine
+python3 -m venv sidecar/.venv
+sidecar/.venv/bin/pip install -r sidecar/requirements.txt
+```
+
+Point `REACTOR_PYTHON` at that interpreter in `.env`, for example `REACTOR_PYTHON=/absolute/path/to/apps/engine/sidecar/.venv/bin/python3`. No new pm2 entry: the engine spawns `reactor_sidecar.py` (or `fake_reactor.py` when `REACTOR_SIDECAR=fake`) once per `render(ev)` call and kills it with SIGTERM if it runs past its deadline, the same way it already reaps ffmpeg. `ecosystem.config.cjs` needs no change.
+
+What a healthy run looks like: `engine start` already prints `vendor`, `sessions` and `nOutcomes`, and `budget` follows since Reactor spend is metered the same way OpenRouter's is. Per event, `reactor.ts` logs `session slot wait` only when the `REACTOR_SESSIONS` semaphore made the render wait more than a second, then `rendered event` with `billed_s`, `fetch_s`, `usd` and `estimateUsd` once the session finishes.
+
+Rehearse that path before spending on it. `REACTOR_SIDECAR=fake` plus `FAKE_SHORT_BY_S=5` makes the fake truncate its own recording with ffmpeg and report the re-measured duration, so the whole short-recording path runs for $0. On four channels it fires on every event and every event still publishes.
+
+A healthy run logs no `recording short of plan`. That line means Reactor returned a recording that does not cover the plan it was paid for, so the last branch airs short and then sits on dead air; it carries the channel, the seq and the shortfall in seconds. The event is still published, because the recording is paid for and mostly good. The known trigger is a contended round: the sidecar waits `REACTOR_COMPLETENESS_BUDGET_S` (default 180 s) for the fragmented MP4 to finish assembling, re-downloading while it waits, and gives up honestly when that runs out. Raise it for a round if `recording short of plan` appears on the channels whose `fetch_s` is longest. That default is also the open experiment in ticket 32: whether more budget actually recovers the tail has not been measured on a four-channel round.
+
+The likeliest deploy mistake is a `REACTOR_PYTHON` that points at an interpreter without the `reactor-sdk` wheel installed. The sidecar checks for that import before doing anything else and reports it over the protocol instead of a bare traceback: `sidecar error at stage connect: reactor-sdk is not installed for <interpreter path>: <import error>`. The interpreter path in that message is what Node actually spawned, so if it isn't the venv's `python3`, fix `REACTOR_PYTHON`. The event retries up to `maxRenderAttempts` (3) before the channel logs `render failed, event skipped` with that reason attached.
+
+## 8. World mode ⚠
 
 Fill the `WORLD_*` and `NEXT_PUBLIC_WORLD_*` vars, set `GATE_MODE=world` and `NEXT_PUBLIC_GATE_MODE=world` in Vercel, redeploy. `/verify` then shows the IDKit selfie-check widget; the proof is verified server-side at `POST /api/verify` before `Gate.setVerified`. Until beta access arrives the route returns 501 for world mode and the checkbox mode keeps working.
 
-## 8. Branch sealing and the CRE workflow ⚠
+## 9. Branch sealing and the CRE workflow ⚠
 
 Only with the local media store and a public `MEDIA_BASE_URL` (Tailscale Funnel or cloudflared in front of the media port). Engine: `BRANCH_SEAL=1`, `BRANCH_SEAL_ROOT`, `REVEAL_SECRET`, `MEDIA_STORE=local`. CRE: `packages/cre/README.md` (`cre login`, secrets, `cre workflow simulate`, then `deploy` once access is granted; `config.staging.json` needs the Arena address and the public reveal URL). The engine reveals the winning branch itself after a 3 s grace period if the workflow does not, so a sealed event never ends with a dead video.
 
-## 9. Demo day checklist
+## 10. Demo day checklist
 
 - `DEMO_MODE=1`, `ALWAYS_ON=1` on the engine for the recording, `0`/`0` afterwards.
 - Verified addresses: the deployer key signs `Gate.setVerified` through `/verify`; for a pre-verified demo wallet run `cast send <GATE> "setVerified(address,bool)" <addr> true --private-key <deployer>`.
@@ -145,7 +167,7 @@ Only with the local media store and a public `MEDIA_BASE_URL` (Tailscale Funnel 
   `GATE_OWNER_PRIVATE_KEY` must be the deployer: it owns `Gate` (so it can verify the bettors) **and** it is the funder — it sends each of the six bettors `FUND_ETH` of **real testnet ETH** whenever they fall below `FUND_MIN_ETH`, so top the deployer up first and expect its balance to fall. Six bettors at the defaults is 0.06 ETH before any gas of its own. **Nobody has bet on Base Sepolia yet** — every pool there is 0, so payout, claim, the treasury fee and the void-market rule have only ever run on anvil, and this command has never been executed against a public RPC (`BET_INTERVAL_MS=1500`, the local value, is certainly too aggressive for one). Run it once before the recording.
 - Known leftover on the live deployment (2026-09-10): sports seq 6 sits at `RENDER` in Neon with `World.spendUsd` at $4.14, so the next engine start against Neon buys its first half (~$0.75) and then pauses at the $5 cap unless `MAX_SPEND_USD` is raised. Seq 1–5 are `DONE` on chain and in the database.
 
-## 10. Rollback
+## 11. Rollback
 
 - Contracts: deploy a fresh set and repoint the engine and web envs. Old events stay claimable on the old `Arena`; keep the old address in the README so bettors can claim.
 - Engine: `pm2 stop twic-engine`. In-flight events resolve on the next start (the state machine resumes from the database and the chain).

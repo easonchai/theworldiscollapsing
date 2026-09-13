@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { makeMediaStore, pruneEventMedia, startMediaServer } from "./media.js";
+import { makeMediaStore, pruneEventMedia, startMediaServer, sweepWorkDir } from "./media.js";
 
 const BODY = "0123456789abcdefghij"; // 20 bytes
 let dir: string;
@@ -124,6 +124,22 @@ describe("media retention", () => {
     await mkdir(path.join(root, ".work"), { recursive: true });
     expect(await pruneEventMedia(root, [".work", "..", "../..", "0xshort"])).toBe(0);
     expect(await readdir(root)).toEqual([".work"]);
+    await rm(root, { recursive: true, force: true });
+  });
+});
+
+describe("work dir sweep", () => {
+  it("clears a stray session directory left by a signal, and tolerates empty or missing .work/", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "twic-sweep-"));
+    const work = path.join(root, ".work");
+    await mkdir(path.join(work, "0xstray"), { recursive: true });
+    await writeFile(path.join(work, "0xstray", "clip-0.mp4"), BODY);
+
+    expect(await sweepWorkDir(work)).toEqual({ dirs: 1, bytes: BODY.length });
+    expect(await readdir(work)).toEqual([]); // the stray directory is gone, .work/ itself stays
+    expect(await sweepWorkDir(work)).toEqual({ dirs: 0, bytes: 0 }); // nothing left: no noise, no error
+    expect(await sweepWorkDir(path.join(root, "never-created"))).toEqual({ dirs: 0, bytes: 0 }); // first boot
+
     await rm(root, { recursive: true, force: true });
   });
 });

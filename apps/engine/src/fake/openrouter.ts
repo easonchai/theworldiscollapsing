@@ -25,7 +25,8 @@ export function planShots(total: number): number[] {
   return Array.from({ length: n }, (_, i) => Math.max(5, Math.min(15, base + (i < rem ? 1 : 0))));
 }
 
-// Outcome sets are 3 to 5 long, the shape Authored enforces (PRD: three to five markets).
+// Outcome sets are 3 or 4 long; authored() picks the one matching nOutcomes, or falls back to the
+// first set truncated or padded when neither length matches.
 const CHANNELS: Record<string, { title: (n: number) => string; premise: string; outcomes: string[][]; beat: string }> = {
   sports: {
     title: (n) => `Matchday ${n}: Harbour City vs Northgate`,
@@ -48,9 +49,11 @@ const CHANNELS: Record<string, { title: (n: number) => string; premise: string; 
   culture: {
     title: (n) => `Awards night ${n}: Best Picture`,
     premise: "Three nominees, the envelope is still sealed.",
+    // Real names, not "Nominee A": the author prompt forbids placeholders (ticket 29) and a local
+    // soak is only representative if the canned labels look like what the model now returns.
     outcomes: [
-      ["Nominee A", "Nominee B", "Nominee C"],
-      ["Nominee A", "Nominee B", "Nominee C", "Nominee D", "No award given"],
+      ["Lina Cho wins", "Marta Ruiz wins", "Kei Nakamura wins"],
+      ["Lina Cho wins", "Marta Ruiz wins", "Kei Nakamura wins", "Aria Solace wins", "No award given"],
     ],
     beat: "press-pool camera in the photographers' pen, hard camera locked on the stage",
   },
@@ -72,12 +75,27 @@ const FALLBACK = {
   beat: "wide establishing shot",
 };
 
+/**
+ * The scorebug is sports-only and needs one final per outcome, so it is derived from whichever
+ * canned outcome set was picked rather than written next to one of them.
+ */
+const finalFor = (o: string): string =>
+  /two or more/i.test(o) ? "3 - 1" : /^harbour/i.test(o) ? "2 - 1" : /^northgate/i.test(o) ? "1 - 2" : "1 - 1";
+
 let counter = 0;
 
-export function authored(channelId: string, firstHalfSec: number, secondHalfSec: number) {
+/** Truncates or pads (repeating the last entry, labeled) the first canned set to exactly `n` long. */
+function fitOutcomes(list: string[], n: number): string[] {
+  if (n <= list.length) return list.slice(0, n);
+  const out = [...list];
+  while (out.length < n) out.push(`${list[list.length - 1]} (extra ${out.length})`);
+  return out;
+}
+
+export function authored(channelId: string, firstHalfSec: number, secondHalfSec: number, nOutcomes = 3) {
   const ch = CHANNELS[channelId] ?? FALLBACK;
   const seq = ++counter;
-  const outcomes = ch.outcomes[seq % ch.outcomes.length]!;
+  const outcomes = ch.outcomes.find((o) => o.length === nOutcomes) ?? fitOutcomes(ch.outcomes[0]!, nOutcomes);
   const first = planShots(firstHalfSec);
   const second = planShots(secondHalfSec);
   return {
@@ -91,6 +109,7 @@ export function authored(channelId: string, firstHalfSec: number, secondHalfSec:
     cards: [{ afterShot: 0, title: `${channelId} desk`, stats: [`${outcomes.length} markets open`, "Level at the break"] }],
     ticker: [`${channelId} desk live`, "Pools open until lock", "Level at the break"],
     canonUpdates: outcomes.map((o) => [`${ch.title(seq)}: ${o}.`]),
+    score: channelId === "sports" ? { sides: ["HAR", "NOR"], atBreak: "1 - 1", atEnd: outcomes.map(finalFor) } : null,
     reasoning: `Fake showrunner: picked ${outcomes.length} outcomes for ${channelId} #${seq}; the first half runs ${firstHalfSec}s and stays level so no branch is foreshadowed.`,
   };
 }
@@ -186,7 +205,8 @@ export function startFake(port: number): http.Server {
         const prompt = (body.messages ?? []).map((m: { content: string }) => m.content).join("\n");
         const channelId = /^Channel:\s*(\S+)/m.exec(prompt)?.[1] ?? "sports";
         const lengths = /first half (\d+)s, each branch (\d+)s/.exec(prompt);
-        const object = authored(channelId, Number(lengths?.[1] ?? 60), Number(lengths?.[2] ?? 60));
+        const nOutcomes = Number(/Give exactly (\d+) outcomes/.exec(prompt)?.[1] ?? 3);
+        const object = authored(channelId, Number(lengths?.[1] ?? 60), Number(lengths?.[2] ?? 60), nOutcomes);
         const missing = (schema.required ?? Object.keys(schema.properties)).filter(
           (k: string) => !(k in object) && k in schema.properties,
         );

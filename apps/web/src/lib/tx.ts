@@ -1,5 +1,48 @@
-import { BaseError, ContractFunctionRevertedError, type Hex, type TransactionReceipt } from "viem";
-import { publicClient } from "./chain";
+import { BaseError, ContractFunctionRevertedError, type Address, type Hex, type TransactionReceipt } from "viem";
+import { GAS_MIN, publicClient } from "./chain";
+import { buildVerifyMessage } from "./verify-message";
+
+/** What `requestVerify` needs from a wallet: the same `signMessage` a viem `WalletClient` has. */
+type MessageSigner = { signMessage(args: { account: Address; message: string }): Promise<Hex> };
+
+export type VerifyResponse = { verified: boolean; tx: Hex | null; gas: Hex | null };
+
+/**
+ * Sign the challenge and hand it to the server: only the wallet's owner can ask to be verified.
+ * `extra` carries the attestation or World proof; for an address the gate already knows it is
+ * ignored and the call only tops the wallet's gas up.
+ */
+export async function requestVerify(
+  walletClient: MessageSigner,
+  address: Address,
+  extra: Record<string, unknown> = {},
+): Promise<VerifyResponse> {
+  const message = buildVerifyMessage(address, Math.floor(Date.now() / 1000));
+  const signature = await walletClient.signMessage({ account: address, message });
+  const res = await fetch("/api/verify", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ address, message, signature, ...extra }),
+  });
+  const out = (await res.json().catch(() => null)) as (Partial<VerifyResponse> & { error?: string }) | null;
+  if (!res.ok || !out?.verified) throw new Error(out?.error ?? `verify failed (${res.status})`);
+  return { verified: true, tx: out.tx ?? null, gas: out.gas ?? null };
+}
+
+/**
+ * An embedded wallet holds no ETH until someone sends it some, and Privy then fails every write
+ * with "insufficient funds for gas". Below GAS_MIN, ask the gate owner for a drip before signing.
+ * A sponsored wallet (a Privy smart wallet behind a paymaster) never needs one.
+ */
+export async function ensureGas(
+  wallet: { walletClient: MessageSigner; address: Address; sponsored: boolean },
+  onStatus?: (s: string) => void,
+) {
+  const { walletClient, address, sponsored } = wallet;
+  if (sponsored || (await publicClient.getBalance({ address })) >= GAS_MIN) return;
+  onStatus?.("Topping up gas…");
+  await requestVerify(walletClient, address);
+}
 
 /** What a failed write says, and where it sends the viewer if there is somewhere to go. */
 export type TxMessage = { text: string; href: string | null };

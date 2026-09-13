@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { createReadStream, type Dirent } from "node:fs";
+import { copyFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { put } from "@vercel/blob";
@@ -76,6 +76,44 @@ export async function pruneEventMedia(dir: string, eventIds: string[]): Promise<
     removed++;
   }
   return removed;
+}
+
+/**
+ * Delete every directory left under `media/.work/` and report how many there were and how many
+ * bytes they held. Call once at startup, after the pidfile is claimed and before anything is
+ * authored or rendered: a directory here at boot belongs to no live session, because the engine is
+ * the only writer and `claimPidFile` guarantees one engine per MEDIA_DIR. Both render
+ * implementations sweep their own per-event directory in a `finally`, which a signal never runs; a
+ * SIGTERM mid-render left four such directories behind on 2026-09-12, 81 MB (ticket 22), and
+ * SIGKILL, a panic or a power cut leak the same way with no handler able to catch them. A missing
+ * `.work/` (first boot) is not an error. Safe by construction rather than by regex: every path
+ * joined here comes from a `readdir` of `dir` itself, never from outside input, so there is nothing
+ * to traverse out with.
+ */
+export async function sweepWorkDir(dir: string): Promise<{ dirs: number; bytes: number }> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return { dirs: 0, bytes: 0 };
+  }
+  let dirs = 0;
+  let bytes = 0;
+  for (const entry of entries) {
+    const target = path.join(dir, entry.name);
+    bytes += await dirBytes(target);
+    await rm(target, { recursive: true, force: true });
+    dirs++;
+  }
+  return { dirs, bytes };
+}
+
+async function dirBytes(target: string): Promise<number> {
+  const s = await stat(target);
+  if (!s.isDirectory()) return s.size;
+  let total = 0;
+  for (const entry of await readdir(target, { withFileTypes: true })) total += await dirBytes(path.join(target, entry.name));
+  return total;
 }
 
 /** Body of `POST /internal/reveal-key`, sent by the Chainlink CRE confidential workflow. */

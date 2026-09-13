@@ -1,6 +1,6 @@
-import { createWalletClient, http, isAddress, verifyMessage, type Hex } from "viem";
+import { createWalletClient, http, isAddress, verifyMessage, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { chain, gateAbi, publicClient, GATE, RPC_URL } from "@/lib/chain";
+import { chain, gateAbi, publicClient, GATE, GAS_DRIP, GAS_MIN, RPC_URL } from "@/lib/chain";
 import { verifyGasCap } from "@/lib/limits";
 import { checkVerifyMessage } from "@/lib/verify-message";
 import { proofBoundTo } from "@/lib/world";
@@ -33,11 +33,11 @@ export async function POST(request: Request) {
   // The wallet must prove it asked for this, so nobody can burn our gas verifying strangers.
   const check = checkVerifyMessage(body.message, address, Date.now());
   if (!check.ok) return bad(400, check.reason);
-  const signed = await verifyMessage({
-    address,
-    message: body.message,
-    signature: body.signature as Hex,
-  }).catch(() => false);
+  const proof = { address, message: body.message, signature: body.signature as Hex };
+  // An EOA recovers offline. A smart wallet signs as a contract (ERC-1271), or as one that is not
+  // deployed yet (ERC-6492), and only the chain can check that.
+  const signed =
+    (await verifyMessage(proof).catch(() => false)) || (await publicClient.verifyMessage(proof).catch(() => false));
   if (!signed) return bad(401, "bad signature");
 
   // Already through the gate: say so and spend nothing. Re-clicking Verify, or a second tab, must
@@ -48,7 +48,29 @@ export async function POST(request: Request) {
     functionName: "verified",
     args: [address],
   });
-  if (already) return Response.json({ verified: true, tx: null });
+  const owner = createWalletClient({ account: privateKeyToAccount(ownerKey as Hex), chain, transport: http(RPC_URL) });
+
+  /**
+   * A Privy embedded wallet is born with no ETH, so a verified address that cannot pay for its
+   * own faucet call gets a drip from the owner. Balance-gated, so re-asking is free until it is
+   * spent, and counted under the same hourly gas budget as `setVerified`.
+   */
+  async function dripGas(to: Address): Promise<Hex | null> {
+    if ((await publicClient.getBalance({ address: to })) >= GAS_MIN) return null;
+    if (!verifyGasCap.take()) throw new Error("gas is rate limited right now — try again later");
+    const hash = await owner.sendTransaction({ to, value: GAS_DRIP });
+    const receipt = await publicClient.waitForTransactionReceipt({ hash });
+    if (receipt.status !== "success") throw new Error("the gas drip reverted");
+    return hash;
+  }
+
+  if (already) {
+    try {
+      return Response.json({ verified: true, tx: null, gas: await dripGas(address) });
+    } catch (e) {
+      return bad(429, e instanceof Error ? e.message : "gas drip failed");
+    }
+  }
 
   const last = lastVerify.get(address.toLowerCase());
   if (last && Date.now() - last < RATE_MS) return bad(429, "one verification per address per minute");
@@ -74,9 +96,10 @@ export async function POST(request: Request) {
   if (!verifyGasCap.take()) return bad(429, "verification is rate limited right now — try again later");
 
   lastVerify.set(address.toLowerCase(), Date.now());
-  const wallet = createWalletClient({ account: privateKeyToAccount(ownerKey as Hex), chain, transport: http(RPC_URL) });
-  const tx = await wallet.writeContract({ address: GATE, abi: gateAbi, functionName: "setVerified", args: [address, true] });
+  const tx = await owner.writeContract({ address: GATE, abi: gateAbi, functionName: "setVerified", args: [address, true] });
   const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
   if (receipt.status !== "success") return bad(502, "setVerified reverted");
-  return Response.json({ verified: true, tx });
+  // The flag is set either way; a drip that hits the cap leaves the faucet to ask again later.
+  const gas = await dripGas(address).catch(() => null);
+  return Response.json({ verified: true, tx, gas });
 }

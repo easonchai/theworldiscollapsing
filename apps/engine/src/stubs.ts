@@ -6,12 +6,14 @@ import type { Authored } from "./authored.js";
 import type { Author, EventRow, Render } from "./machine.js";
 import { branchFileName, type MediaStore } from "./media.js";
 
-// Day-2 stand-ins. Real authoring (GPT-6 Astra) and rendering (MiniMax via OpenRouter) replace these on day 3.
+// STUB_MODE stand-ins for the LLM `Author` (`author.ts`) and the video `Render` (`render.ts`).
 
 const shot = (prompt: string) => ({ prompt, seconds: 6 });
 
-// Outcome lists are 3 to 5 long, the shape Authored enforces (PRD: three to five markets).
-const CANNED: Record<string, (seq: number) => Authored> = {
+// Outcome lists are exactly N_OUTCOMES long, truncated or padded from the canned 3-outcome set below.
+// No `score`: the outcome count is padded here, and a scorebug's finals are one per outcome, so a
+// canned one would go out of step. The fake vendor is the path that exercises the scorebug locally.
+const CANNED: Record<string, (seq: number) => Omit<Authored, "score">> = {
   sports: (seq) => ({
     title: `Matchday ${seq}: Manchester United vs Chelsea`,
     premise: "League fixture at Old Trafford. Level at half time.",
@@ -70,11 +72,27 @@ const CANNED: Record<string, (seq: number) => Authored> = {
   }),
 };
 
+/** Truncates or pads (repeating the last entry, labeled to stay distinguishable) to exactly `n` long. */
+function fitTo<T>(list: T[], n: number, label: (item: T, i: number) => T): T[] {
+  if (n <= list.length) return list.slice(0, n);
+  const out = [...list];
+  while (out.length < n) out.push(label(list[list.length - 1]!, out.length));
+  return out;
+}
+
 export const stubAuthor: Author = {
-  async author({ channelId, seq }) {
+  async author({ channelId, seq, nOutcomes }) {
     const make = CANNED[channelId];
     if (!make) throw new Error(`no canned events for channel ${channelId}`);
-    return make(seq);
+    const a = make(seq);
+    return {
+      ...a,
+      // The stub author never writes a scoreline; the field is required so it is stated, not omitted.
+      score: null,
+      outcomes: fitTo(a.outcomes, nOutcomes, (o, i) => `${o} (extra ${i})`),
+      branches: fitTo(a.branches, nOutcomes, (b) => b),
+      canonUpdates: fitTo(a.canonUpdates, nOutcomes, (c) => c),
+    };
   },
 };
 
@@ -101,15 +119,13 @@ export function stubRender(cfg: {
     return cfg.store.storeFile(ev.id, name, out);
   }
   return {
-    async firstHalf(ev) {
-      return { url: await file(ev, "first.mp4", cfg.firstHalfSec, 0), costUsd: 0 };
-    },
-    async branches(ev) {
-      const urls = [];
-      for (const [i] of ev.outcomes.entries()) urls.push(await file(ev, branchFileName(i), cfg.secondHalfSec, 60 + i * 90));
+    async render(ev) {
+      const firstHalfUrl = await file(ev, "first.mp4", cfg.firstHalfSec, 0);
+      const branchUrls = [];
+      for (const [i] of ev.outcomes.entries()) branchUrls.push(await file(ev, branchFileName(i), cfg.secondHalfSec, 60 + i * 90));
       // Same sweep as the real renderer: the work directory is dead weight once the files are stored.
       await rm(path.join(cfg.workDir, ev.id), { recursive: true, force: true });
-      return { urls, costUsd: 0 };
+      return { firstHalfUrl, branchUrls, costUsd: 0 };
     },
   };
 }

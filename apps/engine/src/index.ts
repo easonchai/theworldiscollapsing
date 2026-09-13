@@ -2,14 +2,15 @@ import { billsRealMoney, makeBudget, unlimited } from "./budget.js";
 import path from "node:path";
 import type { Address, Hex } from "viem";
 import { fetchRound } from "./drand.js";
-import { env, flag } from "./env.js";
+import { env, flag, intEnv } from "./env.js";
 import { DEMO, REAL, runChannel, type Deps, type Render } from "./machine.js";
 import { makeChain } from "./chain.js";
 import { makePrisma } from "db";
 import { makeAuthor } from "./author.js";
-import { makeMediaStore, pruneEventMedia, startMediaServer } from "./media.js";
+import { makeMediaStore, pruneEventMedia, startMediaServer, sweepWorkDir } from "./media.js";
 import { makeOpenRouter } from "./openrouter.js";
 import { claimPidFile } from "./pidfile.js";
+import { makeReactorRender } from "./reactor.js";
 import { makeRender } from "./render.js";
 import { branchKey, parseRoot, revealBranch, sealingStore } from "./seal.js";
 import { makeStore } from "./store.js";
@@ -39,8 +40,11 @@ process.on("exit", releasePid);
 const mediaStoreKind = env("MEDIA_STORE", "local") === "blob" ? "blob" : "local";
 // Events older than the newest MEDIA_KEEP per channel have their published media deleted; the wall
 // only ever replays the newest DONE event and the channel page lists recent history.
-const mediaKeep = Number(env("MEDIA_KEEP", "20"));
-if (!Number.isInteger(mediaKeep) || mediaKeep < 1) throw new Error("MEDIA_KEEP must be a positive integer");
+const mediaKeep = intEnv("MEDIA_KEEP", "20", 1, Infinity);
+// Branches rendered per event; fed to the author, createEvent and (later) the session estimate.
+const nOutcomes = intEnv("N_OUTCOMES", "3", 2, 5);
+// Declared here (rather than by Promise.all below) because the Reactor boot check needs it too.
+const channels = env("CHANNELS", "sports,politics,culture,region").split(",");
 const plainMedia = makeMediaStore({
   store: mediaStoreKind,
   dir: mediaDir,
@@ -91,13 +95,54 @@ const mediaServer =
     : null;
 if (mediaServer) log("media server", { dir: mediaDir, port: Number(env("MEDIA_PORT", "4000")), sealed: !!sealRoot });
 
-// Stubs are the default only when OpenRouter is not configured at all.
+// Stubs are the default only when neither video vendor is configured at all.
 const stubMode =
   flag("STUB_MODE") ||
-  (process.env.STUB_MODE !== "0" && !process.env.OPENROUTER_API_KEY && !process.env.OPENROUTER_BASE_URL);
+  (process.env.STUB_MODE !== "0" &&
+    !process.env.OPENROUTER_API_KEY &&
+    !process.env.OPENROUTER_BASE_URL &&
+    !process.env.REACTOR_API_KEY);
+
+// VIDEO_VENDOR: reactor when REACTOR_API_KEY is set, else openrouter when an OpenRouter key or base
+// URL is set, else stub. An explicit VIDEO_VENDOR overrides that priority; STUB_MODE=1 still forces
+// stub for both author and render regardless of VIDEO_VENDOR (spec section 3).
+const explicitVendor = process.env.VIDEO_VENDOR;
+const videoVendor: "reactor" | "openrouter" | "stub" = stubMode
+  ? "stub"
+  : explicitVendor === "reactor" || explicitVendor === "openrouter" || explicitVendor === "stub"
+    ? explicitVendor
+    : process.env.REACTOR_API_KEY
+      ? "reactor"
+      : "openrouter";
+
+// Global concurrent-Reactor-session ceiling; boot fails below if CHANNELS needs more than this.
+const reactorSessions = intEnv("REACTOR_SESSIONS", "4", 1, Infinity);
+const reactorSidecarKind = env("REACTOR_SIDECAR", "real") === "fake" ? "fake" : "real";
+if (videoVendor === "reactor" && channels.length > reactorSessions) {
+  throw new Error(
+    `REACTOR_SESSIONS=${reactorSessions} is fewer than CHANNELS (${channels.length}): every channel needs its own session slot`,
+  );
+}
+
+// What this engine stamps on every event it authors, and the only provenance it will resume and
+// render (machine.ts runChannel). Reactor's fake sidecar is a free loopback, not the real vendor, so
+// it gets its own "fake" provenance rather than being lumped in with a real Reactor engine — that
+// mix-up is exactly what ticket 21 (2026-09-12) was about: a paid engine resumed and rendered an
+// event a free fake-sidecar soak had authored, opening a real billed Reactor session over a canned script.
+const provenanceVendor = videoVendor === "reactor" ? (reactorSidecarKind === "fake" ? "fake" : "reactor") : videoVendor;
+const provenance = `${provenanceVendor}:${timing === DEMO ? "demo" : "real"}`;
 
 // Intermediate clips and stills never leave the engine box; only finished files go through the media store.
 const workDir = path.join(mediaDir, ".work");
+// A directory here at boot belongs to no live session, since the pidfile above already guarantees
+// this is the only engine touching MEDIA_DIR. render()'s own sweep runs in a `finally`, which a
+// signal skips, so this is the one place that also catches SIGKILL, a panic and a power cut (ticket 22).
+const swept = await sweepWorkDir(workDir);
+if (swept.dirs) log("swept work dir", { dirs: swept.dirs, bytes: swept.bytes });
+
+// Declared here rather than beside the signal handlers below: a live Reactor session has to carry
+// the signal so shutdown can close it and true up its reservation (ticket 31).
+const ac = new AbortController();
 
 let author = stubAuthor;
 let render: Render = stubRender({
@@ -107,12 +152,12 @@ let render: Render = stubRender({
   secondHalfSec: timing.secondHalfMs / 1000,
 });
 
-// Hard ceiling on everything bought from OpenRouter, persisted in World.spendUsd across restarts.
-// Only the vendor that bills is metered: against the local fake the clips are free ffmpeg patterns,
-// so charging them the real MiniMax rate table just stops the wall a few events into a soak (and
-// World.spendUsd is cumulative, so a restart does not clear it).
+// Hard ceiling on everything bought from OpenRouter or Reactor, persisted in World.spendUsd across
+// restarts. Only a vendor that actually bills is metered: against the local OpenRouter fake or the
+// fake Reactor sidecar, clips are free, so charging them a real rate table just stops the wall a few
+// events into a soak (and World.spendUsd is cumulative, so a restart does not clear it).
 const baseUrl = env("OPENROUTER_BASE_URL", "https://openrouter.ai");
-const paidVendor = billsRealMoney(baseUrl);
+const paidVendor = billsRealMoney(baseUrl) || (videoVendor === "reactor" && reactorSidecarKind !== "fake");
 const capUsd = Number(env("MAX_SPEND_USD", "20"));
 const budget = paidVendor
   ? makeBudget({
@@ -127,6 +172,8 @@ const budget = paidVendor
 if (!stubMode) log("budget", paidVendor ? { capUsd, spentUsd: budget.spent() } : { capUsd: null, vendor: baseUrl, note: "not openrouter.ai: spend cap off, nothing recorded" });
 
 if (!stubMode) {
+  // Authoring always goes through OpenRouter regardless of video vendor — Reactor is video-only and
+  // does not change how an event is written (spec section 6 / ticket 15).
   const or = makeOpenRouter({
     baseUrl,
     apiKey: env("OPENROUTER_API_KEY"),
@@ -142,17 +189,31 @@ if (!stubMode) {
     subgraphUrl: process.env.SUBGRAPH_URL,
     log,
   });
-  render = makeRender({
-    or,
-    store: media,
-    workDir,
-    videoModel: env("VIDEO_MODEL", "minimax/hailuo-3-max"),
-    pollIntervalMs: 3_000,
-    pollTimeoutMs: 15 * 60_000,
-    budget,
-    imageCostUsd: Number(env("IMAGE_COST_USD", "0.04")),
-    log,
-  });
+  if (videoVendor === "reactor") {
+    const sidecarDir = path.join(import.meta.dirname, "..", "sidecar");
+    render = makeReactorRender({
+      python: env("REACTOR_PYTHON", "python3"),
+      sidecar: path.join(sidecarDir, reactorSidecarKind === "fake" ? "fake_reactor.py" : "reactor_sidecar.py"),
+      sessions: reactorSessions,
+      workDir,
+      store: media,
+      budget,
+      signal: ac.signal,
+      log,
+    });
+  } else {
+    render = makeRender({
+      or,
+      store: media,
+      workDir,
+      videoModel: env("VIDEO_MODEL", "minimax/hailuo-3-max"),
+      pollIntervalMs: 3_000,
+      pollTimeoutMs: 15 * 60_000,
+      budget,
+      imageCostUsd: Number(env("IMAGE_COST_USD", "0.04")),
+      log,
+    });
+  }
 }
 
 const deps: Deps = {
@@ -167,6 +228,8 @@ const deps: Deps = {
   author,
   render,
   timing,
+  nOutcomes,
+  provenance,
   now: Date.now,
   sleep,
   log,
@@ -194,15 +257,20 @@ const deps: Deps = {
     : undefined,
 };
 
-const ac = new AbortController();
 /**
  * A channel sees the abort only between steps, and a step can be mid-sleep for a 60 s half or a
  * 15-minute render poll. Waiting that long with nothing on stdout reads as a hung engine and invites
  * `kill -9`, which orphans the node grandchild pnpm/tsx spawned — still driving the chain, the
  * database and the spend counter. So: say it, then leave. Every step is idempotent against chain
  * state, so the next start resumes where this one stopped.
+ *
+ * 8 s, not the 3 s this held until ticket 31, and the extra 5 s buys exactly one thing: a live
+ * Reactor session now sees the abort, and the worst case for closing it is SIGTERM, 3 s, SIGKILL,
+ * 2 s to reap, and then one true-up charge to persist. Exiting at 3 s landed inside that window and
+ * left the session's up-front reservation on World.spendUsd with nothing behind it. This is still
+ * far short of letting a channel finish a step, which is the thing the paragraph above refuses.
  */
-const SHUTDOWN_GRACE_MS = 3_000;
+const SHUTDOWN_GRACE_MS = 8_000;
 for (const sig of ["SIGINT", "SIGTERM"] as const) {
   process.on(sig, () => {
     if (ac.signal.aborted) process.exit(1); // second signal: stop waiting for the channels
@@ -213,13 +281,15 @@ for (const sig of ["SIGINT", "SIGTERM"] as const) {
   });
 }
 
-const channels = env("CHANNELS", "sports,politics,culture,region").split(",");
 deps.log("engine start", {
   channels,
-  mode: stubMode ? "stub" : "openrouter",
+  vendor: videoVendor,
+  sessions: videoVendor === "reactor" ? reactorSessions : undefined,
+  nOutcomes,
   demo: timing === DEMO,
   alwaysOn: deps.alwaysOn,
   mediaStore: mediaStoreKind,
+  provenance, // events authored under any other provenance are skipped on resume, not rendered (ticket 21)
 });
 await Promise.all(channels.map((c) => runChannel(c, deps, ac.signal)));
 mediaServer?.close();

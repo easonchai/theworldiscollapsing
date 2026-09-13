@@ -3,7 +3,14 @@ import { CHANNEL_STYLE, makeAuthor } from "./author.js";
 import { makeOpenRouter, SchemaError } from "./openrouter.js";
 import { eventIdFor, type AuthorCtx } from "./machine.js";
 
-const CTX: AuthorCtx = { channelId: "sports", seq: 3, canon: ["Week 2: Northgate won."], firstHalfSec: 60, secondHalfSec: 60 };
+const CTX: AuthorCtx = {
+  channelId: "sports",
+  seq: 3,
+  canon: ["Week 2: Northgate won."],
+  firstHalfSec: 60,
+  secondHalfSec: 60,
+  nOutcomes: 3,
+};
 
 const shot = (seconds: number) => ({ prompt: "wide stadium shot", seconds });
 
@@ -16,12 +23,20 @@ const good = {
   cards: [{ afterShot: 1, title: "Half time", stats: ["Possession 51-49", "Shots 4-4"] }],
   ticker: ["Sold out"],
   canonUpdates: [["Home won."], ["Away won."], ["Level."]],
+  score: null,
   reasoning: "inline",
 };
 // one branch for three outcomes: fails Authored's refine
 const bad = { ...good, branches: [[shot(15)]] };
-// two markets is below the PRD's three-to-five floor
+// two outcomes: passes the schema (min 2) but is the wrong count against nOutcomes: 3
 const twoOutcomes = { ...good, outcomes: ["Home win", "Away win"], branches: [[shot(15)], [shot(15)]], canonUpdates: [["Home won."], ["Away won."]] };
+// four outcomes, the right count against nOutcomes: 4
+const good4 = {
+  ...good,
+  outcomes: ["Home win by 2+", "Home win by 1", "Away win", "Draw"],
+  branches: [[shot(15)], [shot(15)], [shot(15)], [shot(15)]],
+  canonUpdates: [["Home won big."], ["Home won."], ["Away won."], ["Level."]],
+};
 
 function chatFetch(objects: unknown[], reasoning: (string | null)[] = []) {
   const calls: any[] = [];
@@ -49,7 +64,7 @@ function chatFetch(objects: unknown[], reasoning: (string | null)[] = []) {
 const author = (f: { impl: typeof fetch }, subgraphUrl?: string) =>
   makeAuthor({
     or: makeOpenRouter({ baseUrl: "http://or", apiKey: "k", imageModel: "img", fetchImpl: f.impl }),
-    model: "openai/gpt-6-astra",
+    model: "openai/gpt-5-mini",
     reasoning: { effort: "medium" },
     subgraphUrl,
     fetchImpl: f.impl,
@@ -66,9 +81,9 @@ describe("author", () => {
     expect(prompt).toContain("Channel: sports");
     expect(prompt).toContain("Week 2: Northgate won.");
     expect(prompt).toContain("first half 60s, each branch 60s");
-    expect(prompt).toContain("Give 3 to 5 outcomes");
+    expect(prompt).toContain("Give exactly 3 outcomes");
     expect(prompt).toContain("cards: 1 or 2 studio cards");
-    expect(f.calls[0]!.model).toBe("openai/gpt-6-astra");
+    expect(f.calls[0]!.model).toBe("openai/gpt-5-mini");
   });
 
   it("gives every channel its house style and the never-cinematic rule", async () => {
@@ -79,8 +94,9 @@ describe("author", () => {
       expect(sys).toContain(CHANNEL_STYLE[channelId]!);
       expect(sys).toContain("Never cinematic, never slow motion");
       expect(sys).toMatch(/real footage as broadcast on television, in real time/);
-      // graphics are allowed in frame now, but nothing may depend on reading them
-      expect(sys).toMatch(/nothing may depend on them being read/);
+      // v3 allowed graphics so long as nothing depended on reading them; v4 stops the shot text
+      // naming them at all, because a named logo beat the suffix that forbade it (ticket 29)
+      expect(sys).toMatch(/Never write text, or the things that carry it, into a shot/);
     }
   });
 
@@ -89,7 +105,7 @@ describe("author", () => {
     await author(politics).author({ ...CTX, channelId: "politics" });
     const sys: string = politics.calls[0]!.messages[0]!.content;
     expect(sys).toMatch(/CHARTS, GRAPHS, MAPS or GAUGES/);
-    expect(sys).toMatch(/chart, graph, map or gauge in shot in most studio shots/);
+    expect(sys).toMatch(/chart, graph, map or gauge on the studio screen in most studio shots/);
     expect(sys).toMatch(/global warming/i);
 
     const sports = chatFetch([good]);
@@ -100,11 +116,32 @@ describe("author", () => {
     expect(sportsSys).toMatch(/real time/i);
   });
 
-  it("rejects an event with only two markets, on every channel", async () => {
+  it("rejects an outcome count that is not N_OUTCOMES, on every channel", async () => {
     for (const channelId of ["sports", "politics", "culture", "region"]) {
       const f = chatFetch([twoOutcomes, twoOutcomes]);
-      await expect(author(f).author({ ...CTX, channelId })).rejects.toBeInstanceOf(SchemaError);
+      await expect(author(f).author({ ...CTX, channelId, nOutcomes: 3 })).rejects.toBeInstanceOf(SchemaError);
+
+      // three outcomes is a valid schema shape, but still the wrong count against nOutcomes: 4
+      const f4 = chatFetch([good, good]);
+      await expect(author(f4).author({ ...CTX, channelId, nOutcomes: 4 })).rejects.toBeInstanceOf(SchemaError);
     }
+  });
+
+  it("accepts a matching outcome count at nOutcomes: 4", async () => {
+    const f = chatFetch([good4]);
+    const a = await author(f).author({ ...CTX, nOutcomes: 4 });
+    expect(a.outcomes).toHaveLength(4);
+  });
+
+  it("retries once when the count is wrong, then succeeds with a matching count", async () => {
+    const f = chatFetch([good, good4]);
+    const a = await author(f).author({ ...CTX, nOutcomes: 4 });
+    expect(a.outcomes).toHaveLength(4);
+    expect(f.calls).toHaveLength(2);
+    const retry = f.calls[1]!.messages.at(-1);
+    expect(retry.role).toBe("user");
+    expect(retry.content).toContain("rejected by the schema validator");
+    expect(retry.content).toContain("expected exactly 4 outcomes, got 3");
   });
 
   it("rejects a studio card that points past the first half", async () => {
@@ -134,14 +171,14 @@ describe("author", () => {
     const overlong = {
       ...good,
       firstHalf: [shot(10), shot(8), shot(8)], // 26s
-      branches: [[shot(12), shot(10)], [shot(8), shot(8)], [shot(15), shot(5)]], // 22 / 16 / 20s
+      branches: [[shot(12), shot(10)], [shot(8), shot(8)], [shot(15), shot(6)]], // 22 / 16 / 21s
       cards: [{ afterShot: 2, title: "Half time", stats: ["Possession 51-49", "Shots 4-4"] }],
     };
     const logged: Array<Record<string, unknown>> = [];
     const f = chatFetch([overlong]);
     const a = await makeAuthor({
       or: makeOpenRouter({ baseUrl: "http://or", apiKey: "k", imageModel: "img", fetchImpl: f.impl }),
-      model: "openai/gpt-6-astra",
+      model: "openai/gpt-5-mini",
       log: (_m, extra) => void logged.push(extra ?? {}),
     }).author({ ...CTX, firstHalfSec: 15, secondHalfSec: 10 });
 
@@ -153,14 +190,103 @@ describe("author", () => {
       expect(b.length).toBeGreaterThanOrEqual(1);
     }
     for (const s of [...a.firstHalf, ...a.branches.flat()]) {
-      expect(s.seconds).toBeGreaterThanOrEqual(5);
+      // 6, not 5: Reactor fast-h3 rejects a clip under 5.167 s at `enqueue`, so a shot the
+      // clamp trimmed to 5 would cost a whole session to discover.
+      expect(s.seconds).toBeGreaterThanOrEqual(6);
       expect(s.seconds).toBeLessThanOrEqual(15);
     }
     for (const c of a.cards) expect(c.afterShot).toBeLessThan(a.firstHalf.length);
     // one log line per adjusted list, with the seconds before and after
     expect(logged).toHaveLength(4);
     expect(logged[0]).toMatchObject({ where: "firstHalf", targetSec: 15, beforeSec: 26 });
-    expect(logged[3]).toMatchObject({ where: "branch 2", targetSec: 10, beforeSec: 20 });
+    expect(logged[3]).toMatchObject({ where: "branch 2", targetSec: 10, beforeSec: 21 });
+  });
+
+  it("strips the prompt's own numbering out of the title and the outcomes (ticket 29)", async () => {
+    // The exact shapes two of the four REAL events came back with on 2026-09-12.
+    const labelled = {
+      ...good,
+      title: "Event 43 — National Film Gala",
+      outcomes: ["Outcome 1 — Harbour City win", "Outcome 2: Away win", "outcome 3. Draw"],
+    };
+    const f = chatFetch([labelled]);
+    const a = await author(f).author(CTX);
+    expect(a.title).toBe("National Film Gala");
+    expect(a.outcomes).toEqual(["Harbour City win", "Away win", "Draw"]);
+    // asked for as well as enforced, so the model usually gets it right without the strip
+    expect(f.calls[0]!.messages[0]!.content).toContain('No numbering, no "Event 3", no "Outcome 1"');
+  });
+
+  it("leaves a title alone when the leading word is part of its name", async () => {
+    const f = chatFetch([{ ...good, title: "Eventual Recount", outcomes: ["Option B holds", "Result stands", "Draw"] }]);
+    const a = await author(f).author(CTX);
+    expect(a.title).toBe("Eventual Recount");
+    expect(a.outcomes).toEqual(["Option B holds", "Result stands", "Draw"]);
+  });
+
+  /**
+   * The v3 suffix told the video model "no logos" and lost, because the authored shot said
+   * "stage lights and award logo visible" and a named thing beats a constraint appended after it.
+   * The ban has to sit where the shot is written. Politics keeps its chart: the shape carries it.
+   */
+  it("forbids the shot text from naming anything that carries lettering (ticket 29, v4)", async () => {
+    for (const channelId of ["sports", "politics", "culture", "region"]) {
+      const f = chatFetch([good]);
+      await author(f).author({ ...CTX, channelId });
+      const sys: string = f.calls[0]!.messages[0]!.content;
+      for (const thing of ["logo", "sign", "banner", "step-and-repeat backdrop", "scoreboard", "hoarding"])
+        expect(sys, `${channelId}: ${thing}`).toMatch(new RegExp(`no ${thing}`, "i"));
+      expect(sys, channelId).toMatch(/renders any lettering as gibberish/);
+      expect(sys, `${channelId}: politics exception`).toMatch(/Politics is the only exception/);
+    }
+    // culture produced the worst failure, so its own house style says where to point the camera
+    expect(CHANNEL_STYLE.culture).toMatch(/Frame the people, never the backdrop behind them/);
+  });
+
+  it("asks for real names in the labels, not placeholders (ticket 29, v4)", async () => {
+    // The v3 prompt said "write the name of the thing only" and got back Nominee A / B / C, which
+    // fails the same rule by vagueness instead of by clutter. Nothing to strip, so it is asked for.
+    const f = chatFetch([good]);
+    await author(f).author(CTX);
+    expect(f.calls[0]!.messages[0]!.content).toMatch(/never a placeholder like "Nominee A"/);
+  });
+
+  /**
+   * The scorebug is what a bettor reads while the picture plays, and it is page text because the
+   * video model cannot draw letterforms. Sports only: an award stage has no scoreline.
+   */
+  it("asks sports for a scorebug and nobody else", async () => {
+    const sports = chatFetch([good]);
+    await author(sports).author({ ...CTX, channelId: "sports" });
+    const sys: string = sports.calls[0]!.messages[0]!.content;
+    expect(sys).toMatch(/- score: the scorebug/);
+    expect(sys).toMatch(/atBreak is the score at the end of the first half and it must be level/);
+    expect(sys).toMatch(/one final score per outcome, in the same order as outcomes/);
+
+    // Asked for, and then enforced: the schema offers `score` on every channel and a live probe
+    // came back with a region scorebug reading "City v Harb" with finals in Chinese characters.
+    const score = { sides: ["CTY", "HRB"], atBreak: "1 - 1", atEnd: ["2 - 1", "1 - 2", "1 - 1"] };
+    for (const channelId of ["politics", "culture", "region"]) {
+      const f = chatFetch([{ ...good, score }]);
+      const a = await author(f).author({ ...CTX, channelId });
+      expect(f.calls[0]!.messages[0]!.content, channelId).toMatch(/- score: null\. Only sports/);
+      expect(a.score, channelId).toBeNull();
+    }
+  });
+
+  it("accepts a scorebug with one final per outcome and rejects a short list", async () => {
+    const score = { sides: ["HAR", "NOR"], atBreak: "1 - 1", atEnd: ["2 - 1", "1 - 2", "1 - 1"] };
+    const a = await author(chatFetch([{ ...good, score }])).author(CTX);
+    expect(a.score).toEqual(score);
+
+    // two finals against three outcomes would leave the scorebug blank on one branch
+    const short = { ...good, score: { ...score, atEnd: ["2 - 1", "1 - 2"] } };
+    await expect(author(chatFetch([short, short])).author(CTX)).rejects.toBeInstanceOf(SchemaError);
+
+    // sides is a plain array, not a tuple, because a tuple compiles to prefixItems and OpenAI
+    // structured outputs rejects the whole request. The count is enforced here instead.
+    const oneSide = { ...good, score: { ...score, sides: ["HAR"] } };
+    await expect(author(chatFetch([oneSide, oneSide])).author(CTX)).rejects.toBeInstanceOf(SchemaError);
   });
 
   it("leaves a shot list that is within the target alone", async () => {

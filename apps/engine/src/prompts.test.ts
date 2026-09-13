@@ -54,13 +54,16 @@ describe("clip prompts", () => {
     expect(clipPrompt("politics", SHOT)).toMatch(/charts and graphs/i);
   });
 
-  it("stays under 600 characters even for a 300-character shot", () => {
+  it("stays under the ceiling even for a 300-character shot, and still leaves that shot whole", () => {
     const long = "x".repeat(300);
     for (const channelId of [...CHANNELS, "weather"]) {
-      expect(clipPrompt(channelId, long).length).toBeLessThanOrEqual(600);
+      const built = clipPrompt(channelId, long);
+      expect(built.length).toBeLessThanOrEqual(800);
+      // the v3 suffix is 195 chars longer than v2; the shot text must not be what pays for it
+      expect(built, channelId).toContain(long);
     }
     // and for a shot far longer than any the author should write
-    expect(clipPrompt("politics", "y".repeat(4000)).length).toBeLessThanOrEqual(600);
+    expect(clipPrompt("politics", "y".repeat(4000)).length).toBeLessThanOrEqual(800);
   });
 
   it("keeps the fake vendor's canned shots inside the house style, so a local soak is representative", () => {
@@ -87,5 +90,34 @@ describe("clip prompts", () => {
       expect(art).toContain("Heat Emergency Debate");
     }
     expect(keyArtPrompt(ev("politics"))).toMatch(/charts and graphs/i);
+  });
+
+  it("prompt v2 (ticket 09): culture drops the printed camera token, and the suffix alone carries the no-text rule", () => {
+    expect(CHANNEL_PREFIX.culture).not.toMatch(/ENG press-pool/i);
+    expect(CHANNEL_PREFIX.culture).toMatch(/press camera/i);
+    expect(STYLE_SUFFIX).toMatch(/no captions/i);
+    // keyArtPrompt no longer states the rule itself; the suffix is the only source of it.
+    const art = keyArtPrompt({ channelId: "sports", title: "T", premise: "P" } as EventRow);
+    expect(art.match(/No captions/g)).toHaveLength(1);
+  });
+
+  /**
+   * v2 said "No captions, no logos", which the model read as a rule about overlays only: scene text
+   * survived on all four channels and fast-h3 rendered it as gibberish. The rule has to name what
+   * the camera sees, not what post-production adds.
+   */
+  it("prompt v3 (ticket 29): every clip forbids readable lettering in the scene, not just overlays", () => {
+    for (const channelId of [...CHANNELS, "weather"]) {
+      const built = clipPrompt(channelId, SHOT);
+      expect(built, `${channelId}: scene text`).toMatch(/no readable words anywhere in frame/i);
+      expect(built, `${channelId}: signage`).toMatch(/too small, too distant or too oblique to read/i);
+      expect(built, `${channelId}: watermark`).toMatch(/no broadcaster watermark/i);
+    }
+    // signage is allowed in frame, because politics needs a chart on the studio screen and the
+    // shape is what carries it. A blanket ban on screens would fight that house style.
+    expect(STYLE_SUFFIX).toMatch(/may be in frame/i);
+    expect(clipPrompt("politics", SHOT)).toMatch(/charts and graphs/i);
+    // "out of focus" and "blurred" would ask for a soft image, which is a different, worse picture
+    expect(STYLE_SUFFIX).not.toMatch(/blur|out of focus/i);
   });
 });
