@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Archivo, Roboto_Mono } from "next/font/google";
 import "./globals.css";
 import { WalletProvider } from "@/components/wallet";
@@ -14,10 +14,20 @@ const display = Archivo({ subsets: ["latin"], axes: ["wdth"], variable: "--font-
 // the empty-set glyph.
 const mono = Roboto_Mono({ subsets: ["latin"], weight: ["300", "400", "500", "700"], variable: "--font-roboto-mono" });
 
+const SITE = "theworldiscollapsing";
+const TAGLINE = "A world that grows forever. Bet on anything in it. Nobody knows the outcome, not even us.";
+
+// Open Graph image and favicon are the file conventions next to this file (opengraph-image.png,
+// icon.png); next wires them into the head, so nothing here names them.
 export const metadata: Metadata = {
-  title: "theworldiscollapsing",
-  description: "A world that keeps happening, broadcast on four channels, with a bet on every ending.",
+  metadataBase: new URL("https://theworldiscollapsing.vercel.app"),
+  title: { default: SITE, template: `%s · ${SITE}` },
+  description: TAGLINE,
+  openGraph: { type: "website", siteName: SITE, title: SITE, description: TAGLINE, url: "/" },
+  twitter: { card: "summary_large_image", title: SITE, description: TAGLINE },
 };
+
+export const viewport: Viewport = { themeColor: "#070a08" };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (

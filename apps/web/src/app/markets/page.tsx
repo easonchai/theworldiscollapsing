@@ -1,5 +1,7 @@
 import { MarketsList } from "@/components/markets-list";
 
+export const metadata = { title: "Markets" };
+
 export default function MarketsPage() {
   return (
     <div>
