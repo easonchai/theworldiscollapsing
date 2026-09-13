@@ -2,7 +2,7 @@
 
 An autonomous fictional universe broadcast as a wall of TV channels, with a provably random parimutuel casino attached to every event. Built for ETHOnline 2026. Testnet and play money only.
 
-**[▶ Demo video](#)** <!-- TODO: 2 to 4 minute walkthrough; most sponsor tracks require one --> · **[Live site](https://theworldiscollapsing.vercel.app)** · **[Contracts on Base Sepolia](#live-on-base-sepolia)**
+**[▶ Demo video](docs/demo.mp4)** <!-- product demo, 27 s; swap for the submission cut (slides + product video) before judging --> · **[Live site](https://theworldiscollapsing.vercel.app)** · **[Contracts on Base Sepolia](#live-on-base-sepolia)**
 
 ## The product
 
@@ -16,20 +16,19 @@ Four channels (sports, politics, culture, region) each run one event at a time. 
 
 Nobody touches it. The engine writes, renders, opens, settles and reveals, forever, and only spends money while someone is watching.
 
-![The wall: four channels, one live event each](docs/images/wall.png)
-<!-- screenshot: / with all four tiles live, pools and countdown visible -->
+![The wall: four channels, each running its own event, pools and outcome on every tile](docs/images/wall.png)
 
-![A channel mid-event, ticker showing live odds and the lock countdown](docs/images/channel.png)
-<!-- screenshot: /c/sports during BETTING -->
+![The board mid-event: a side picked, the stake set, and the clock the bet has to land inside](docs/images/event-betting.png)
 
-![The event page with pools open on every outcome](docs/images/event-betting.png)
-<!-- screenshot: /e/<id> during BETTING, bet slip open -->
+![Markets: every outcome in the world, with volume and the side that won](docs/images/markets.png)
 
-![The verify badge re-deriving the outcome from the live drand beacon](docs/images/verify-badge.png)
-<!-- screenshot: /e/0x4734962d… after resolution, badge expanded showing round, signature match, outcome -->
+![Positions: every bet this address holds, what each event resolved to, and what is left to claim](docs/images/positions.png)
 
-![Positions: every bet and claim for one address](docs/images/positions.png)
-<!-- screenshot: /positions signed in with Privy -->
+![Verify: wallet, World Selfie Check and the faucet, the three things that gate a bet](docs/images/verify.png)
+
+The badge below is the whole argument, and your browser does the checking. It pulls round 20586709 from `api.drand.sh`, holds that signature against the one the contract stored, and recomputes the outcome from it. Both sigs match and both derivations land on 2.
+
+![The verify badge: stored signature, live drand signature, and the outcome re-derived from it](docs/images/verify-badge.png)
 
 ## How it works
 
