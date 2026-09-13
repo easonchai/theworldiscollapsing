@@ -76,7 +76,7 @@ export const MIN_BET = 1_000_000n;
  * least its `1/nOutcomes` share of the pool. Under that it is void — both sides take their own
  * stake back, no fee — so no market ever returns more than `nOutcomes ×` a stake.
  */
-const voided = (pool: readonly [bigint, bigint], win: 0 | 1, nOutcomes: number): boolean =>
+export const voided = (pool: readonly [bigint, bigint], win: 0 | 1, nOutcomes: number): boolean =>
   pool[win] * BigInt(nOutcomes) < pool[0] + pool[1];
 
 /** Payout for one market, given the caller's stakes and the market's pools. */

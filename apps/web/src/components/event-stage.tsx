@@ -116,6 +116,17 @@ function Screen({ event, now, mounted }: { event: EventPublic; now: number; moun
         </div>
       ) : null}
 
+      {/* The second half is generated pixels and cannot be trusted to show who won, so the result
+          is punched onto the picture as a lower third the moment the round lands. */}
+      {event.outcome !== null && !locked ? (
+        <div className="slate absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center gap-x-3 gap-y-1 px-2 py-2">
+          <span className="tag">full time</span>
+          <span className="display text-[clamp(18px,2.2vw,28px)] leading-none text-amber">
+            {event.outcomes[event.outcome]}
+          </span>
+        </div>
+      ) : null}
+
       <StudioCard event={event} now={mounted ? now : null} />
     </div>
   );
@@ -288,7 +299,10 @@ export function EventStage({
               over the round above — fixed before betting opens, non-existent until it publishes.
             </dd>
             <dt className="tag pt-1">refund</dt>
-            <dd className="copy text-dim">A market nobody won returns every stake in full.</dd>
+            <dd className="copy text-dim">
+              A market whose winning side held under <span className="text-bone">1/n</span> of its pool is void:
+              every stake comes back in full, no fee.
+            </dd>
           </dl>
         </div>
 

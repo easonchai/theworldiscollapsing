@@ -13,6 +13,7 @@ import {
   mockusdcAbi,
   previewPayout,
   publicClient,
+  voided,
 } from "@/lib/chain";
 import type { EventPublic } from "@/lib/public";
 import { betRevertMessage, confirmed, ensureGas, txMessage, type TxMessage } from "@/lib/tx";
@@ -29,7 +30,12 @@ const ZERO: [bigint, bigint] = [0n, 0n];
  * `pools`/`stakes` are mappings to a fixed [NO, YES] array, so each side is its own getter call.
  */
 const poolSide = (eventId: Hex, i: number, side: 0 | 1) =>
-  publicClient.readContract({ address: ARENA, abi: arenaAbi, functionName: "pools", args: [eventId, i, BigInt(side)] });
+  publicClient.readContract({
+    address: ARENA,
+    abi: arenaAbi,
+    functionName: "pools",
+    args: [eventId, i, BigInt(side)],
+  });
 
 const stakeSide = (eventId: Hex, i: number, who: `0x${string}`, side: 0 | 1) =>
   publicClient.readContract({
@@ -99,8 +105,8 @@ function PriceCell({
   disabled?: boolean;
   busy: boolean;
   blocked: string | null;
-  /** Once the round has landed this side either won or lost; a live price would be a lie. */
-  settled: null | boolean;
+  /** Once the round has landed this side won, lost, or the whole market voided; a live price would be a lie. */
+  settled: null | boolean | "void";
   onPick?: (yes: boolean) => void;
 }) {
   const p = impliedYes(pool);
@@ -110,7 +116,7 @@ function PriceCell({
     <span className="num text-[13px]">…</span>
   ) : settled !== null ? (
     <span className={`money text-[17px] leading-none ${settled === yes ? "text-bone" : "text-dim"}`}>
-      {settled === yes ? "won" : "lost"}
+      {settled === "void" ? "void" : settled === yes ? "won" : "lost"}
     </span>
   ) : (
     <>
@@ -247,7 +253,13 @@ export function Markets({
 
   const resolved = event.outcome !== null;
   const empty = markets !== null && markets.every((m) => m.pool[0] + m.pool[1] === 0n);
-  const picked = pick ? { ...pick, label: event.outcomes[pick.i], pool: markets?.[pick.i]?.pool ?? ZERO } : null;
+  const picked = pick
+    ? {
+        ...pick,
+        label: event.outcomes[pick.i],
+        pool: markets?.[pick.i]?.pool ?? ZERO,
+      }
+    : null;
   // One button, and it says exactly why it will not fire.
   const cta = !address
     ? "Sign in to bet"
@@ -287,6 +299,8 @@ export function Markets({
           const m = markets?.[i] ?? { pool: ZERO, stake: ZERO };
           const won = event.outcome === i;
           const total = m.pool[0] + m.pool[1];
+          // The winning side held under its 1/n share of the pool: Arena.claim refunds both sides.
+          const isVoid = resolved && voided(m.pool, won ? 1 : 0, event.outcomes.length);
           return (
             <li
               key={i}
@@ -301,8 +315,13 @@ export function Markets({
                 {resolved ? (
                   <p className="tag mt-1">
                     {won ? "resolved yes" : "resolved no"}
+                    {isVoid ? " · void, stakes refunded" : null}
                     {m.stake[0] > 0n || m.stake[1] > 0n ? (
-                      <> · payout {usdc(marketPayout(m.stake, m.pool, won, event.outcomes.length))}</>
+                      <>
+                        {" "}
+                        · {isVoid ? "refund" : "payout"}{" "}
+                        {usdc(marketPayout(m.stake, m.pool, won, event.outcomes.length))}
+                      </>
                     ) : null}
                   </p>
                 ) : m.stake[0] > 0n || m.stake[1] > 0n ? (
@@ -314,22 +333,27 @@ export function Markets({
                 )}
               </div>
 
-              {[true, false].map((yes) => (
-                <PriceCell
-                  key={String(yes)}
-                  yes={yes}
-                  label={label}
-                  pool={m.pool}
-                  nOutcomes={event.outcomes.length}
-                  staked={(yes ? m.stake[1] : m.stake[0]) > 0n}
-                  selected={pick?.i === i && pick.yes === yes}
-                  disabled={busy !== null}
-                  blocked={blocked}
-                  busy={busy === `${i}-${yes}`}
-                  settled={resolved ? won : null}
-                  onPick={resolved ? undefined : (side) => setPick({ i, yes: side })}
-                />
-              ))}
+              {[true, false].map((yes) => {
+                const staked = (yes ? m.stake[1] : m.stake[0]) > 0n;
+                return (
+                  <PriceCell
+                    key={String(yes)}
+                    yes={yes}
+                    label={label}
+                    pool={m.pool}
+                    nOutcomes={event.outcomes.length}
+                    staked={staked}
+                    selected={pick?.i === i && pick.yes === yes}
+                    // Stakes across markets are independent bets and allowed. Both sides of one
+                    // market is not: it can only burn the fee, so the opposite tile goes dark.
+                    disabled={busy !== null || (!resolved && (yes ? m.stake[0] : m.stake[1]) > 0n)}
+                    blocked={blocked}
+                    busy={busy === `${i}-${yes}`}
+                    settled={resolved ? (isVoid ? "void" : won) : null}
+                    onPick={resolved ? undefined : (side) => setPick({ i, yes: side })}
+                  />
+                );
+              })}
             </li>
           );
         })}
