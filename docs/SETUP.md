@@ -33,15 +33,15 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 
 ### 1. OpenRouter
 
-- Create a key at openrouter.ai/keys. Load credits: **measured** on 2026-09-10, a 3-outcome `DEMO_MODE=1` event (45 s of video) costs **≈$3.20** — $3.15 of clips, $0.04 of key art, and **under a cent of authoring**, so 100 demo events is about $320. Almost all of it is video. Authoring defaults to `openai/gpt-5-mini`, one call an event, measured at **$0.0033 an event** over two real probes; the $0.08–0.09 an event in the runbook's cost table is the old `openai/gpt-6-astra` default, which `AUTHOR_MODEL` still buys. The plan's $6–9 figure is a full-length `DEMO_MODE=0` event; budget that if you run real timing.
-- Set in `apps/engine/.env`: `OPENROUTER_API_KEY`, `STUB_MODE=0`, and leave `OPENROUTER_BASE_URL=https://openrouter.ai`. Set `MAX_SPEND_USD` too — it is cumulative in `World.spendUsd`, so it survives restarts.
+- Create a key at openrouter.ai/keys. Load credits: **measured** on 2026-09-10, a 3-outcome `DEMO_MODE=1` event (45 s of video) costs **≈$3.20**: $3.15 of clips, $0.04 of key art, and **under a cent of authoring**, so 100 demo events is about $320. Almost all of it is video. Authoring defaults to `openai/gpt-5-mini`, one call an event, measured at **$0.0033 an event** over two real probes; the $0.08–0.09 an event in the runbook's cost table is the old `openai/gpt-6-astra` default, which `AUTHOR_MODEL` still buys. The plan's $6–9 figure is a full-length `DEMO_MODE=0` event; budget that if you run real timing.
+- Set in `apps/engine/.env`: `OPENROUTER_API_KEY`, `STUB_MODE=0`, and leave `OPENROUTER_BASE_URL=https://openrouter.ai`. Set `MAX_SPEND_USD` too. It is cumulative in `World.spendUsd`, so it survives restarts.
 - Real video also needs item 2 (or 13): with `MEDIA_STORE=local` the key-art URL is `localhost`, which OpenRouter cannot fetch, and image-to-video fails.
-- Now exercised against the real API: the strict JSON schema (accepted first try, reasoning non-empty), the image endpoint (key art generated first try, no fallback), image-to-video seeding (the first frame of the first half is visibly the key-art composition one beat later), and clip latency — nowhere near `pollVideo`'s 15-minute ceiling, so no tuning was needed. Numbers in `docs/RESEARCH.md`, section "Verified live". Still unverified: the download URL's lifetime (we download immediately) and the key-art image *price*, which the engine estimates at $0.04 because OpenRouter publishes none.
+- Now exercised against the real API: the strict JSON schema (accepted first try, reasoning non-empty), the image endpoint (key art generated first try, no fallback), image-to-video seeding (the first frame of the first half is visibly the key-art composition one beat later), and clip latency, nowhere near `pollVideo`'s 15-minute ceiling, so no tuning was needed. Numbers in `docs/RESEARCH.md`, section "Verified live". Still unverified: the download URL's lifetime (we download immediately) and the key-art image *price*, which the engine estimates at $0.04 because OpenRouter publishes none.
 
 ### 2. Vercel Blob
 
 - Vercel dashboard → Storage → Blob → create a store → copy the read-write token.
-- Set `MEDIA_STORE=blob` and `BLOB_READ_WRITE_TOKEN`. The blob path has now run: every clip, key-art still and last frame of both real events is on the store's public host, a plain `GET` answers 200 `video/mp4` and a `Range` request answers 206 with a `content-range`. Nothing prunes it — `MEDIA_KEEP` is local-store only — so blobs accrue until deleted by hand.
+- Set `MEDIA_STORE=blob` and `BLOB_READ_WRITE_TOKEN`. The blob path has now run: every clip, key-art still and last frame of both real events is on the store's public host, a plain `GET` answers 200 `video/mp4` and a `Range` request answers 206 with a `content-range`. Nothing prunes it. `MEDIA_KEEP` is local-store only, so blobs accrue until deleted by hand.
 - Branch sealing (`BRANCH_SEAL=1`) refuses to start with the blob store. If you want the CRE demo with real video, use item 13 instead of Blob.
 
 ### 3. Postgres
@@ -60,17 +60,17 @@ The local stack in the README needs none of this: anvil, a docker Postgres, ffmp
 
 - dashboard.privy.io → create app → App ID. Enable email login and "create embedded wallets on login". Add `localhost:3000` **and the Vercel domain** to allowed origins. Base Sepolia (84532) is in Privy's default chain list.
 - Set `NEXT_PUBLIC_PRIVY_APP_ID`. When it is set the dev wallet is ignored; leave `NEXT_PUBLIC_DEV_WALLET_KEY` empty in production (the app refuses it on chain 84532 anyway).
-- **Smart wallets (gas paid for the user).** An embedded wallet is created with 0 ETH, so every write it signs fails with `insufficient funds for gas * price + value`. The web app wraps Privy in `SmartWalletsProvider` (`apps/web/src/components/wallet.tsx`): when the dashboard has smart wallets on, the user's address is a smart wallet the embedded wallet signs for, and a paymaster pays its gas. Nothing about this lives in env — it is all dashboard:
+- **Smart wallets (gas paid for the user).** An embedded wallet is created with 0 ETH, so every write it signs fails with `insufficient funds for gas * price + value`. The web app wraps Privy in `SmartWalletsProvider` (`apps/web/src/components/wallet.tsx`): when the dashboard has smart wallets on, the user's address is a smart wallet the embedded wallet signs for, and a paymaster pays its gas. Nothing about this lives in env. It is all dashboard:
   1. dashboard.privy.io → your app → **Wallets → Smart wallets** → enable. Pick **Kernel** (ZeroDev) or **Safe**; both work with the public bundler.
-  2. **Add network: Base Sepolia (84532).** Bundler URL: leave empty to use Pimlico's public bundler, or paste one from Pimlico / Coinbase Developer Platform (free on testnets). **Paymaster URL: required for sponsorship** — without it the smart wallet has to hold ETH like an EOA, and the web app falls back to dripping it from the gate owner (`/api/verify`). Pimlico: `https://api.pimlico.io/v2/84532/rpc?apikey=…` serves as both. CDP: Onchain Tools → Paymaster → Base Sepolia → copy the RPC URL and allowlist the three contract addresses.
+  2. **Add network: Base Sepolia (84532).** Bundler URL: leave empty to use Pimlico's public bundler, or paste one from Pimlico / Coinbase Developer Platform (free on testnets). **A paymaster URL is required for sponsorship.** Without it the smart wallet has to hold ETH like an EOA, and the web app falls back to dripping it from the gate owner (`/api/verify`). Pimlico: `https://api.pimlico.io/v2/84532/rpc?apikey=…` serves as both. CDP: Onchain Tools → Paymaster → Base Sepolia → copy the RPC URL and allowlist the three contract addresses.
   3. Until step 1 is done `useSmartWallets().client` stays `undefined` and the app keeps signing with the embedded wallet itself, so nothing breaks if the dashboard lags the deploy. The smart wallet's address is what `Gate.setVerified`, the faucet and every bet are keyed to; `/api/verify` checks its signature on chain (ERC-1271, or ERC-6492 before the first transaction deploys it) because a contract cannot produce an ECDSA one.
 - **Funding (mainnet only).** With `NEXT_PUBLIC_CHAIN_ID=8453` the faucet step on `/verify` is replaced by `apps/web/src/components/ramp.tsx`: Privy's funding modal in, a USDC transfer out. The modal shows only the methods the dashboard has on: dashboard.privy.io → your app → **Wallets → Funding** → enable card (MoonPay and/or Coinbase Onramp) and "transfer from wallet", and add Base (8453) to the funding chains. Card onramps run on mainnet only, so on Base Sepolia the faucet stays and nothing here applies. Privy's fiat off-ramp needs guided onboarding with Bridge and is not wired; "out" is a plain transfer.
 - The allowed-origins block is cleared. Re-checked in a browser against production on 2026-09-10: `/` and `/c/sports` log **zero console errors and zero warnings** (the only output is the Privy iframe's own self-XSS banner, which is proof the `auth.privy.io` frame loads), and "Sign in" opens the "Log in or sign up" modal with an email field and the "Protected by Privy" footer. What is still unproven: no email was submitted, so the OTP step and the embedded wallet have never executed. PRD story 23 stays in Pending until one login is carried through.
 
 ### 9–10. The Graph
 
-- Done: `twic-arena` is deployed to Studio on **Base Sepolia**, indexing without errors, and the production `/markets` page reads it. The query URL carries the version label — see the README's Live table — and it is in web `NEXT_PUBLIC_SUBGRAPH_URL`. Steps and the exact working deploy command are in `packages/subgraph/README.md`, section "Deploying to Base Sepolia".
-- Still open: engine `SUBGRAPH_URL`, which feeds the previous event's pools into authoring, has not been run against the live index — so the bettor-sentiment half of the world model is unproven.
+- Done: `twic-arena` is deployed to Studio on **Base Sepolia**, indexing without errors, and the production `/markets` page reads it. The query URL carries the version label, and it is in web `NEXT_PUBLIC_SUBGRAPH_URL` and the README's Live table. Steps and the exact working deploy command are in `packages/subgraph/README.md`, section "Deploying to Base Sepolia".
+- Still open: engine `SUBGRAPH_URL`, which feeds the previous event's pools into authoring, has not been run against the live index, so the bettor-sentiment half of the world model is unproven.
 - For judges: a gateway API key from Studio → API keys enables the Subgraph MCP server (`packages/subgraph/README.md`, section "Subgraph MCP"). Still not obtained. Only published subgraphs are reachable through it; the Studio development query URL works directly and is rate-limited to 3,000 queries a day.
 
 ### 11. World
@@ -105,7 +105,7 @@ printf '0x%s\n' "$(openssl rand -hex 32)"         # REVEAL_SECRET
 
 1. Chainlink: CRE deploy access, then the Confidential Workflows beta.
 2. ETHOnline Discord: ask for a hackathon fast track.
-4. Confirm the submission cutoff on the ETHGlobal dashboard; the event page returned a 500 when it was last checked.
+3. Confirm the submission cutoff on the ETHGlobal dashboard; the event page returned a 500 when it was last checked.
 
 ## What turns on when
 
@@ -115,5 +115,5 @@ printf '0x%s\n' "$(openssl rand -hex 32)"         # REVEAL_SECRET
 | Testnet deployment | 3, 4, 5, 6 | everything runs on anvil |
 | Email login, embedded wallets | 7 | anvil dev wallet, local only |
 | Markets list, positions, authoring context | 9 | those two pages show "subgraph not configured"; authoring skips pool context |
-| Sealed branches released from a TEE | 12 + 13 | branches published in plaintext; still unreachable before reveal through the API, but guessable on the media server (see README known issues) |
+| Sealed branches released from a TEE | 12 + 13 | branches published in plaintext; still unreachable before reveal through the API, but guessable on the media server |
 | Judges querying via Subgraph MCP | 9 + 10 | Studio playground |

@@ -1,34 +1,17 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# `apps/web`: the wall and the betting UI
 
-## Getting Started
-
-First, run the development server:
+Next.js 16 app router. The wall (`/`), a channel (`/c/<id>`), an event (`/e/<id>`), the markets
+list, positions, and `/verify`.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm --filter web dev            # http://localhost:3000
+pnpm --filter web test
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+It runs on **webpack**, not Turbopack (`next dev --webpack`): Prisma 7 generates TypeScript that
+imports itself with `.js` specifiers, which Turbopack cannot resolve. Reasons and the way out are in
+[`docs/CONTRACTS.md`](../../docs/CONTRACTS.md), "Web env".
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Env vars go in `apps/web/.env.local` (gitignored); copy `.env.local.example`. The full local
+walkthrough is [`docs/LOCAL.md`](../../docs/LOCAL.md); the route handlers, the `EventPublic` shape
+and the wallet hook are in [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md).

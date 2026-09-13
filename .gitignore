@@ -17,3 +17,4 @@ packages/contracts/broadcast/**/31337
 env.txt
 apps/engine/sidecar/.venv
 __pycache__/
+docs/KNOWN-ISSUES.md

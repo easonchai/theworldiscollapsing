@@ -114,7 +114,7 @@ sequenceDiagram
   E->>A: resolve(eventId, signature)
   A->>A: DrandVerifier checks the BN254 pairing against evmnet's key for round R
   A->>A: outcome = keccak256(signature, eventId) mod n
-  E->>E: publish branchUrls[outcome]; the winning branch plays
+  E->>E: publish branchUrls[outcome], the winning branch plays
   B->>A: claim(eventId)
   Note over A: stake x total pool / winning pool, less 2 %
 ```
@@ -271,7 +271,6 @@ The PRD ([issue #1](https://github.com/easonchai/theworldiscollapsing/issues/1))
 | [`docs/SETUP.md`](docs/SETUP.md) | which key or account unlocks what |
 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) | deploying to Base Sepolia, real video, World mode, sealing |
 | [`docs/RESEARCH.md`](docs/RESEARCH.md) | verified vendor facts with sources |
-| [`docs/KNOWN-ISSUES.md`](docs/KNOWN-ISSUES.md) | every finding from validation and adversarial review, fixed and open |
 | [`docs/plan/`](docs/plan/) | what is left for each sponsor track |
 
 ## Checks

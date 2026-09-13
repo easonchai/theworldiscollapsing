@@ -31,7 +31,7 @@ forge script script/Deploy.s.sol --rpc-url base_sepolia \
 
 `foundry.toml` already maps `base_sepolia` to `BASE_SEPOLIA_RPC_URL` and the Etherscan key to chain 84532. The script deploys `DrandVerifier` and calls `setVerifier`, so resolution is verified on chain from the first event. Addresses print as `GATE= USDC= ARENA= VERIFIER=` and are also in `broadcast/Deploy.s.sol/84532/run-latest.json`. Fund `RESOLVER` with test ETH before starting the engine.
 
-Run on 2026-09-10: all four contracts landed in block **46631130** (addresses in the README's Live table) and `--verify` finished the run with `All (4) contracts were verified!` — confirmed independently through the Etherscan v2 `getsourcecode` API, which returns source and ABI for each address. Check the wiring before starting the engine: `arena.resolver()`, `arena.verifier()`, `arena.treasury()`, `arena.usdc()`, `arena.gate()` should equal what you put in `.env`, and the deployer should be `Gate.owner()`.
+Run on 2026-09-10: all four contracts landed in block **46631130** (addresses in the README's Live table) and `--verify` finished the run with `All (4) contracts were verified!`, confirmed independently through the Etherscan v2 `getsourcecode` API, which returns source and ABI for each address. Check the wiring before starting the engine: `arena.resolver()`, `arena.verifier()`, `arena.treasury()`, `arena.usdc()`, `arena.gate()` should equal what you put in `.env`, and the deployer should be `Gate.owner()`.
 
 Measured on chain afterwards, at 0.006 gwei: `createEvent` **77,368 gas** (~0.0000005 ETH), a verifier-checked `resolve` **261,292 gas** (~0.0000016 ETH). `forge test` says 219,202 for `resolve`; the real chain is ~19 % above that on cold access, so budget ~300k when funding the resolver.
 
@@ -52,7 +52,7 @@ Production `.env` values that differ from the README's local block:
 | Var | Value |
 |---|---|
 | `DATABASE_URL` | the Neon URL |
-| `RPC_URL`, `CHAIN_ID` | a **keyed** Base Sepolia RPC (Alchemy/QuickNode), `84532`. Not the public `https://sepolia.base.org` — see below |
+| `RPC_URL`, `CHAIN_ID` | a **keyed** Base Sepolia RPC (Alchemy/QuickNode), `84532`. Not the public `https://sepolia.base.org`; see below |
 | `RESOLVER_PRIVATE_KEY`, `ARENA_ADDRESS` | from step 2 |
 | `DEMO_MODE` | `0` for real timing (60 s halves, 30 s pause); `1` for a 35-second demo cycle |
 | `ALWAYS_ON` | `0` so nothing is generated while nobody is watching (the web app heartbeats presence); `1` for a soak |
@@ -60,15 +60,15 @@ Production `.env` values that differ from the README's local block:
 | `MEDIA_STORE`, `BLOB_READ_WRITE_TOKEN` | `blob` and the token. `MEDIA_KEEP` only applies to the local store |
 | `SUBGRAPH_URL` | the Studio query URL, once step 5 is done |
 
-Stopping it: `pm2 stop twic-engine`, or Ctrl-C / `kill <pid>` for a foreground `pnpm --filter engine start`. The engine answers SIGINT/SIGTERM with a `shutting down` line and exits within 3 s (a second signal exits immediately) — in-flight steps are idempotent, so the next start resumes them.
+Stopping it: `pm2 stop twic-engine`, or Ctrl-C / `kill <pid>` for a foreground `pnpm --filter engine start`. The engine answers SIGINT/SIGTERM with a `shutting down` line and exits within 3 s (a second signal exits immediately). In-flight steps are idempotent, so the next start resumes them.
 
-**Never `kill -9` the `pnpm` or `tsx` wrapper.** `pnpm start` is three processes deep (pnpm → tsx → node); SIGKILL on the outer two reparents the node grandchild to PID 1, where it keeps authoring, rendering, resolving on chain and charging the OpenRouter key with nothing on screen. Kill the whole thing instead: `pkill -f 'src/index.ts'`. The engine keeps its pid in `$MEDIA_DIR/engine.pid`, so if a copy is already loose the next start refuses to run beside it — `engine already running as pid N` — instead of a bare `EADDRINUSE` (and with `MEDIA_STORE=blob` there is no media port to collide at all).
+**Never `kill -9` the `pnpm` or `tsx` wrapper.** `pnpm start` is three processes deep (pnpm → tsx → node); SIGKILL on the outer two reparents the node grandchild to PID 1, where it keeps authoring, rendering, resolving on chain and charging the OpenRouter key with nothing on screen. Kill the whole thing instead: `pkill -f 'src/index.ts'`. The engine keeps its pid in `$MEDIA_DIR/engine.pid`, so if a copy is already loose the next start refuses to run beside it, saying `engine already running as pid N` rather than a bare `EADDRINUSE` (and with `MEDIA_STORE=blob` there is no media port to collide at all).
 
-**Do not point the engine at `https://sepolia.base.org`.** It is load-balanced across nodes at different heights and answers `BlockNotFoundError: Block at number "N" could not be found` for a transaction that is already mined. On 2026-09-10 that hit **4 of 4** chain writes; the retry then resumed from on-chain state and stored `createTx` / `resolveTx` as NULL, so those events have no explorer links, and one event's betting window shrank to about 5 s. Nothing was mis-settled. The engine now waits for the lagging node instead of failing the step (`chain.ts`), so the hash survives — but a keyed RPC is still the right call.
+**Do not point the engine at `https://sepolia.base.org`.** It is load-balanced across nodes at different heights and answers `BlockNotFoundError: Block at number "N" could not be found` for a transaction that is already mined. On 2026-09-10 that hit **4 of 4** chain writes; the retry then resumed from on-chain state and stored `createTx` / `resolveTx` as NULL, so those events have no explorer links, and one event's betting window shrank to about 5 s. Nothing was mis-settled. The engine now waits for the lagging node instead of failing the step (`chain.ts`), so the hash survives. A keyed RPC is still the right call.
 
-Restarts are safe by construction: the loop reads chain state before sending `createEvent` or `resolve`, so a bounce never duplicates an event. Every production failure backs off exponentially, so a dead vendor cannot burn credits in a loop. The ceiling is `MAX_SPEND_USD`: every authoring call, key-art image and clip attempt is charged against it and persisted in `World.spendUsd`, and the engine prints `budget {"capUsd":…,"spentUsd":…}` at startup — so the cap is cumulative across restarts, and lowering it below what has already been spent stops generation immediately. Watch `Event.costUsd` and `World.spendUsd` in the database against the OpenRouter dashboard; the two agreed to within 3 % on both real runs (see `docs/RESEARCH.md`, "Verified live").
+Restarts are safe by construction: the loop reads chain state before sending `createEvent` or `resolve`, so a bounce never duplicates an event. Every production failure backs off exponentially, so a dead vendor cannot burn credits in a loop. The ceiling is `MAX_SPEND_USD`: every authoring call, key-art image and clip attempt is charged against it and persisted in `World.spendUsd`, and the engine prints `budget {"capUsd":…,"spentUsd":…}` at startup, so the cap is cumulative across restarts, and lowering it below what has already been spent stops generation immediately. Watch `Event.costUsd` and `World.spendUsd` in the database against the OpenRouter dashboard; the two agreed to within 3 % on both real runs (see `docs/RESEARCH.md`, "Verified live").
 
-Stopping the engine mid-cycle leaves that channel's newest event in a live state, and the wall prefers a live event over the last finished one — so a tile can sit at "Locked" forever (README known issues). For a demo, stop the engine just after a `rendered event` / `resolved` pair rather than in the middle of one.
+Stopping the engine mid-cycle leaves that channel's newest event in a live state, and the wall prefers a live event over the last finished one, so a tile can sit at "Locked" forever. For a demo, stop the engine just after a `rendered event` / `resolved` pair rather than in the middle of one.
 
 ## 4. Web on Vercel
 
@@ -82,7 +82,7 @@ Stopping the engine mid-cycle leaves that channel's newest event in a live state
   vercel deploy --prod --yes
   ```
   `vercel deploy` uploads everything the repo's `.gitignore` does not cover, so move aside any large local file that is only in `.git/info/exclude` first.
-- ⚠ Preview environment variables cannot be set from the CLI: on 53.3.2 `vercel env add <NAME> preview --value <v> --yes --force` returns `action_required` / `git_branch_required` in a loop and its own suggested next command is the one that just failed, while passing `main` is rejected (`Cannot set Production Branch "main" for a Preview Environment Variable`). Set preview values in the dashboard, or accept that only production is configured — which is the case today.
+- ⚠ Preview environment variables cannot be set from the CLI: on 53.3.2 `vercel env add <NAME> preview --value <v> --yes --force` returns `action_required` / `git_branch_required` in a loop and its own suggested next command is the one that just failed, while passing `main` is rejected (`Cannot set Production Branch "main" for a Preview Environment Variable`). Set preview values in the dashboard, or accept that only production is configured, which is the case today.
 - ⚠ There is no `apps/web/vercel.json` in the repo, so functions default to `iad1` no matter where Neon lives. Add one with `regions` pinned near the database before it matters.
 
 ## 5. Subgraph on Studio
@@ -96,7 +96,7 @@ pnpm --filter subgraph exec graph deploy twic-arena -l 0.0.1
 
 The last line is deliberately `exec graph deploy …`, not `run deploy:studio`: that script is `graph deploy twic-arena` with no version label, so it stops on an interactive prompt, and `pnpm run deploy:studio -- -l 0.0.1` prints the graph CLI help and exits 2. Either use the `exec` form or add `-l` to the script.
 
-The query URL carries the version label — `https://api.studio.thegraph.com/query/<id>/twic-arena/0.0.1`. Put it in `NEXT_PUBLIC_SUBGRAPH_URL` (Vercel) and `SUBGRAPH_URL` (engine). Right after deploying, the first poll answers with `hasIndexingErrors: false`, a `_meta.block` past the start block and an **empty** `events` list; that is a healthy index with nothing to show yet, not a failure. Live URL in the README's Live table.
+The query URL carries the version label: `https://api.studio.thegraph.com/query/<id>/twic-arena/0.0.1`. Put it in `NEXT_PUBLIC_SUBGRAPH_URL` (Vercel) and `SUBGRAPH_URL` (engine). Right after deploying, the first poll answers with `hasIndexingErrors: false`, a `_meta.block` past the start block and an **empty** `events` list; that is a healthy index with nothing to show yet, not a failure. Live URL in the README's Live table.
 
 ## 6. Turning real video on
 
@@ -108,17 +108,17 @@ Reactor is the default video vendor once `REACTOR_API_KEY` is set (`VIDEO_VENDOR
 
    | | Wall clock | Charged |
    |---|---|---|
-   | authoring (`openai/gpt-6-astra`, reasoning mandatory — the default is now `openai/gpt-5-mini`, $0.0033 an event) | 13 s warm, 44 s from a cold start | $0.081–0.094, real `usage.cost` from the vendor |
+   | authoring (`openai/gpt-6-astra`, reasoning mandatory; the default is now `openai/gpt-5-mini`, $0.0033 an event) | 13 s warm, 44 s from a cold start | $0.081–0.094, real `usage.cost` from the vendor |
    | key art (one still) | ~12 s | $0.04 (rate-card estimate, not vendor-reported) |
-   | first half — 3 × 5 s @480p, submitted in parallel, downloaded and concatenated | 21 s | $0.25 a clip |
-   | branches — 3 × 10 s @768p | 43 s | $0.80 a clip |
-   | branches — 6 × 5 s @768p | 36 s | $0.40 a clip |
+   | first half, 3 × 5 s @480p, submitted in parallel, downloaded and concatenated | 21 s | $0.25 a clip |
+   | branches, 3 × 10 s @768p | 43 s | $0.80 a clip |
+   | branches, 6 × 5 s @768p | 36 s | $0.40 a clip |
    | **`Event.costUsd`** (key art + 15 s @480p + 30 s @768p) | | **$3.19**, ≈ **$3.27** all-in with `gpt-6-astra` authoring, ≈ **$3.20** with the `gpt-5-mini` default |
 
    No clip failed, timed out or retried in either run, so `pollVideo`'s 15-minute ceiling was never approached and needs no tuning yet. The plan's $6–9 an event is for `DEMO_MODE=0` (60 s halves); a demo event is 45 s of video.
-4. The engine pipelines: about 2 s after `rendered event` it authors the *next* event and charges for its key art, and clips follow ~13 s later. There is no way to stop after exactly one event — budget roughly $0.12 of overshoot if you SIGTERM at `rendered event`, or ~$0.87 if you are a few seconds later.
-5. The house style holds on the real video model. Two 5 s @480p clips on 2026-09-10, prompts built by `clipPrompt` exactly as the loop builds them, **$0.50** of real spend: the sports clip is an elevated main side camera panning with a red-kit attacker at two defenders, mow-stripes, hoardings and a full crowd, cutting to behind the goal for the save; the politics clip is a locked-off studio camera on an anchor who turns to a video wall carrying a rising bar chart and a red-shaded world map. Neither is slow motion or graded like film (`ffprobe`: 5.184 s each; details and the motion measure in `docs/RESEARCH.md`). On-screen text renders as gibberish on both — a MiniMax limitation, which is why nothing is allowed to depend on reading it.
-6. Media lands on the Blob store's public host. A plain `GET` answers 200 `video/mp4`; a `Range` request answers **206 Partial Content** with a `content-range` header, which is what the video element needs to scrub. Nothing prunes blobs — the engine's `MEDIA_KEEP` retention only applies to the local store — so objects accrue until you delete them by hand.
+4. The engine pipelines: about 2 s after `rendered event` it authors the *next* event and charges for its key art, and clips follow ~13 s later. There is no way to stop after exactly one event. Budget roughly $0.12 of overshoot if you SIGTERM at `rendered event`, or ~$0.87 if you are a few seconds later.
+5. The house style holds on the real video model. Two 5 s @480p clips on 2026-09-10, prompts built by `clipPrompt` exactly as the loop builds them, **$0.50** of real spend: the sports clip is an elevated main side camera panning with a red-kit attacker at two defenders, mow-stripes, hoardings and a full crowd, cutting to behind the goal for the save; the politics clip is a locked-off studio camera on an anchor who turns to a video wall carrying a rising bar chart and a red-shaded world map. Neither is slow motion or graded like film (`ffprobe`: 5.184 s each; details and the motion measure in `docs/RESEARCH.md`). On-screen text renders as gibberish on both, a MiniMax limitation, which is why nothing is allowed to depend on reading it.
+6. Media lands on the Blob store's public host. A plain `GET` answers 200 `video/mp4`; a `Range` request answers **206 Partial Content** with a `content-range` header, which is what the video element needs to scrub. Nothing prunes blobs. The engine's `MEDIA_KEEP` retention only applies to the local store, so objects accrue until you delete them by hand.
 
 ## 7. Sidecar
 
@@ -153,7 +153,7 @@ Only with the local media store and a public `MEDIA_BASE_URL` (Tailscale Funnel 
 - `DEMO_MODE=1`, `ALWAYS_ON=1` on the engine for the recording, `0`/`0` afterwards.
 - Verified addresses: the deployer key signs `Gate.setVerified` through `/verify`; for a pre-verified demo wallet run `cast send <GATE> "setVerified(address,bool)" <addr> true --private-key <deployer>`.
 - Faucet: 1,000 USDC per verified address per day (`MockUSDC.faucet`).
-- Synthetic volume on testnet: same command as the README's local block, different env. Start it **before** the engine — it does not bet on a window it was not running for, and it only claims events it opened itself.
+- Synthetic volume on testnet: same command as the README's local block, different env. Start it **before** the engine. It does not bet on a window it was not running for, and it only claims events it opened itself.
 
   ```bash
   CHAIN_ID=84532 RPC_URL=<keyed base sepolia rpc> \
@@ -164,7 +164,7 @@ Only with the local media store and a public `MEDIA_BASE_URL` (Tailscale Funnel 
   pnpm --filter engine bettor
   ```
 
-  `GATE_OWNER_PRIVATE_KEY` must be the deployer: it owns `Gate` (so it can verify the bettors) **and** it is the funder — it sends each of the six bettors `FUND_ETH` of **real testnet ETH** whenever they fall below `FUND_MIN_ETH`, so top the deployer up first and expect its balance to fall. Six bettors at the defaults is 0.06 ETH before any gas of its own. **Nobody has bet on Base Sepolia yet** — every pool there is 0, so payout, claim, the treasury fee and the void-market rule have only ever run on anvil, and this command has never been executed against a public RPC (`BET_INTERVAL_MS=1500`, the local value, is certainly too aggressive for one). Run it once before the recording.
+  `GATE_OWNER_PRIVATE_KEY` must be the deployer: it owns `Gate` (so it can verify the bettors) **and** it is the funder. It sends each of the six bettors `FUND_ETH` of **real testnet ETH** whenever they fall below `FUND_MIN_ETH`, so top the deployer up first and expect its balance to fall. Six bettors at the defaults is 0.06 ETH before any gas of its own. **Nobody has bet on Base Sepolia yet.** Every pool there is 0, so payout, claim, the treasury fee and the void-market rule have only ever run on anvil, and this command has never been executed against a public RPC (`BET_INTERVAL_MS=1500`, the local value, is certainly too aggressive for one). Run it once before the recording.
 - Known leftover on the live deployment (2026-09-10): sports seq 6 sits at `RENDER` in Neon with `World.spendUsd` at $4.14, so the next engine start against Neon buys its first half (~$0.75) and then pauses at the $5 cap unless `MAX_SPEND_USD` is raised. Seq 1–5 are `DONE` on chain and in the database.
 
 ## 11. Rollback

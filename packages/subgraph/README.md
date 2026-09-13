@@ -1,4 +1,4 @@
-# `packages/subgraph` — Arena index
+# `packages/subgraph`: Arena index
 
 Indexes the four `Arena` events (`EventCreated`, `Bet`, `Resolved`, `Claimed`) into the entities
 defined in [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md#subgraph-entities-packagessubgraphschemagraphql).
@@ -20,7 +20,7 @@ Toolchain (pinned): `@graphprotocol/graph-cli` 0.98.1, `@graphprotocol/graph-ts`
 | `docker-compose.yml` | local graph-node + ipfs + its own postgres on 5434 |
 | `scripts/ports.check.mjs` | asserts the compose default RPC port is the anvil port the root README starts |
 
-`subgraph.yaml` and `abis/Arena.json` are generated and gitignored — run a `prepare:*` script first.
+`subgraph.yaml` and `abis/Arena.json` are generated and gitignored. Run a `prepare:*` script first.
 
 ## Local run (graph-node in docker)
 
@@ -38,7 +38,7 @@ pnpm run codegen && pnpm run build
 pnpm run create-local && pnpm run deploy-local
 ```
 
-Indexing anvil on another port (agents run their own — 8546, 8547, see `docs/CONTRACTS.md`) is one env
+Indexing anvil on another port (agents run their own on 8546 or 8547, see `docs/CONTRACTS.md`) is one env
 var, and it has to be set on the `up` because it is baked into the container:
 
 ```bash
@@ -47,7 +47,7 @@ ANVIL_PORT=8546 docker compose -f packages/subgraph/docker-compose.yml up -d
 
 Queries: `http://localhost:8000/subgraphs/name/twic/arena`. Indexing status / errors:
 `http://localhost:8030/graphql` (`{ indexingStatuses { health synced fatalError { message } } }`).
-`synced: false` with a null `latestBlock` means graph-node is not talking to any chain — check the port.
+`synced: false` with a null `latestBlock` means graph-node is not talking to any chain. Check the port.
 
 Unit tests need no chain and no node:
 
@@ -58,7 +58,7 @@ pnpm --filter subgraph run check   # compose RPC port still matches the root REA
 
 Teardown: `docker compose -f packages/subgraph/docker-compose.yml down -v`.
 
-## Deploying to Base Sepolia (Subgraph Studio) — done 2026-09-10
+## Deploying to Base Sepolia (Subgraph Studio), done 2026-09-10
 
 Live at <https://api.studio.thegraph.com/query/1760049/twic-arena/0.0.1>, indexing
 `Arena` `0xcC9D2B9A192a6Ff5F3C5950EcdFd4CaF958fFe1b` from block 46631130 with
@@ -79,9 +79,9 @@ Live at <https://api.studio.thegraph.com/query/1760049/twic-arena/0.0.1>, indexi
    ```
    ⚠ Not `run deploy:studio`. That script is `graph deploy twic-arena` with no label, so it stops on
    an interactive prompt, and `pnpm run deploy:studio -- -l 0.0.1` prints the graph CLI's help and
-   exits 2 — pnpm does not pass the flag through. Use the `exec` form above, or add `-l` to the
+   exits 2, because pnpm does not pass the flag through. Use the `exec` form above, or add `-l` to the
    script. Change the slug if Studio hands out a different one.
-4. The query URL is `https://api.studio.thegraph.com/query/<account id>/<slug>/<version label>` — the
+4. The query URL is `https://api.studio.thegraph.com/query/<account id>/<slug>/<version label>`. The
    label is in the path, so deploying `0.0.2` changes the URL and `NEXT_PUBLIC_SUBGRAPH_URL` /
    `SUBGRAPH_URL` have to move with it. On the first poll after a deploy the endpoint answers with
    `hasIndexingErrors: false`, a `_meta.block` past the start block and an **empty** `events` list:
@@ -98,7 +98,7 @@ call Base Sepolia; `prepare:local` writes `localhost`, matching the `ethereum:` 
 ## How the rest of the repo consumes it
 
 - **web** (`NEXT_PUBLIC_SUBGRAPH_URL`): the markets list and positions views. Live pools during
-  `BETTING` still come from a viem public client reading `Arena` directly — the subgraph is the
+  `BETTING` still come from a viem public client reading `Arena` directly. The subgraph is the
   fast, cross-event view, not the tick source. When the env var is unset those pages render an
   explicit "subgraph not configured" state (no mocks).
 - **engine** (`SUBGRAPH_URL`): `apps/engine/src/author.ts` reads the *previous* event's pool state
@@ -112,7 +112,7 @@ call Base Sepolia; `prepare:local` writes `localhost`, matching the `ethereum:` 
 
   It is best-effort: authoring never fails because the index is down.
 
-## Subgraph MCP — how a judge can query this subgraph from an AI client
+## Subgraph MCP: how a judge can query this subgraph from an AI client
 
 The Graph ships a hosted MCP server so an agent can hit subgraphs without hand-writing GraphQL
 (<https://thegraph.com/docs/en/subgraphs/tooling/subgraph-mcp/introduction/>). Per the docs it lets a
@@ -148,6 +148,6 @@ resolves to a deployment and a query without anyone writing GraphQL.
 
 ⚠ Not exercised: we have no gateway API key and the Studio deployment is not *published* to the
 network, so this section is documentation, not a verified run. The server addresses deployments on
-The Graph Network — a graph-node on `localhost:8000` is not reachable from it, and an unpublished
+The Graph Network, so a graph-node on `localhost:8000` is not reachable from it, and an unpublished
 Studio subgraph is unlikely to be either. Judges pointing an agent at this project should use the
 Studio development query URL in the "Deploying to Base Sepolia" section directly.

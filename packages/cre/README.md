@@ -1,7 +1,7 @@
-# `packages/cre` — the branch-key release workflow
+# `packages/cre`: the branch-key release workflow
 
 A Chainlink CRE **Confidential Workflow** that holds the only material from which a branch video's
-decryption key can be computed, and releases exactly one key — the winning branch's — after the
+decryption key can be computed, and releases exactly one key, the winning branch's, after the
 Arena contract resolves the event.
 
 ```
@@ -23,7 +23,7 @@ Arena.Resolved(eventId, outcome, sig)        ← Workflow DON watches the log
 ## Why HTTP and not an on-chain write
 
 Both are supported (`evmClient.writeReport` after `usingTheDons()`), but writing the key on chain
-would need a new consumer contract wired to the CRE forwarder — new Solidity, a new deployment, and
+would need a new consumer contract wired to the CRE forwarder: new Solidity, a new deployment, and
 `packages/contracts` is out of scope for this stretch. The engine already runs an HTTP server for
 media, so one guarded endpoint on it is the smaller change, and `HTTPClient.sendRequest()` has a
 `TeeRuntime` overload, so the release leaves from inside the enclave rather than through the DON.
@@ -33,7 +33,7 @@ media, so one guarded endpoint on it is the smaller change, and `HTTPClient.send
 The engine (`apps/engine/src/seal.ts`, active only when `BRANCH_SEAL=1`) publishes every branch as
 AES-256-GCM ciphertext, `iv(12) ‖ ciphertext ‖ tag(16)`, stored as `branch-<i>.mp4.enc`. The
 plaintext is deleted as soon as the ciphertext is written. `Event.branchUrls` point at the
-ciphertext, so the pre-existing rule — never serve a branch before resolution — is now enforced by
+ciphertext, so the pre-existing rule, never serve a branch before resolution, is now enforced by
 a key rather than by application logic.
 
 The key for branch `i` of event `id` is
@@ -64,8 +64,9 @@ name. `REVEAL_SECRET` is a shared bearer token so a stranger cannot POST junk at
 **Protects**
 
 - The unreleased branch videos. Between render and resolution, the branch files exist only as
-  ciphertext on the engine's disk and behind its media URLs. Nobody — a viewer poking at the media
-  server, a CRE node operator, anyone who scrapes `branchUrls` — can watch either ending early.
+  ciphertext on the engine's disk and behind its media URLs. Nobody can watch either ending early:
+  not a viewer poking at the media server, not a CRE node operator, not anyone who scrapes
+  `branchUrls`.
 - `BRANCH_SEAL_ROOT` itself. The Vault DON releases it only into an attested enclave; Workflow DON
   node operators never see it in plaintext.
 - The release payload. `HTTPClient.sendRequest()` with a `TeeRuntime` executes the request from
@@ -75,7 +76,7 @@ name. `REVEAL_SECRET` is a shared bearer token so a stranger cannot POST junk at
 
 - **The operator.** The engine generated the branches, sealed them, and knows `root`. This is a
   spoiler lock, not a defence against the people running the world. The fairness claim rests on
-  drand, not on this workflow — see the root README's trust model.
+  drand, not on this workflow. See the root README's trust model.
 - **The video vendor.** Every prompt and every finished clip passes through OpenRouter and MiniMax
   in plaintext, before any of this runs. A TEE cannot fix that; confidential *video* inference does
   not exist commercially (see `docs/RESEARCH.md`).
@@ -104,7 +105,7 @@ packages/cre/
 ```
 
 The workflow is a **bun** project (that is what the CRE toolchain compiles), deliberately outside
-the pnpm workspace — hence the hand-copied `contracts/abi/Arena.ts` rather than an import of the
+the pnpm workspace, hence the hand-copied `contracts/abi/Arena.ts` rather than an import of the
 `contracts` package.
 
 ## Running it
@@ -123,7 +124,7 @@ bun test
 # compile to WASM (no CRE account needed)
 cre workflow build ./reveal-key --target local-settings
 
-# simulate — REQUIRES `cre login`; run from packages/cre, with the sealed local stack up
+# simulate: REQUIRES `cre login`; run from packages/cre, with the sealed local stack up
 # (anvil --port 8547 --chain-id 84532, engine on :4002; see docs/CRE.md)
 cre workflow simulate ./reveal-key --target local-settings \
   --non-interactive --trigger-index 0 --listen
@@ -144,9 +145,9 @@ The simulator only accepts chains on the tenant's supported list, so the local t
 
 ## What has actually been verified
 
-- `cre workflow build` compiles `reveal-key` to WASM (Javy/QuickJS) — so viem's keccak256, ABI
+- `cre workflow build` compiles `reveal-key` to WASM (Javy/QuickJS), so viem's keccak256, ABI
   encode/decode and the whole handler survive the WASM toolchain.
-- `bun test` — 7 tests over the handler, including that the key sent matches the engine's schedule
+- `bun test`: 7 tests over the handler, including that the key sent matches the engine's schedule
   byte for byte, that the outcome comes from the chain read rather than the log, and that nothing is
   released when the chain says the event is unresolved.
 - `cre workflow simulate --listen` against the live sealed stack: the EVM log trigger fired on
