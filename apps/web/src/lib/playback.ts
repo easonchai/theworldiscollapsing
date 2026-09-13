@@ -24,13 +24,22 @@ const ms = (iso: string | null): number | null => {
  * Live events are synced to the on-chain clock, so everyone is watching the same moment. A DONE
  * event is archive — the wall falls back to it so the world never looks dead — and its chain time
  * is long past, which would park the video on its last frame. Archive plays from the top instead.
+ *
+ * `loop`: once the result is out the picture keeps moving. The winning branch is 30 s and the
+ * pause after it is minutes, so a branch that held its last frame left the wall frozen on a
+ * dimmed still for most of every event. The first half never loops: its end is the lock.
  */
-export function sourceFor(event: EventPublic): { src: string | null; t0: number | null; archive: boolean } {
+export function sourceFor(event: EventPublic): {
+  src: string | null;
+  t0: number | null;
+  archive: boolean;
+  loop: boolean;
+} {
   const revealed = REVEALED.has(event.state) && !!event.winningBranchUrl;
   const src = revealed ? event.winningBranchUrl : event.firstHalfUrl;
-  if (event.state === "DONE") return { src, t0: null, archive: true };
+  if (event.state === "DONE") return { src, t0: null, archive: true, loop: true };
   // A reveal with no branch has nothing to show: the no-signal card, not the first half seeked
   // past its own end.
-  if (REVEALED.has(event.state) && !event.winningBranchUrl) return { src: null, t0: null, archive: false };
-  return { src, t0: revealed ? ms(event.revealTime) : ms(event.startTime), archive: false };
+  if (REVEALED.has(event.state) && !event.winningBranchUrl) return { src: null, t0: null, archive: false, loop: false };
+  return { src, t0: revealed ? ms(event.revealTime) : ms(event.startTime), archive: false, loop: revealed };
 }

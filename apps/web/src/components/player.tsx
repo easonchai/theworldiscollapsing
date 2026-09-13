@@ -34,23 +34,26 @@ export function Player({
   style?: CSSProperties;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
-  const { src, t0, archive } = sourceFor(event);
+  const { src, t0, archive, loop } = sourceFor(event);
 
   useEffect(() => {
     const video = ref.current;
     // Archive has no chain clock to follow: it just plays (and loops) from the top.
     if (!video || !src || !t0) return;
 
-    // Seek to where the broadcast is now. Past the end, hold the last frame: never loop, never restart.
+    // Seek to where the broadcast is now. Past the end, hold the last frame (the first half ends
+    // at the lock) or, for a revealed branch, wrap: `elapsed mod duration` keeps every viewer on
+    // the same frame of the loop.
     const sync = (force: boolean) => {
       if (!video.duration || Number.isNaN(video.duration)) return;
       const elapsed = (Date.now() - t0) / 1000;
-      if (elapsed >= video.duration) {
+      if (elapsed >= video.duration && !loop) {
         video.pause();
         if (video.currentTime < video.duration - 0.06) video.currentTime = video.duration - 0.05;
         return;
       }
-      if (force || Math.abs(video.currentTime - elapsed) > 0.75) video.currentTime = Math.max(0, elapsed);
+      const at = loop ? elapsed % video.duration : elapsed;
+      if (force || Math.abs(video.currentTime - at) > 0.75) video.currentTime = Math.max(0, at);
       void video.play().catch(() => {});
     };
 
@@ -62,7 +65,7 @@ export function Player({
       video.removeEventListener("loadedmetadata", onMeta);
       clearInterval(id);
     };
-  }, [src, t0]);
+  }, [src, t0, loop]);
 
   // A source that has not been cut to air yet gets the station's designed no-signal card, not a
   // decorated void.
@@ -79,7 +82,7 @@ export function Player({
       muted
       playsInline
       autoPlay
-      loop={archive}
+      loop={archive || loop}
       preload="auto"
       disablePictureInPicture
     />
